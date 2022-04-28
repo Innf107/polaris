@@ -1,0 +1,9 @@
+(library
+ (name script))
+ 
+(env
+  (dev
+    (flags 
+      (:standard -warn-error -A)
+      (:standard -w -unused-var-strict)
+    )))

@@ -7,7 +7,7 @@ e ::= v                 (value)
     | { e; e }          (sequencing)
     | /x e*             (program call object)
     | (e1 | e2)         (pipe)
-    | let x = e         (definition)
+    | let x = e in e    (definition)
     | x := e            (assignment)
 
 (Value) 

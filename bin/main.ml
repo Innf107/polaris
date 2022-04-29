@@ -2,11 +2,6 @@ open Script
 open Script.Ast
 open Script.Eval
 
-let test = let open StringExpr in [
-    LetSeq ("x", (Lambda (["x"], IntLit 5)))
-  ; App (Var "x", [Var "x"])
-  ]
-
 let fatal_error (message : string) = 
   print_endline "~~~~~~~~~~~~~~ERROR~~~~~~~~~~~~~~";
   print_endline message;
@@ -31,10 +26,14 @@ let run (exprs : string_expr list) =
       )
   (* EvalError *)
   | DynamicVarNotFound x -> fatal_error (
-        "Variavle not found during execution: '" ^ Name.pretty x ^ "'\n"
+        "Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
       ^ "This variable was either generated dynamically, or there is a bug in the interpreter"
       )
 
-let () = 
-  run test
-
+let () =
+  try
+    let lexbuf = Lexing.from_channel (open_in "test.script") in
+    let ast = Parser.main Lexer.token lexbuf in
+    run ast
+  with
+    Parsing.Parse_error -> fatal_error "Parse error"

@@ -8,24 +8,23 @@ struct
 
   type expr =
     (* Lambda calculus *)
-    | Var of name (* x *)
-    | App of expr * expr list (* e (e₁, .., eₙ) *)
-    | Lambda of name list * expr (* \(x₁, .., xₙ) -> e*)
+    | Var of name                     (* x *)
+    | App of expr * expr list         (* e (e₁, .., eₙ) *)
+    | Lambda of name list * expr      (* \(x₁, .., xₙ) -> e*)
     (* Literals *)
-    | StringLit of string
-    | IntLit of int
-    | FloatLit of float
-    | UnitLit
+    | StringLit of string             (* "str" *)
+    | IntLit of int                   (* n *)
+    | FloatLit of float               (* f *)
+    | UnitLit                         (* () *)
     (* Sequencing *)
-    | Seq of expr list (* { e₁ ; .. ; eₙ } *)
-    | LetSeq of
-        name * expr (* let x = e (Only valid inside `Seq` expressions) *)
+    | Seq of expr list                (* { e₁ ; .. ; eₙ } *)
+    | LetSeq of name * expr           (* let x = e (Only valid inside `Seq` expressions) *)
     (* Mutable local definitions *)
-    | Let of name * expr * expr (* let x = e1 in e2 (valid everywhere) *)
-    | Assign of name * expr (* x := e *)
+    | Let of name * expr * expr       (* let x = e1 in e2 (valid everywhere) *)
+    | Assign of name * expr           (* x = e *)
     (* Scripting capabilities *)
-    | ProgCall of string * expr list (* /p e₁ .. eₙ *)
-    | Pipe of expr list (* (e₁ | .. | eₙ) *)
+    | ProgCall of string * expr list  (* /p e₁ .. eₙ *)
+    | Pipe of expr list               (* (e₁ | .. | eₙ) *)
 
   let rec pretty = function
     | Var x -> Name.pretty x
@@ -46,7 +45,7 @@ struct
         "let " ^ Name.pretty x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
     | Assign (x, e) -> Name.pretty x ^ " = " ^ pretty e
     | ProgCall (prog, args) ->
-        "/" ^ prog ^ String.concat " " (List.map pretty args)
+        "/" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe exprs -> String.concat " | " (List.map pretty exprs)
 
   let pretty_list (exprs : expr list) : string =

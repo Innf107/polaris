@@ -1,0 +1,7 @@
+let x = "a";
+let f(x) = {
+    let y = 3.5;
+    y = x;
+    y
+};
+/ls (f(5.))

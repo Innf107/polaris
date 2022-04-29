@@ -1,6 +1,16 @@
 (library
  (name script))
- 
+
+(rule
+  (target lexer.ml)
+  (deps lexer.mll)
+  (action (run ocamllex %{deps} -o %{target})))
+
+(rule
+  (target parser.ml)
+  (deps parser.mly)
+  (action (run ocamlyacc %{deps})))
+
 (env
   (dev
     (flags 

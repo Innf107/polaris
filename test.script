@@ -1,7 +1,7 @@
-let x = "a";
-let f(x) = {
-    let y = 3.5;
-    y = x;
-    y
-};
-/ls (f(5.))
+let fix(f) = \y -> (\x -> f (x(x), y))(\x -> f (x(x), y));
+
+let f = fix(\f -> 
+    f(1)
+);
+
+f(5)

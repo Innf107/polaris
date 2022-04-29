@@ -13,9 +13,20 @@ struct
     | Lambda of name list * expr      (* \(x₁, .., xₙ) -> e*)
     (* Literals *)
     | StringLit of string             (* "str" *)
-    | IntLit of int                   (* n *)
-    | FloatLit of float               (* f *)
+    | NumLit of float                 (* f *)
     | UnitLit                         (* () *)
+    (* Common Operations *)
+    | Add of expr * expr              (* e + e *)
+    | Sub of expr * expr              (* e - e *)
+    | Mul of expr * expr              (* e * e *)
+    | Div of expr * expr              (* e / e *)
+    | Equals of expr * expr           (* e == e *)
+    | LE of expr * expr               (* e <= e *)
+    | GE of expr * expr               (* e >= e *)
+    | LT of expr * expr               (* e <  e *)
+    | GT of expr * expr               (* e >  e *)
+    (* Branching *)
+    | If of expr * expr * expr        (* if e then e else e*)
     (* Sequencing *)
     | Seq of expr list                (* { e₁ ; .. ; eₙ } *)
     | LetSeq of name * expr           (* let x = e (Only valid inside `Seq` expressions) *)
@@ -35,9 +46,21 @@ struct
         ^ String.concat ", " (List.map Name.pretty params)
         ^ ") -> " ^ pretty e
     | StringLit l -> "\"" ^ l ^ "\""
-    | IntLit n -> string_of_int n
-    | FloatLit f -> string_of_float f
+    | NumLit f -> string_of_float f
     | UnitLit -> "()"
+
+    | Add (e1, e2) -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
+    | Sub (e1, e2) -> "(" ^ pretty e1 ^ " - " ^ pretty e2 ^ ")"
+    | Mul (e1, e2) -> "(" ^ pretty e1 ^ " * " ^ pretty e2 ^ ")"
+    | Div (e1, e2) -> "(" ^ pretty e1 ^ " / " ^ pretty e2 ^ ")"
+
+    | Equals (e1, e2) -> "(" ^ pretty e1 ^ " == " ^ pretty e2 ^ ")"
+    | LE (e1, e2)     -> "(" ^ pretty e1 ^ " <= " ^ pretty e2 ^ ")"
+    | GE (e1, e2)     -> "(" ^ pretty e1 ^ " >= " ^ pretty e2 ^ ")"
+    | LT (e1, e2)     -> "(" ^ pretty e1 ^ " <  " ^ pretty e2 ^ ")"
+    | GT (e1, e2)     -> "(" ^ pretty e1 ^ " >  " ^ pretty e2 ^ ")"
+
+    | If (e1, e2, e3) -> "if " ^ pretty e1 ^ " then " ^ pretty e2 ^ " else " ^ pretty e3
 
     | Seq exprs -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
     | LetSeq (x, e) -> "let " ^ Name.pretty x ^ " = " ^ pretty e

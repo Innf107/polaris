@@ -41,9 +41,21 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
         Lambda (xs', rename_expr scope' e)
 
     | StringLit s -> StringLit s
-    | IntLit n -> IntLit n
-    | FloatLit n -> FloatLit n
+    | NumLit n -> NumLit n
     | UnitLit -> UnitLit
+
+    | Add(e1,e2) -> Add(rename_expr scope e1, rename_expr scope e2)
+    | Sub(e1,e2) -> Sub(rename_expr scope e1, rename_expr scope e2)
+    | Mul(e1,e2) -> Mul(rename_expr scope e1, rename_expr scope e2)
+    | Div(e1,e2) -> Div(rename_expr scope e1, rename_expr scope e2)
+
+    | Equals(e1,e2) -> Equals(rename_expr scope e1, rename_expr scope e2)
+    | LE(e1,e2)     -> LE(rename_expr scope e1, rename_expr scope e2)
+    | GE(e1,e2)     -> GE(rename_expr scope e1, rename_expr scope e2)
+    | LT(e1,e2)     -> LT(rename_expr scope e1, rename_expr scope e2)
+    | GT(e1,e2)     -> GT(rename_expr scope e1, rename_expr scope e2)
+
+    | If(e1, e2, e3) -> If(rename_expr scope e1, rename_expr scope e2, rename_expr scope e3)
 
     | Seq es -> Seq (rename_seq scope es)
 

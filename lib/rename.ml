@@ -59,17 +59,24 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
 
     | Seq es -> Seq (rename_seq scope es)
 
-    | LetSeq (x, e) -> raise (RenameError.LetSeqInNonSeq expr)
-    
+    | LetSeq _ | LetRecSeq _ -> raise (RenameError.LetSeqInNonSeq expr)
+
     | Let (x, e1, e2) -> 
         let x' = fresh_var scope x in
         let scope' = insert_var x x' scope in
-        (* lets are non-recursive! *)
+        (* regular lets are non-recursive! *)
         Let (x', rename_expr scope e1, rename_expr scope' e2)
-    
+    | LetRec (x, params, e1, e2) ->
+        let x' = fresh_var scope x in
+        let params' = List.map (fresh_var scope) params in
+        let scope' = insert_var x x' scope in
+        (* let rec's *are* recursive *)
+        LetRec(x', params', rename_expr scope' e1, rename_expr scope e2)
     | Assign (x, e) ->
         let x' = lookup_var scope x in
         Assign (x', rename_expr scope e)
+
+    | Print e -> Print (rename_expr scope e)
 
     | ProgCall (p, args) ->
         ProgCall (p, List.map (rename_expr scope) args)
@@ -81,8 +88,14 @@ and rename_seq (scope : RenameScope.t) (exprs : string_expr list) : name_expr li
     | (LetSeq (x, e) :: exprs) -> 
         let x' = fresh_var scope x in
         let scope' = insert_var x x' scope in
-        (* lets are non-recursive! *)
+        (* regular lets are non-recursive! *)
         LetSeq (x', rename_expr scope e) :: rename_seq scope' exprs
+    | LetRecSeq (x, params, e) :: exprs -> 
+        let x' = fresh_var scope x in
+        let scope' = insert_var x x' scope in
+        let params' = List.map (fresh_var scope) params in
+        (* let rec's *are* recursive! *)
+        LetRecSeq(x', params', rename_expr scope' e) :: rename_seq scope' exprs
     | (e :: exprs) -> rename_expr scope e :: rename_seq scope exprs
     | [] -> []
 

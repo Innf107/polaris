@@ -1,7 +1,10 @@
-let fix(f) = \y -> (\x -> f (x(x), y))(\x -> f (x(x), y));
+let fix(f) = (\x -> \y -> f (x(x), y)) (\x -> \y -> f (x(x), y));
 
-let f = fix(\f -> 
-    f(1)
-);
+let f = fix(\(f, x) -> {
+    print(x);
+    if x <= 0
+    then 3
+    else x * f(x - 1)
+});
 
-f(5)
+f(25)

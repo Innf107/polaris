@@ -28,12 +28,15 @@ struct
     (* Branching *)
     | If of expr * expr * expr        (* if e then e else e*)
     (* Sequencing *)
-    | Seq of expr list                (* { e₁ ; .. ; eₙ } *)
-    | LetSeq of name * expr           (* let x = e (Only valid inside `Seq` expressions) *)
+    | Seq of expr list                      (* { e₁ ; .. ; eₙ } *)
+    | LetSeq of name * expr                 (* let x = e (Only valid inside `Seq` expressions) *)
+    | LetRecSeq of name * name list * expr  (* let rec f(x, .., x) = e*)
     (* Mutable local definitions *)
-    | Let of name * expr * expr       (* let x = e1 in e2 (valid everywhere) *)
-    | Assign of name * expr           (* x = e *)
+    | Let of name * expr * expr                 (* let x = e1 in e2 (valid everywhere) *)
+    | LetRec of name * name list * expr * expr  (* let rec f(x, .., x) = e*)
+    | Assign of name * expr                     (* x = e *)
     (* Scripting capabilities *)
+    | Print of expr                   (* print(e) (Temporary. 'print' should really just be an intrinsic)*)
     | ProgCall of string * expr list  (* /p e₁ .. eₙ *)
     | Pipe of expr list               (* (e₁ | .. | eₙ) *)
 
@@ -64,9 +67,12 @@ struct
 
     | Seq exprs -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
     | LetSeq (x, e) -> "let " ^ Name.pretty x ^ " = " ^ pretty e
+    | LetRecSeq (x, xs, e) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e
     | Let (x, e1, e2) ->
         "let " ^ Name.pretty x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
+    | LetRec (x, xs, e1, e2) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
     | Assign (x, e) -> Name.pretty x ^ " = " ^ pretty e
+    | Print e -> "print " ^ pretty e
     | ProgCall (prog, args) ->
         "/" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe exprs -> String.concat " | " (List.map pretty exprs)

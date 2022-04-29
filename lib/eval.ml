@@ -9,13 +9,18 @@ and value =
   | Untyped of string
   | StringV of string
   | NumV of float
-  | ClosureV of eval_env * name list * name_expr
+  (* The closure environment has to be lazy to
+     support recursive lets, since the definition of a recursive function has
+     to be stored in its own closure, which also stores its on environment, etc.*)
+  | ClosureV of eval_env lazy_t * name list * name_expr
   | UnitV (* TODO: Unit expression *)
   | BoolV of bool
 
 module EvalError = struct
   exception DynamicVarNotFound of name
   exception UnableToConvertTo of string * value * string
+  exception TryingToApplyNonFunction of value
+  exception InvalidNumberOfArguments of name list * value list
 end  
 
 module Value = struct
@@ -41,7 +46,7 @@ let lookup_var (env : eval_env) (var : name) : value ref =
 
 let insert_vars (vars : name list) (vals : value list) (env : eval_env): eval_env =
   if (List.compare_lengths vars vals != 0) 
-  then raise (Panic "trying to insert variables and values with different lengths")
+  then raise (EvalError.InvalidNumberOfArguments (vars, vals))
   else { vars = List.fold_right2 (fun x v r -> VarMap.add x (ref v) r) vars vals env.vars }
 
 (* Tries to convert a number to a value. Throws an error if it can't *)
@@ -84,10 +89,10 @@ let rec eval_expr (env : eval_env) (expr : name_expr) : value =
       | ClosureV (clos_env, params, body) ->
           (* Function arguments are evaluated left to right *)
           let arg_vals = List.map (eval_expr env) args in
-          eval_expr (insert_vars params arg_vals clos_env) body
+          eval_expr (insert_vars params arg_vals (Lazy.force clos_env)) body
       | x ->
-          raise TODO (* TODO: "Trying to apply non-function value 'x'" *))
-  | Lambda (params, e) -> ClosureV (env, params, e)
+          raise (EvalError.TryingToApplyNonFunction x) (* TODO: "Trying to apply non-function value 'x'" *))
+  | Lambda (params, e) -> ClosureV (lazy env, params, e)
   
   | StringLit s -> StringV s
   | NumLit f    -> NumV f
@@ -159,13 +164,20 @@ let rec eval_expr (env : eval_env) (expr : name_expr) : value =
       eval_expr env e3
 
   | Seq exprs -> eval_seq env exprs
-  | LetSeq (x, e) -> raise TODO (* TODO: "let assignment found outside of sequence expression" *)
+  | LetSeq _ | LetRecSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
   | Let (x, e1, e2) ->
     eval_expr (insert_vars [x] [eval_expr env e1] env) e2
+  | LetRec (f, params, e1, e2) ->
+    let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e1)] env) in
+    eval_expr (Lazy.force env') e2
   | Assign (x, e1) ->
     let x_ref = lookup_var env x in
     x_ref := (eval_expr env e1);
+    UnitV
+  | Print expr ->
+    let value = eval_expr env expr in
+    print_endline (Value.pretty value);
     UnitV
   | ProgCall (prog, args) -> raise TODO (* TODO *)
   | Pipe exprs -> raise TODO (* TODO *)

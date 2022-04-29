@@ -132,32 +132,32 @@ let rec eval_expr (env : eval_env) (expr : name_expr) : value =
 
   | LE (e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
-    let v1 = eval_expr env e2 in
+    let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to compute " ^ Value.pretty v1 ^ " <= " ^ Value.pretty v2 in
     BoolV (as_num context v1 <= as_num context v2)
   | GE (e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
-    let v1 = eval_expr env e2 in
+    let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to compute " ^ Value.pretty v1 ^ " >= " ^ Value.pretty v2 in
     BoolV (as_num context v1 >= as_num context v2)
   | LT (e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
-    let v1 = eval_expr env e2 in
+    let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to compute " ^ Value.pretty v1 ^ " < " ^ Value.pretty v2 in
     BoolV (as_num context v1 < as_num context v2)
   | GT (e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
-    let v1 = eval_expr env e2 in
+    let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to compute " ^ Value.pretty v1 ^ " > " ^ Value.pretty v2 in
     BoolV (as_num context v1 > as_num context v2)
   
   | If (e1, e2, e3) ->
     let v1 = eval_expr env e1 in
-    let context = "" in
+    let context = "In the condition of an if expression" in
     if as_bool context v1 then 
       eval_expr env e2
     else

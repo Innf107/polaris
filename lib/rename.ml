@@ -70,8 +70,9 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
         let x' = fresh_var scope x in
         let params' = List.map (fresh_var scope) params in
         let scope' = insert_var x x' scope in
+        let inner_scope = List.fold_right2 insert_var params params' scope' in
         (* let rec's *are* recursive *)
-        LetRec(x', params', rename_expr scope' e1, rename_expr scope e2)
+        LetRec(x', params', rename_expr inner_scope e1, rename_expr scope' e2)
     | Assign (x, e) ->
         let x' = lookup_var scope x in
         Assign (x', rename_expr scope e)
@@ -92,10 +93,11 @@ and rename_seq (scope : RenameScope.t) (exprs : string_expr list) : name_expr li
         LetSeq (x', rename_expr scope e) :: rename_seq scope' exprs
     | LetRecSeq (x, params, e) :: exprs -> 
         let x' = fresh_var scope x in
-        let scope' = insert_var x x' scope in
         let params' = List.map (fresh_var scope) params in
+        let scope' = insert_var x x' scope in
+        let inner_scope = List.fold_right2 insert_var params params' scope' in
         (* let rec's *are* recursive! *)
-        LetRecSeq(x', params', rename_expr scope' e) :: rename_seq scope' exprs
+        LetRecSeq(x', params', rename_expr inner_scope e) :: rename_seq scope' exprs
     | (e :: exprs) -> rename_expr scope e :: rename_seq scope exprs
     | [] -> []
 

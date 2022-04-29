@@ -187,6 +187,9 @@ and eval_seq (env : eval_env) (exprs : name_expr list) : value =
   | [] -> UnitV
   | LetSeq (x, e) :: exprs -> 
     eval_seq (insert_vars [x] [(eval_expr env e)] env) exprs
+  | LetRecSeq (f, params, e) :: exprs ->
+    let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e)] env) in
+    eval_seq (Lazy.force env') exprs
   | [ e ] -> eval_expr env e
   | e :: exprs ->
       (* The result of 'eval_expr e' is purposefully ignored *)

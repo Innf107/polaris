@@ -4,6 +4,5 @@
 (env
   (dev
     (flags 
-      (:standard -warn-error -A)
-      (:standard -w -unused-var-strict)
+      (:standard -warn-error -A -w -27 -w -33 -warn-error +8)
     )))

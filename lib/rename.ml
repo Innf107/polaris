@@ -1,7 +1,12 @@
 open Ast
+open Util
 
 module RenameMap = Map.Make(String)
 
+module RenameError = struct
+    exception VarNotFound of string
+    exception LetSeqInNonSeq of StringExpr.expr
+end
 
 module RenameScope = struct
     open RenameMap
@@ -13,7 +18,10 @@ module RenameScope = struct
     
     (* TODO: How do exceptions work in OCaml? *)
     let lookup_var (scope : t) (var : string) : 'name =
-        find var scope.variables 
+        try 
+            find var scope.variables 
+        with
+            Not_found -> raise (RenameError.VarNotFound var)
 
     let fresh_var (scope : t) (var : string) : 'name =
         let ix = !(scope.counter) in
@@ -21,7 +29,8 @@ module RenameScope = struct
         { name = var; index = ix }
 end
 
-let rec rename_expr (scope : RenameScope.t) (expr : string expr): name expr = let open RenameScope in
+
+let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = let open RenameScope in
     match expr with 
     | Var var_name -> Var (lookup_var scope var_name)
     | App (f, args) -> App (rename_expr scope f, List.map (rename_expr scope) args)
@@ -31,10 +40,15 @@ let rec rename_expr (scope : RenameScope.t) (expr : string expr): name expr = le
         let scope' = List.fold_right2 insert_var xs xs' scope in
         Lambda (xs', rename_expr scope' e)
 
+    | StringLit s -> StringLit s
+    | IntLit n -> IntLit n
+    | FloatLit n -> FloatLit n
+    | UnitLit -> UnitLit
+
     | Seq es -> Seq (rename_seq scope es)
 
-    | LetSeq (x, e) -> raise Not_found (* I should really find out how exceptions work... *)
-
+    | LetSeq (x, e) -> raise (RenameError.LetSeqInNonSeq expr)
+    
     | Let (x, e1, e2) -> 
         let x' = fresh_var scope x in
         let scope' = insert_var x x' scope in
@@ -50,7 +64,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : string expr): name expr = le
     | Pipe exprs ->
         Pipe (List.map (rename_expr scope) exprs)
 
-and rename_seq (scope : RenameScope.t) (exprs : string expr list) : name expr list = let open RenameScope in
+and rename_seq (scope : RenameScope.t) (exprs : string_expr list) : name_expr list = let open RenameScope in
     match exprs with
     | (LetSeq (x, e) :: exprs) -> 
         let x' = fresh_var scope x in
@@ -60,5 +74,5 @@ and rename_seq (scope : RenameScope.t) (exprs : string expr list) : name expr li
     | (e :: exprs) -> rename_expr scope e :: rename_seq scope exprs
     | [] -> []
 
-let rename (exprs : string expr list): name expr list =
+let rename (exprs : string_expr list): name_expr list =
     rename_seq {counter = ref 0; variables = RenameMap.empty} exprs    

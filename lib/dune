@@ -1,5 +1,5 @@
 (library
- (name script))
+ (name polaris))
 
 (rule
   (target lexer.ml)

@@ -1,6 +1,6 @@
-open Script
-open Script.Ast
-open Script.Eval
+open Polaris
+open Polaris.Ast
+open Polaris.Eval
 
 let fatal_error (message : string) = 
   print_endline "~~~~~~~~~~~~~~ERROR~~~~~~~~~~~~~~";
@@ -27,12 +27,12 @@ let run (exprs : string_expr list) =
   (* EvalError *)
   | DynamicVarNotFound x -> fatal_error (
         "Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
-      ^ "This variable was either generated dynamically, or there is a bug in the interpreter"
+      ^ "This is definitely a bug in the interpreter"
       )
 
 let () =
   try
-    let lexbuf = Lexing.from_channel (open_in "test.script") in
+    let lexbuf = Lexing.from_channel (open_in "test.pol") in
     let ast = Parser.main Lexer.token lexbuf in
     run ast
   with

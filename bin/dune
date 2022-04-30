@@ -1,7 +1,7 @@
 (executable
- (public_name script)
+ (public_name polaris)
  (name main)
- (libraries script))
+ (libraries polaris))
 
 (env
   (dev

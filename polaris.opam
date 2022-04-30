@@ -2,13 +2,13 @@
 opam-version: "2.0"
 synopsis: "A short synopsis"
 description: "A longer description"
-maintainer: ["Maintainer Name"]
-authors: ["Author Name"]
+maintainer: ["Prophet"]
+authors: ["Prophet"]
 license: "LICENSE"
 tags: ["topics" "to describe" "your" "project"]
-homepage: "https://github.com/username/reponame"
+homepage: "https://github.com/Innf107/polaris"
 doc: "https://url/to/documentation"
-bug-reports: "https://github.com/username/reponame/issues"
+bug-reports: "https://github.com/Innf107/polaris/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.0"}

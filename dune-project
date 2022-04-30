@@ -1,22 +1,22 @@
 (lang dune 3.0)
 
-(name script)
+(name polaris)
 
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github Innf107/polaris))
 
-(authors "Author Name")
+(authors "Prophet")
 
-(maintainers "Maintainer Name")
+(maintainers "Prophet")
 
 (license LICENSE)
 
 (documentation https://url/to/documentation)
 
 (package
- (name script)
+ (name polaris)
  (synopsis "A short synopsis")
  (description "A longer description")
  (depends ocaml dune)

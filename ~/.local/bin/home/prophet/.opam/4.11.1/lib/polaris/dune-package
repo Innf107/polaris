@@ -1,7 +1,0 @@
-(lang dune 3.1)
-(name polaris)
-(version 36943ef-dirty)
-(sections
- (lib /home/prophet/.opam/4.11.1/lib/polaris)
- (bin /home/prophet/.opam/4.11.1/bin))
-(files (lib (META dune-package opam)) (bin (polaris)))

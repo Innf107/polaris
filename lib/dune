@@ -1,15 +1,14 @@
 (library
- (name polaris))
+ (name polaris)
+ (libraries menhirLib))
 
 (rule
   (target lexer.ml)
   (deps lexer.mll)
   (action (run ocamllex %{deps} -o %{target})))
 
-(rule
-  (target parser.ml)
-  (deps parser.mly)
-  (action (run ocamlyacc %{deps})))
+(menhir
+ (modules parser))
 
 (env
   (dev

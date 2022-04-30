@@ -1,3 +1,15 @@
+type loc = {
+  file : string;
+  start_line : int;
+  start_col : int;
+  end_line : int;
+  end_col : int
+}
+module Loc = struct
+  let pretty (loc : loc) =
+    Printf.sprintf "%s:%d:%d-%d:%d" loc.file loc.start_line loc.start_col loc.end_line loc.end_col
+end
+
 module Expr (Name : sig
   type t
 
@@ -8,74 +20,74 @@ struct
 
   type expr =
     (* Lambda calculus *)
-    | Var of name                     (* x *)
-    | App of expr * expr list         (* e (e₁, .., eₙ) *)
-    | Lambda of name list * expr      (* \(x₁, .., xₙ) -> e*)
+    | Var of loc * name                     (* x *)
+    | App of loc * expr * expr list         (* e (e₁, .., eₙ) *)
+    | Lambda of loc * name list * expr      (* \(x₁, .., xₙ) -> e*)
     (* Literals *)
-    | StringLit of string             (* "str" *)
-    | NumLit of float                 (* f *)
-    | UnitLit                         (* () *)
+    | StringLit of loc * string             (* "str" *)
+    | NumLit of loc * float                 (* f *)
+    | UnitLit of loc                        (* () *)
     (* Common Operations *)
-    | Add of expr * expr              (* e + e *)
-    | Sub of expr * expr              (* e - e *)
-    | Mul of expr * expr              (* e * e *)
-    | Div of expr * expr              (* e / e *)
-    | Equals of expr * expr           (* e == e *)
-    | LE of expr * expr               (* e <= e *)
-    | GE of expr * expr               (* e >= e *)
-    | LT of expr * expr               (* e <  e *)
-    | GT of expr * expr               (* e >  e *)
+    | Add of loc * expr * expr              (* e + e *)
+    | Sub of loc * expr * expr              (* e - e *)
+    | Mul of loc * expr * expr              (* e * e *)
+    | Div of loc * expr * expr              (* e / e *)
+    | Equals of loc * expr * expr           (* e == e *)
+    | LE of loc * expr * expr               (* e <= e *)
+    | GE of loc * expr * expr               (* e >= e *)
+    | LT of loc * expr * expr               (* e <  e *)
+    | GT of loc * expr * expr               (* e >  e *)
     (* Branching *)
-    | If of expr * expr * expr        (* if e then e else e*)
+    | If of loc * expr * expr * expr        (* if e then e else e*)
     (* Sequencing *)
-    | Seq of expr list                      (* { e₁ ; .. ; eₙ } *)
-    | LetSeq of name * expr                 (* let x = e (Only valid inside `Seq` expressions) *)
-    | LetRecSeq of name * name list * expr  (* let rec f(x, .., x) = e*)
+    | Seq of loc * expr list                      (* { e₁ ; .. ; eₙ } *)
+    | LetSeq of loc * name * expr                 (* let x = e (Only valid inside `Seq` expressions) *)
+    | LetRecSeq of loc * name * name list * expr  (* let rec f(x, .., x) = e*)
     (* Mutable local definitions *)
-    | Let of name * expr * expr                 (* let x = e1 in e2 (valid everywhere) *)
-    | LetRec of name * name list * expr * expr  (* let rec f(x, .., x) = e*)
-    | Assign of name * expr                     (* x = e *)
+    | Let of loc * name * expr * expr                 (* let x = e1 in e2 (valid everywhere) *)
+    | LetRec of loc * name * name list * expr * expr  (* let rec f(x, .., x) = e*)
+    | Assign of loc * name * expr                     (* x = e *)
     (* Scripting capabilities *)
-    | Print of expr                   (* print(e) (Temporary. 'print' should really just be an intrinsic)*)
-    | ProgCall of string * expr list  (* /p e₁ .. eₙ *)
-    | Pipe of expr list               (* (e₁ | .. | eₙ) *)
+    | Print of loc * expr                   (* print(e) (Temporary. 'print' should really just be an intrinsic)*)
+    | ProgCall of loc * string * expr list  (* /p e₁ .. eₙ *)
+    | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
 
   let rec pretty = function
-    | Var x -> Name.pretty x
-    | App (f, args) ->
+    | Var (_, x) -> Name.pretty x
+    | App (_, f, args) ->
         pretty f ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")"
-    | Lambda (params, e) ->
+    | Lambda (_, params, e) ->
         "\\("
         ^ String.concat ", " (List.map Name.pretty params)
         ^ ") -> " ^ pretty e
-    | StringLit l -> "\"" ^ l ^ "\""
-    | NumLit f -> string_of_float f
-    | UnitLit -> "()"
+    | StringLit (_,l) -> "\"" ^ l ^ "\""
+    | NumLit (_, f) -> string_of_float f
+    | UnitLit _ -> "()"
 
-    | Add (e1, e2) -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
-    | Sub (e1, e2) -> "(" ^ pretty e1 ^ " - " ^ pretty e2 ^ ")"
-    | Mul (e1, e2) -> "(" ^ pretty e1 ^ " * " ^ pretty e2 ^ ")"
-    | Div (e1, e2) -> "(" ^ pretty e1 ^ " / " ^ pretty e2 ^ ")"
+    | Add (_, e1, e2) -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
+    | Sub (_, e1, e2) -> "(" ^ pretty e1 ^ " - " ^ pretty e2 ^ ")"
+    | Mul (_, e1, e2) -> "(" ^ pretty e1 ^ " * " ^ pretty e2 ^ ")"
+    | Div (_, e1, e2) -> "(" ^ pretty e1 ^ " / " ^ pretty e2 ^ ")"
 
-    | Equals (e1, e2) -> "(" ^ pretty e1 ^ " == " ^ pretty e2 ^ ")"
-    | LE (e1, e2)     -> "(" ^ pretty e1 ^ " <= " ^ pretty e2 ^ ")"
-    | GE (e1, e2)     -> "(" ^ pretty e1 ^ " >= " ^ pretty e2 ^ ")"
-    | LT (e1, e2)     -> "(" ^ pretty e1 ^ " <  " ^ pretty e2 ^ ")"
-    | GT (e1, e2)     -> "(" ^ pretty e1 ^ " >  " ^ pretty e2 ^ ")"
+    | Equals (_, e1, e2) -> "(" ^ pretty e1 ^ " == " ^ pretty e2 ^ ")"
+    | LE (_, e1, e2)     -> "(" ^ pretty e1 ^ " <= " ^ pretty e2 ^ ")"
+    | GE (_, e1, e2)     -> "(" ^ pretty e1 ^ " >= " ^ pretty e2 ^ ")"
+    | LT (_, e1, e2)     -> "(" ^ pretty e1 ^ " <  " ^ pretty e2 ^ ")"
+    | GT (_, e1, e2)     -> "(" ^ pretty e1 ^ " >  " ^ pretty e2 ^ ")"
 
-    | If (e1, e2, e3) -> "if " ^ pretty e1 ^ " then " ^ pretty e2 ^ " else " ^ pretty e3
+    | If (_, e1, e2, e3) -> "if " ^ pretty e1 ^ " then " ^ pretty e2 ^ " else " ^ pretty e3
 
-    | Seq exprs -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
-    | LetSeq (x, e) -> "let " ^ Name.pretty x ^ " = " ^ pretty e
-    | LetRecSeq (x, xs, e) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e
-    | Let (x, e1, e2) ->
+    | Seq (_, exprs) -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
+    | LetSeq (_, x, e) -> "let " ^ Name.pretty x ^ " = " ^ pretty e
+    | LetRecSeq (_, x, xs, e) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e
+    | Let (_, x, e1, e2) ->
         "let " ^ Name.pretty x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
-    | LetRec (x, xs, e1, e2) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
-    | Assign (x, e) -> Name.pretty x ^ " = " ^ pretty e
-    | Print e -> "print " ^ pretty e
-    | ProgCall (prog, args) ->
+    | LetRec (_, x, xs, e1, e2) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
+    | Assign (_, x, e) -> Name.pretty x ^ " = " ^ pretty e
+    | Print (_, e) -> "print(" ^ pretty e ^ ")"
+    | ProgCall (_, prog, args) ->
         "/" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
-    | Pipe exprs -> String.concat " | " (List.map pretty exprs)
+    | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""

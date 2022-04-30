@@ -1,12 +1,28 @@
 {
+open Lexing
 open Parser
+
+exception LexError of string
+
+
+let next_line lexbuf =
+  let pos = lexbuf.lex_curr_p in
+  lexbuf.lex_curr_p <-
+    { pos with pos_bol = lexbuf.lex_curr_pos;
+               pos_lnum = pos.pos_lnum + 1
+    }
 }
 
+let digit = ['0'-'9']
+
+let newline = '\n' | "\r\n" 
+
 rule token = parse
-| [' ' '\t' '\n'] { token lexbuf }
-| "#" _* '\n' { token lexbuf }
-| '-'? ['0'-'9']+ '.' ['0'-'9']* as lit_string { FLOAT (float_of_string lit_string) }
-| '-'? ['0'-'9']+ as lit_string { INT (int_of_string lit_string)}
+| [ ' ' '\t' ]           { token lexbuf }
+| newline                { next_line lexbuf; token lexbuf }
+| "#" _* (newline | eof) { token lexbuf }
+| '-'? digit+ '.' digit* as lit_string { FLOAT (float_of_string lit_string) }
+| '-'? digit+ as lit_string { INT (int_of_string lit_string)}
 | "let"     { LET }
 | "rec"     { REC }
 | "in"      { IN }
@@ -30,7 +46,6 @@ rule token = parse
 | '>'       { GT }
 | "<="      { LE }
 | ">="      { GE }
-| "()"      { UNIT }
 | ['A'-'Z' 'a'-'z' '_'] ['A'-'Z' 'a'-'z' '0'-'9' '_']* as id { IDENT id }
 | '"' (_* as str) '"' { STRING str }
 | "\\"      { LAMBDA }

@@ -17,10 +17,10 @@ and value =
   | BoolV of bool
 
 module EvalError = struct
-  exception DynamicVarNotFound of name
-  exception UnableToConvertTo of string * value * string
-  exception TryingToApplyNonFunction of value
-  exception InvalidNumberOfArguments of name list * value list
+  exception DynamicVarNotFound of name * loc
+  exception UnableToConvertTo of string * value * string * loc
+  exception TryingToApplyNonFunction of value * loc
+  exception InvalidNumberOfArguments of name list * value list * loc
 end  
 
 module Value = struct
@@ -38,35 +38,35 @@ module Value = struct
 end
 
 (* TODO: handle non-existant variables more gracefully *)
-let lookup_var (env : eval_env) (var : name) : value ref = 
+let lookup_var (env : eval_env) (loc : loc) (var : name) : value ref = 
   try 
     VarMap.find var env.vars
   with
-    Not_found -> raise (EvalError.DynamicVarNotFound var)
+    Not_found -> raise (EvalError.DynamicVarNotFound (var, loc))
 
-let insert_vars (vars : name list) (vals : value list) (env : eval_env): eval_env =
+let insert_vars (vars : name list) (vals : value list) (env : eval_env) (loc : loc) : eval_env =
   if (List.compare_lengths vars vals != 0) 
-  then raise (EvalError.InvalidNumberOfArguments (vars, vals))
+  then raise (EvalError.InvalidNumberOfArguments (vars, vals, loc))
   else { vars = List.fold_right2 (fun x v r -> VarMap.add x (ref v) r) vars vals env.vars }
 
 (* Tries to convert a number to a value. Throws an error if it can't *)
-let as_num context = function
+let as_num context loc = function
   | NumV x -> x
   | Untyped value ->
     begin match float_of_string_opt value with
     | Some x -> x
-    | None -> raise (EvalError.UnableToConvertTo ("number", Untyped value, context))
+    | None -> raise (EvalError.UnableToConvertTo ("number", Untyped value, context, loc))
     end
-  | x -> raise (EvalError.UnableToConvertTo ("number", x, context))
+  | x -> raise (EvalError.UnableToConvertTo ("number", x, context, loc))
 
-let as_bool context = function
+let as_bool context loc = function
   | BoolV x -> x
   | Untyped value ->
     begin match bool_of_string_opt value with
     | Some x -> x
-    | None -> raise (EvalError.UnableToConvertTo ("boolean", Untyped value, context))
+    | None -> raise (EvalError.UnableToConvertTo ("boolean", Untyped value, context, loc))
     end
-  | x -> raise (EvalError.UnableToConvertTo ("boolean", x, context))
+  | x -> raise (EvalError.UnableToConvertTo ("boolean", x, context, loc))
 
 let val_eq (x : value) (y : value) : bool = 
   match x, y with
@@ -83,112 +83,112 @@ let val_eq (x : value) (y : value) : bool =
 let rec eval_expr (env : eval_env) (expr : name_expr) : value =
   let open NameExpr in
   match expr with
-  | Var x -> !(lookup_var env x)
-  | App (f, args) -> (
+  | Var (loc, x) -> !(lookup_var env loc x)
+  | App (loc, f, args) -> (
       match eval_expr env f with
       | ClosureV (clos_env, params, body) ->
           (* Function arguments are evaluated left to right *)
           let arg_vals = List.map (eval_expr env) args in
-          eval_expr (insert_vars params arg_vals (Lazy.force clos_env)) body
+          eval_expr (insert_vars params arg_vals (Lazy.force clos_env) loc) body
       | x ->
-          raise (EvalError.TryingToApplyNonFunction x) (* TODO: "Trying to apply non-function value 'x'" *))
-  | Lambda (params, e) -> ClosureV (lazy env, params, e)
+          raise (EvalError.TryingToApplyNonFunction (x, loc)))
+  | Lambda (_, params, e) -> ClosureV (lazy env, params, e)
   
-  | StringLit s -> StringV s
-  | NumLit f    -> NumV f
-  | UnitLit     -> UnitV
+  | StringLit (_, s) -> StringV s
+  | NumLit (_, f)    -> NumV f
+  | UnitLit _        -> UnitV
   
   (* TODO: Handle untyped *)
-  | Add (e1, e2) -> 
+  | Add (loc, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to add " ^ Value.pretty v1 ^ " and " ^ Value.pretty v2 in
-    NumV (as_num context v1 +. as_num context v2)
-  | Sub (e1, e2) -> 
+    NumV (as_num context loc v1 +. as_num context loc v2)
+  | Sub (loc, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to subtract " ^ Value.pretty v2 ^ " from " ^ Value.pretty v1 in
-    NumV (as_num context v1 -. as_num context v2)
-  | Mul (e1, e2) -> 
+    NumV (as_num context loc v1 -. as_num context loc v2)
+  | Mul (loc, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to multiply " ^ Value.pretty v1 ^ " and " ^ Value.pretty v2 in
-    NumV (as_num context v1 *. as_num context v2)
-  | Div (e1, e2) -> 
+    NumV (as_num context loc v1 *. as_num context loc v2)
+  | Div (loc, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to divide " ^ Value.pretty v1 ^ " by " ^ Value.pretty v2 in
-    NumV (as_num context v1 /. as_num context v2)
+    NumV (as_num context loc v1 /. as_num context loc v2)
 
-  | Equals (e1, e2) -> 
+  | Equals (_, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     BoolV (val_eq v1 v2)
 
-  | LE (e1, e2) -> 
+  | LE (loc, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to compute " ^ Value.pretty v1 ^ " <= " ^ Value.pretty v2 in
-    BoolV (as_num context v1 <= as_num context v2)
-  | GE (e1, e2) -> 
+    BoolV (as_num context loc v1 <= as_num context loc v2)
+  | GE (loc, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to compute " ^ Value.pretty v1 ^ " >= " ^ Value.pretty v2 in
-    BoolV (as_num context v1 >= as_num context v2)
-  | LT (e1, e2) -> 
+    BoolV (as_num context loc v1 >= as_num context loc v2)
+  | LT (loc, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to compute " ^ Value.pretty v1 ^ " < " ^ Value.pretty v2 in
-    BoolV (as_num context v1 < as_num context v2)
-  | GT (e1, e2) -> 
+    BoolV (as_num context loc v1 < as_num context loc v2)
+  | GT (loc, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     let context = "Trying to compute " ^ Value.pretty v1 ^ " > " ^ Value.pretty v2 in
-    BoolV (as_num context v1 > as_num context v2)
+    BoolV (as_num context loc v1 > as_num context loc v2)
   
-  | If (e1, e2, e3) ->
+  | If (loc, e1, e2, e3) ->
     let v1 = eval_expr env e1 in
     let context = "In the condition of an if expression" in
-    if as_bool context v1 then 
+    if as_bool context loc v1 then 
       eval_expr env e2
     else
       eval_expr env e3
 
-  | Seq exprs -> eval_seq env exprs
+  | Seq (_, exprs) -> eval_seq env exprs
   | LetSeq _ | LetRecSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
-  | Let (x, e1, e2) ->
-    eval_expr (insert_vars [x] [eval_expr env e1] env) e2
-  | LetRec (f, params, e1, e2) ->
-    let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e1)] env) in
+  | Let (loc, x, e1, e2) ->
+    eval_expr (insert_vars [x] [eval_expr env e1] env loc) e2
+  | LetRec (loc, f, params, e1, e2) ->
+    let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e1)] env loc) in
     eval_expr (Lazy.force env') e2
-  | Assign (x, e1) ->
-    let x_ref = lookup_var env x in
+  | Assign (loc, x, e1) ->
+    let x_ref = lookup_var env loc x  in
     x_ref := (eval_expr env e1);
     UnitV
-  | Print expr ->
+  | Print (_, expr) ->
     let value = eval_expr env expr in
     print_endline (Value.pretty value);
     UnitV
-  | ProgCall (prog, args) -> raise TODO (* TODO *)
-  | Pipe exprs -> raise TODO (* TODO *)
+  | ProgCall (loc, prog, args) -> raise TODO (* TODO *)
+  | Pipe (loc, exprs) -> raise TODO (* TODO *)
 
 and eval_seq (env : eval_env) (exprs : name_expr list) : value =
   match exprs with
   | [] -> UnitV
-  | LetSeq (x, e) :: exprs -> 
-    eval_seq (insert_vars [x] [(eval_expr env e)] env) exprs
-  | LetRecSeq (f, params, e) :: exprs ->
-    let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e)] env) in
+  | LetSeq (loc, x, e) :: exprs -> 
+    eval_seq (insert_vars [x] [(eval_expr env e)] env loc) exprs
+  | LetRecSeq (loc, f, params, e) :: exprs ->
+    let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e)] env loc) in
     eval_seq (Lazy.force env') exprs
   | [ e ] -> eval_expr env e
   | e :: exprs ->
@@ -196,7 +196,7 @@ and eval_seq (env : eval_env) (exprs : name_expr list) : value =
       let _ = eval_expr env e in
       eval_seq env exprs
 
-let eval (expr : name_expr) : value = eval_expr { vars = VarMap.empty } expr
+let eval (exprs : name_expr list) : value = eval_seq { vars = VarMap.empty } exprs
 
 
 (* Note [left-to-right evaluation]

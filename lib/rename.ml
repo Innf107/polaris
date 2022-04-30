@@ -4,24 +4,22 @@ open Util
 module RenameMap = Map.Make(String)
 
 module RenameError = struct
-    exception VarNotFound of string
-    exception LetSeqInNonSeq of StringExpr.expr
+    exception VarNotFound of string * loc
+    exception LetSeqInNonSeq of StringExpr.expr * loc
 end
 
 module RenameScope = struct
     open RenameMap
     type t = {counter: int ref; variables: name RenameMap.t}
 
-    (* TODO: Handle shadowing sensibly somehow *)
     let insert_var (old : string) (renamed : name) (scope : t) : t =
         { scope with variables = add old renamed scope.variables }
     
-    (* TODO: How do exceptions work in OCaml? *)
-    let lookup_var (scope : t) (var : string) : 'name =
+    let lookup_var (scope : t) (loc : loc) (var : string) : 'name =
         try 
             find var scope.variables 
         with
-            Not_found -> raise (RenameError.VarNotFound var)
+            Not_found -> raise (RenameError.VarNotFound (var, loc))
 
     let fresh_var (scope : t) (var : string) : 'name =
         let ix = !(scope.counter) in
@@ -32,72 +30,72 @@ end
 
 let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = let open RenameScope in
     match expr with 
-    | Var var_name -> Var (lookup_var scope var_name)
-    | App (f, args) -> App (rename_expr scope f, List.map (rename_expr scope) args)
+    | Var (loc, var_name) -> Var (loc, lookup_var scope loc var_name)
+    | App (loc, f, args) -> App (loc, rename_expr scope f, List.map (rename_expr scope) args)
     
-    | Lambda (xs, e) ->
+    | Lambda (loc, xs, e) ->
         let xs' = List.map (fresh_var scope) xs in
         let scope' = List.fold_right2 insert_var xs xs' scope in
-        Lambda (xs', rename_expr scope' e)
+        Lambda (loc, xs', rename_expr scope' e)
 
-    | StringLit s -> StringLit s
-    | NumLit n -> NumLit n
-    | UnitLit -> UnitLit
+    | StringLit (loc, s) -> StringLit (loc, s)
+    | NumLit (loc, n) -> NumLit (loc, n)
+    | UnitLit loc -> UnitLit loc
 
-    | Add(e1,e2) -> Add(rename_expr scope e1, rename_expr scope e2)
-    | Sub(e1,e2) -> Sub(rename_expr scope e1, rename_expr scope e2)
-    | Mul(e1,e2) -> Mul(rename_expr scope e1, rename_expr scope e2)
-    | Div(e1,e2) -> Div(rename_expr scope e1, rename_expr scope e2)
+    | Add(loc, e1,e2) -> Add(loc, rename_expr scope e1, rename_expr scope e2)
+    | Sub(loc, e1,e2) -> Sub(loc, rename_expr scope e1, rename_expr scope e2)
+    | Mul(loc, e1,e2) -> Mul(loc, rename_expr scope e1, rename_expr scope e2)
+    | Div(loc, e1,e2) -> Div(loc, rename_expr scope e1, rename_expr scope e2)
 
-    | Equals(e1,e2) -> Equals(rename_expr scope e1, rename_expr scope e2)
-    | LE(e1,e2)     -> LE(rename_expr scope e1, rename_expr scope e2)
-    | GE(e1,e2)     -> GE(rename_expr scope e1, rename_expr scope e2)
-    | LT(e1,e2)     -> LT(rename_expr scope e1, rename_expr scope e2)
-    | GT(e1,e2)     -> GT(rename_expr scope e1, rename_expr scope e2)
+    | Equals(loc, e1,e2) -> Equals(loc, rename_expr scope e1, rename_expr scope e2)
+    | LE(loc, e1,e2)     -> LE(loc, rename_expr scope e1, rename_expr scope e2)
+    | GE(loc, e1,e2)     -> GE(loc, rename_expr scope e1, rename_expr scope e2)
+    | LT(loc, e1,e2)     -> LT(loc, rename_expr scope e1, rename_expr scope e2)
+    | GT(loc, e1,e2)     -> GT(loc, rename_expr scope e1, rename_expr scope e2)
 
-    | If(e1, e2, e3) -> If(rename_expr scope e1, rename_expr scope e2, rename_expr scope e3)
+    | If(loc, e1, e2, e3) -> If(loc, rename_expr scope e1, rename_expr scope e2, rename_expr scope e3)
 
-    | Seq es -> Seq (rename_seq scope es)
+    | Seq (loc, es) -> Seq (loc, rename_seq scope es)
 
-    | LetSeq _ | LetRecSeq _ -> raise (RenameError.LetSeqInNonSeq expr)
+    | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _) -> raise (RenameError.LetSeqInNonSeq (expr, loc))
 
-    | Let (x, e1, e2) -> 
+    | Let (loc, x, e1, e2) -> 
         let x' = fresh_var scope x in
         let scope' = insert_var x x' scope in
         (* regular lets are non-recursive! *)
-        Let (x', rename_expr scope e1, rename_expr scope' e2)
-    | LetRec (x, params, e1, e2) ->
+        Let (loc, x', rename_expr scope e1, rename_expr scope' e2)
+    | LetRec (loc, x, params, e1, e2) ->
         let x' = fresh_var scope x in
         let params' = List.map (fresh_var scope) params in
         let scope' = insert_var x x' scope in
         let inner_scope = List.fold_right2 insert_var params params' scope' in
         (* let rec's *are* recursive *)
-        LetRec(x', params', rename_expr inner_scope e1, rename_expr scope' e2)
-    | Assign (x, e) ->
-        let x' = lookup_var scope x in
-        Assign (x', rename_expr scope e)
+        LetRec(loc, x', params', rename_expr inner_scope e1, rename_expr scope' e2)
+    | Assign (loc, x, e) ->
+        let x' = lookup_var scope loc x in
+        Assign (loc, x', rename_expr scope e)
 
-    | Print e -> Print (rename_expr scope e)
+    | Print (loc, e) -> Print (loc, rename_expr scope e)
 
-    | ProgCall (p, args) ->
-        ProgCall (p, List.map (rename_expr scope) args)
-    | Pipe exprs ->
-        Pipe (List.map (rename_expr scope) exprs)
+    | ProgCall (loc, p, args) ->
+        ProgCall (loc, p, List.map (rename_expr scope) args)
+    | Pipe (loc, exprs) ->
+        Pipe (loc, List.map (rename_expr scope) exprs)
 
 and rename_seq (scope : RenameScope.t) (exprs : string_expr list) : name_expr list = let open RenameScope in
     match exprs with
-    | (LetSeq (x, e) :: exprs) -> 
+    | (LetSeq (loc, x, e) :: exprs) -> 
         let x' = fresh_var scope x in
         let scope' = insert_var x x' scope in
         (* regular lets are non-recursive! *)
-        LetSeq (x', rename_expr scope e) :: rename_seq scope' exprs
-    | LetRecSeq (x, params, e) :: exprs -> 
+        LetSeq (loc, x', rename_expr scope e) :: rename_seq scope' exprs
+    | LetRecSeq (loc, x, params, e) :: exprs -> 
         let x' = fresh_var scope x in
         let params' = List.map (fresh_var scope) params in
         let scope' = insert_var x x' scope in
         let inner_scope = List.fold_right2 insert_var params params' scope' in
         (* let rec's *are* recursive! *)
-        LetRecSeq(x', params', rename_expr inner_scope e) :: rename_seq scope' exprs
+        LetRecSeq(loc, x', params', rename_expr inner_scope e) :: rename_seq scope' exprs
     | (e :: exprs) -> rename_expr scope e :: rename_seq scope exprs
     | [] -> []
 

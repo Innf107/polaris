@@ -8,6 +8,18 @@ type loc = {
 module Loc = struct
   let pretty (loc : loc) =
     Printf.sprintf "%s:%d:%d-%d:%d" loc.file loc.start_line loc.start_col loc.end_line loc.end_col
+
+  let from_pos (start_pos : Lexing.position) (end_pos : Lexing.position) : loc = {
+      file=start_pos.pos_fname
+    ; start_line = start_pos.pos_lnum
+    (* pos_cnum is the offset between the beginning of the buffer and the position
+      and pos_bol is the offset between the beginning of the buffer and the beginning of the current line
+    *)
+    ; start_col  = start_pos.pos_cnum - start_pos.pos_bol + 1
+    ; end_line   = end_pos.pos_lnum
+    ; end_col    = end_pos.pos_cnum - end_pos.pos_bol + 1
+    }
+
 end
 
 module Expr (Name : sig

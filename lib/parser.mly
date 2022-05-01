@@ -4,17 +4,7 @@ open StringExpr
 module E = MenhirLib.ErrorReports
 module L = MenhirLib.LexerUtil
 
-let loc (start_pos : Lexing.position) (end_pos : Lexing.position) = 
-  {
-    file=start_pos.pos_fname
-  ; start_line = start_pos.pos_lnum
-  (* pos_cnum is the offset between the beginning of the buffer and the position
-     and pos_bol is the offset between the beginning of the buffer and the beginning of the current line
-   *)
-  ; start_col  = start_pos.pos_cnum - start_pos.pos_bol + 1
-  ; end_line   = end_pos.pos_lnum
-  ; end_col    = end_pos.pos_cnum - end_pos.pos_bol + 1
-  }
+let loc = Loc.from_pos
 
 %}
 

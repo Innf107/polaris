@@ -182,21 +182,26 @@ let rec eval_expr (env : eval_env) (expr : name_expr) : value =
   | ProgCall (loc, prog, args) -> raise TODO (* TODO *)
   | Pipe (loc, exprs) -> raise TODO (* TODO *)
 
-and eval_seq (env : eval_env) (exprs : name_expr list) : value =
+and eval_seq_state (env : eval_env) (exprs : name_expr list) : value * eval_env =
   match exprs with
-  | [] -> UnitV
+  | [] -> (UnitV, env)
   | LetSeq (loc, x, e) :: exprs -> 
-    eval_seq (insert_vars [x] [(eval_expr env e)] env loc) exprs
+    eval_seq_state (insert_vars [x] [(eval_expr env e)] env loc) exprs
   | LetRecSeq (loc, f, params, e) :: exprs ->
     let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e)] env loc) in
-    eval_seq (Lazy.force env') exprs
-  | [ e ] -> eval_expr env e
+    eval_seq_state (Lazy.force env') exprs
+  | [ e ] -> (eval_expr env e, env)
   | e :: exprs ->
       (* The result of 'eval_expr e' is purposefully ignored *)
       let _ = eval_expr env e in
-      eval_seq env exprs
+      eval_seq_state env exprs
+and eval_seq env exprs = let (v, _) = eval_seq_state env exprs in v
 
-let eval (exprs : name_expr list) : value = eval_seq { vars = VarMap.empty } exprs
+let empty_eval_env : eval_env = {
+  vars = VarMap.empty
+}
+
+let eval (exprs : name_expr list) : value = eval_seq empty_eval_env exprs
 
 
 (* Note [left-to-right evaluation]

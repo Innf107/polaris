@@ -12,6 +12,9 @@ module RenameScope = struct
     open RenameMap
     type t = {counter: int ref; variables: name RenameMap.t}
 
+    let empty : t =
+        { counter = ref 0; variables = RenameMap.empty }
+
     let insert_var (old : string) (renamed : name) (scope : t) : t =
         { scope with variables = add old renamed scope.variables }
     
@@ -82,22 +85,32 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
     | Pipe (loc, exprs) ->
         Pipe (loc, List.map (rename_expr scope) exprs)
 
-and rename_seq (scope : RenameScope.t) (exprs : string_expr list) : name_expr list = let open RenameScope in
+and rename_seq_state (scope : RenameScope.t) (exprs : string_expr list) : name_expr list * RenameScope.t = let open RenameScope in
     match exprs with
     | (LetSeq (loc, x, e) :: exprs) -> 
         let x' = fresh_var scope x in
         let scope' = insert_var x x' scope in
         (* regular lets are non-recursive! *)
-        LetSeq (loc, x', rename_expr scope e) :: rename_seq scope' exprs
+        let e' = rename_expr scope e in
+        let exprs', res_scope = rename_seq_state scope' exprs in
+        (LetSeq (loc, x', e') :: exprs', res_scope)
     | LetRecSeq (loc, x, params, e) :: exprs -> 
         let x' = fresh_var scope x in
         let params' = List.map (fresh_var scope) params in
         let scope' = insert_var x x' scope in
         let inner_scope = List.fold_right2 insert_var params params' scope' in
         (* let rec's *are* recursive! *)
-        LetRecSeq(loc, x', params', rename_expr inner_scope e) :: rename_seq scope' exprs
-    | (e :: exprs) -> rename_expr scope e :: rename_seq scope exprs
-    | [] -> []
+        let e' = rename_expr inner_scope e in
+        let exprs', res_scope = rename_seq_state scope' exprs in
+        (LetRecSeq(loc, x', params', e') :: exprs', res_scope)
+    | (e :: exprs) -> 
+        let e' = rename_expr scope e in
+        let exprs', res_state = rename_seq_state scope exprs in
+        (e' :: exprs', res_state)
+    | [] -> ([], scope)
+and rename_seq scope exprs =
+    let res, _ = rename_seq_state scope exprs in
+    res
 
 let rename (exprs : string_expr list): name_expr list =
-    rename_seq {counter = ref 0; variables = RenameMap.empty} exprs    
+    rename_seq RenameScope.empty exprs    

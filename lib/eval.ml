@@ -37,7 +37,6 @@ module Value = struct
     | BoolV b -> string_of_bool b
 end
 
-(* TODO: handle non-existant variables more gracefully *)
 let lookup_var (env : eval_env) (loc : loc) (var : name) : value ref = 
   try 
     VarMap.find var env.vars

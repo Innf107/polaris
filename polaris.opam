@@ -12,8 +12,8 @@ bug-reports: "https://github.com/Innf107/polaris/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.0"}
-  "odoc" {with-doc}
   "menhirLib"
+  "odoc" {with-doc}
 ]
 build: [
   ["dune" "subst"] {dev}

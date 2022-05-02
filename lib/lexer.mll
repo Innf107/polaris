@@ -20,7 +20,7 @@ let newline = '\n' | "\r\n"
 rule token = parse
 | [ ' ' '\t' ]           { token lexbuf }
 | newline                { next_line lexbuf; token lexbuf }
-| "#" _* (newline | eof) { token lexbuf }
+| "#" [^'\n']*? (newline | eof) { token lexbuf } (* TODO: Correctly handle \r\n *)
 | '-'? digit+ '.' digit* as lit_string { FLOAT (float_of_string lit_string) }
 | '-'? digit+ as lit_string { INT (int_of_string lit_string)}
 | "let"     { LET }
@@ -47,6 +47,7 @@ rule token = parse
 | "<="      { LE }
 | ">="      { GE }
 | ['A'-'Z' 'a'-'z' '_'] ['A'-'Z' 'a'-'z' '0'-'9' '_']* as id { IDENT id }
-| '"' (_* as str) '"' { STRING str }
+| '"' ([^'"']*? as str) '"' { STRING str }
 | "\\"      { LAMBDA }
 | eof       { EOF }
+

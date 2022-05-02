@@ -39,6 +39,7 @@ struct
     | StringLit of loc * string             (* "str" *)
     | NumLit of loc * float                 (* f *)
     | UnitLit of loc                        (* () *)
+    | ListLit of loc * expr list            (* [e, .., e] *)
     (* Common Operations *)
     | Add of loc * expr * expr              (* e + e *)
     | Sub of loc * expr * expr              (* e - e *)
@@ -75,6 +76,7 @@ struct
     | StringLit (_,l) -> "\"" ^ l ^ "\""
     | NumLit (_, f) -> string_of_float f
     | UnitLit _ -> "()"
+    | ListLit (_, exprs) -> "[" ^ String.concat ", " (List.map pretty exprs) ^ "]"
 
     | Add (_, e1, e2) -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
     | Sub (_, e1, e2) -> "(" ^ pretty e1 ^ " - " ^ pretty e2 ^ ")"

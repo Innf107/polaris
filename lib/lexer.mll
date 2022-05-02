@@ -36,6 +36,8 @@ rule token = parse
 | ')'       { RPAREN }
 | '{'       { LBRACE }
 | '}'       { RBRACE }
+| '['       { LBRACKET }
+| ']'       { RBRACKET }
 | '+'       { PLUS }
 | '-'       { MINUS }
 | '*'       { STAR }

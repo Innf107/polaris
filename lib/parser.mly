@@ -15,7 +15,7 @@ let loc = Loc.from_pos
 %token LET REC IN
 %token LAMBDA ARROW
 %token COMMA SEMI
-%token LPAREN RPAREN LBRACE RBRACE
+%token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET
 %token EQUALS
 %token DOUBLEEQUALS LT GT LE GE
 %token PLUS MINUS STAR SLASH
@@ -43,6 +43,7 @@ expr:
   | FLOAT                                                       { NumLit (loc $startpos $endpos, $1) }                             // f
   | LPAREN RPAREN                                               { UnitLit (loc $startpos $endpos) }                                // ()
   | IDENT                                                       { Var (loc $startpos $endpos, $1) }                                // x
+  | LBRACKET expr_comma_list RBRACKET                           { ListLit (loc $startpos $endpos, $2) }
   | LPAREN expr RPAREN                                          { $2 }                                                             // ( e )
   | LAMBDA IDENT ARROW expr                                     { Lambda(loc $startpos $endpos, [$2], $4) }                        // \x -> e
   | LAMBDA LPAREN ident_list RPAREN ARROW expr                  { Lambda(loc $startpos $endpos, $3, $6) }                          // \(x, .., x) -> e

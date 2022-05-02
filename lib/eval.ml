@@ -15,6 +15,12 @@ and value =
   | ClosureV of eval_env lazy_t * name list * name_expr
   | UnitV
   | BoolV of bool
+  (* Lists are *immutable*. 
+     Otherwise we would have to deal with some kind of a 'place' system, which is
+     anything but ideal. One should be able to approximate mutable lists
+     by mutable references to immutable lists 99% of the time, so this is
+     hopefully not going to be an issue. *)
+  | ListV of value list 
 
 module EvalError = struct
   exception DynamicVarNotFound of name * loc
@@ -26,15 +32,19 @@ end
 module Value = struct
   type t = value
 
-  let pretty (x : t) : string =
+  let rec pretty (x : t) : string =
     match x with
     | Untyped s -> s
     | StringV s -> s
-    | NumV n -> string_of_float n
+    | NumV n -> 
+      if Float.is_integer n
+      then string_of_int (int_of_float n)
+      else string_of_float n
     | ClosureV (_, params, _) ->
         "<closure(" ^ String.concat ", " (List.map Name.pretty params) ^ ")>"
     | UnitV -> "()"
     | BoolV b -> string_of_bool b
+    | ListV vals -> "[" ^ String.concat ", " (List.map pretty vals) ^ "]"
 end
 
 let lookup_var (env : eval_env) (loc : loc) (var : name) : value ref = 
@@ -97,6 +107,10 @@ let rec eval_expr (env : eval_env) (expr : name_expr) : value =
   | NumLit (_, f)    -> NumV f
   | UnitLit _        -> UnitV
   
+  | ListLit (_, exprs) -> 
+    let vals = List.map (eval_expr env) exprs in 
+    ListV vals
+
   (* TODO: Handle untyped *)
   | Add (loc, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)

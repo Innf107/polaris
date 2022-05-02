@@ -115,7 +115,7 @@ module Name = struct
   let pretty (name : t) = name.name ^ "_" ^ string_of_int name.index
 
   (* Comparisons are purely based on the name index
-     and therefore has no actual meaning.
+     and therefore have no actual meaning.
   *)
   let compare (x : t) (y : t) : int = Int.compare x.index y.index
 end

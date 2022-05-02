@@ -33,7 +33,10 @@ end
 
 let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = let open RenameScope in
     match expr with 
-    | Var (loc, var_name) -> Var (loc, lookup_var scope loc var_name)
+    | Var (loc, var_name) ->
+        if Primops.is_primop var_name
+        then Var(loc, {name=var_name; index= -1})
+        else Var (loc, lookup_var scope loc var_name)
     | App (loc, f, args) -> App (loc, rename_expr scope f, List.map (rename_expr scope) args)
     
     | Lambda (loc, xs, e) ->

@@ -1,6 +1,8 @@
 (library
  (name polaris)
- (libraries menhirLib))
+ (libraries 
+  menhirLib
+  unix))
 
 (rule
   (target lexer.ml)

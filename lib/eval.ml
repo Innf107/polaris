@@ -44,6 +44,8 @@ module EvalError = struct
      Maybe these could even just be contract failures, if those ever
      become a feature? *)
   exception PrimOpArgumentError of string * value list * string * loc
+
+  exception InvalidProcessArg of value * loc
 end  
 
 module Value = struct
@@ -64,6 +66,12 @@ module Value = struct
     | UnitV -> "()"
     | BoolV b -> string_of_bool b
     | ListV vals -> "[" ^ String.concat ", " (List.map pretty vals) ^ "]"
+
+  let rec as_args (fail : t -> 'a) (x : t) : string list =
+    match x with
+    | Untyped _ | StringV _ | NumV _ | BoolV _ -> [pretty x]
+    | ClosureV _ | PrimOpV _ | UnitV -> fail x
+    | ListV x -> List.concat_map (as_args fail) x
 end
 
 let lookup_var (env : eval_env) (loc : loc) (var : name) : value ref = 
@@ -225,8 +233,17 @@ let rec eval_expr (env : eval_env) (expr : name_expr) : value =
     let value = eval_expr env expr in
     print_endline (Value.pretty value);
     UnitV
-  | ProgCall (loc, prog, args) -> raise TODO (* TODO *)
-  | Pipe (loc, exprs) -> raise TODO (* TODO *)
+  | ProgCall (loc, prog, args) -> 
+    let open Sys in
+    let open Unix in
+    let open EvalError in
+    let values = List.map (eval_expr env) args in
+    let in_chan = open_process_args_in
+                prog
+                (Array.of_list (prog :: List.concat_map (Value.as_args (fun x -> raise (InvalidProcessArg (x, loc)))) values))
+    in
+    Untyped (In_channel.input_all in_chan)
+  | Pipe (loc, exprs) -> raise TODO
 
 and eval_seq_state (env : eval_env) (exprs : name_expr list) : value * eval_env =
   match exprs with

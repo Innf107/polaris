@@ -242,7 +242,10 @@ let rec eval_expr (env : eval_env) (expr : name_expr) : value =
                 prog
                 (Array.of_list (prog :: List.concat_map (Value.as_args (fun x -> raise (InvalidProcessArg (x, loc)))) values))
     in
-    Untyped (In_channel.input_all in_chan)
+    let result = In_channel.input_all in_chan in
+    if String.length result > 0 && result.[String.length result - 1] == '\n'
+    then Untyped (String.sub result 0 (String.length result - 1))
+    else Untyped result
   | Pipe (loc, exprs) -> raise TODO
 
 and eval_seq_state (env : eval_env) (exprs : name_expr list) : value * eval_env =

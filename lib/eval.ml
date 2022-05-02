@@ -256,6 +256,13 @@ and eval_primop env op args loc = let open EvalError in
               | [ListV []] -> raise (PrimOpArgumentError ("tail", args, "Empty list", loc))
               | _ -> raise (PrimOpArgumentError ("tail", args, "Expected a single list", loc))
               end
+  | "require" -> begin match args with
+                (* Ideally, we would just have to read the file and call Driver.run with
+                   the resulting lexbuf here. The issue is that Driver imports Eval and 
+                   now Eval would also import Driver, resulting in a dependency cycle. *)
+                 | [StringV modPath | Untyped modPath] -> raise TODO 
+                 | _ -> raise (PrimOpArgumentError ("require", args, "Expected a single string argument", loc))
+                 end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
 let empty_eval_env : eval_env = {

@@ -19,6 +19,7 @@ let loc = Loc.from_pos
 %token EQUALS
 %token DOUBLEEQUALS LT GT LE GE
 %token PLUS MINUS STAR SLASH
+%token <string> BANG
 %token IF THEN ELSE
 %token EOF
 
@@ -58,7 +59,7 @@ expr:
                                                                   | Var (_, "print") -> Print(loc $startpos $endpos, List.hd $3) (* print(e) *)
                                                                   | _ -> App(loc $startpos $endpos, $1, $3) }                      // e(e,..,e)
   | IDENT EQUALS expr                                           { Assign(loc $startpos $endpos, $1, $3)}                           // x = e
-  | SLASH IDENT exprs                                           { ProgCall(loc $startpos $endpos, $2, $3) }                        // /p e .. e
+  | BANG exprs                                                  { ProgCall(loc $startpos $endpos, $1, $2) }                        // /p e .. e
   | expr PLUS expr                                              { Add(loc $startpos $endpos, $1, $3) }                             // e + e
   | expr MINUS expr                                             { Sub(loc $startpos $endpos, $1, $3) }                             // e - e
   | expr STAR expr                                              { Mul(loc $startpos $endpos, $1, $3) }                             // e * e

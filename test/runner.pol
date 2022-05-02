@@ -1,4 +1,3 @@
 #!/usr/bin/env polaris
 
-# We still need / commands before we can properly run our tests
-print("Test suite NYI");
+/

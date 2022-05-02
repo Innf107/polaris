@@ -10,7 +10,7 @@ let fatal_error (message : string) =
   exit 1
 
 let repl_error (message : string) = 
-  print_endline ("\x1b[38;2;128;3;4mERROR\x1b[0m:\n" ^ message);
+  print_endline ("\x1b[38;2;255;0;0mERROR\x1b[0m:\n" ^ message);
 
 type run_options = {
   print_ast : bool;
@@ -47,24 +47,31 @@ let run_file (options : run_options) (filepath : string) : value =
     Driver.run driver_options (Lexing.from_channel (open_in filepath)))
 
 let run_repl (options : run_options) : unit =
+  Sys.catch_break true;
   let driver_options = {
       filename = "<interactive>"
     ; print_ast = options.print_ast
     ; print_renamed = options.print_renamed
     } in
-    let rec go env scope =
+  let rec go env scope =
+    try
       handle_errors (fun msg -> repl_error msg; go env scope)
         (fun _ ->  
-          print_string "λ> ";
+          print_string "\x1b[1;36mλ>\x1b[0m ";
           flush stdout;
           let input = read_line () in
 
           let result, new_env, new_scope = Driver.run_env driver_options (Lexing.from_string input) env scope in
-          
+
           print_endline (" - " ^ Value.pretty result);
           go new_env new_scope)
-    in
-    go empty_eval_env Rename.RenameScope.empty
+    with
+    | End_of_file -> exit 0
+    | Sys.Break -> 
+      print_newline ();
+      go env scope
+  in
+  go empty_eval_env Rename.RenameScope.empty
 
   
 

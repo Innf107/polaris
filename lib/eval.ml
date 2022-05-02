@@ -13,7 +13,7 @@ and value =
      support recursive lets, since the definition of a recursive function has
      to be stored in its own closure, which also stores its on environment, etc.*)
   | ClosureV of eval_env lazy_t * name list * name_expr
-  | UnitV (* TODO: Unit expression *)
+  | UnitV
   | BoolV of bool
 
 module EvalError = struct

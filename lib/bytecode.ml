@@ -4,17 +4,23 @@ type op =
   (* locals *)
   | StoreLocal of int       (* stlor <local index> *)
   | LoadLocal of int        (* ldloc <local index> *)
+  (* temporary registers *)
+  | StoreTemp of int        (* sttemp <temp index> *)
+  | LoadTemp of int         (* ldtemp <temp index> *)
   (* literals *)
   | FloatLit of float       (* float <literal> *)
   | StringLit of int        (* string <string index> *)
   | TrueLit                 (* true *)
   | FalseLit                (* false *)
+  | UnitLit                 (* unit *)
   | ClosureLit of int       (* closure <function index> *)
+
+  | AllocList of int        (* alloclist <argument count> *)
   (* stack manipulation *)
   | Dup                     (* dup *)
   (* functions *)
-  | CallDyn of int          (* calldyn <number of args> (Takes <number of args> arguments and then the closure reference from the top of the stack)*)
-  | CallDirect of int       (* call <function index> *)
+  | CallDyn                 (* calldyn *)
+  | Call of int             (* call <function index> *)
   | CallPrim of int         (* callprim <prim index> *)
   (* program calls *)
   | CallProg of int * int   (* callprog <string index> <number of args> *)
@@ -34,9 +40,7 @@ type op =
   | JumpGE of int           (* jumpge <label> *)
 
 type function_block = {
-    name : name
-  ; index : int
-  ; arg_count : int 
+    arg_count : int 
   ; body : op list
   }
 
@@ -49,14 +53,18 @@ type program = {
 let pretty_op = function
   | StoreLocal n -> "stloc " ^ string_of_int n
   | LoadLocal n -> "ldloc " ^ string_of_int n
+  | StoreTemp n -> "sttemp " ^ string_of_int n
+  | LoadTemp n -> "ldtemp " ^ string_of_int n
   | FloatLit f -> "float " ^ string_of_float f
   | StringLit i -> "string " ^ string_of_int i
   | TrueLit -> "true"
   | FalseLit -> "false"
+  | UnitLit -> "unit"
   | ClosureLit i -> "closure " ^ string_of_int i
+  | AllocList n -> "alloclist " ^ string_of_int n
   | Dup -> "dup"
-  | CallDyn n -> "calldyn " ^ string_of_int n
-  | CallDirect i -> "call " ^ string_of_int i
+  | CallDyn -> "calldyn"
+  | Call i -> "call " ^ string_of_int i
   | CallPrim i -> "callprim " ^ string_of_int i
   | CallProg (ix, n) -> "callprog " ^ string_of_int ix ^ " " ^ string_of_int n
   | Add -> "add"
@@ -72,13 +80,13 @@ let pretty_op = function
   | JumpLE l -> "jumple " ^ string_of_int l
   | JumpGE l -> "jumpge " ^ string_of_int l
 
-let pretty_function_block (block : function_block) : string =
-    Name.pretty block.name ^ "(" ^ string_of_int block.arg_count ^ "):\n"
+let pretty_function_block (index : int) (block : function_block) : string =
+  string_of_int index ^ "(" ^ string_of_int block.arg_count ^ "):\n"
   ^ String.concat "\n" (List.map pretty_op block.body)
 
 let pretty (program : program) : string =
     "<FUNCTIONS>\n" 
-  ^ String.concat "\n\n" (List.map pretty_function_block program.functions) ^ "\n"
+  ^ String.concat "\n\n" (List.mapi pretty_function_block program.functions) ^ "\n"
   ^ "<MAIN>\n"
   ^ String.concat "\n" (List.map pretty_op program.main) ^ "\n"
   ^ "<STRINGS>\n"

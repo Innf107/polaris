@@ -14,7 +14,8 @@ let repl_error (message : string) =
 
 type run_options = {
   print_ast : bool;
-  print_renamed : bool
+  print_renamed : bool;
+  backend : backend;
 }
 
 let handle_errors print_fun f = 
@@ -37,21 +38,27 @@ let handle_errors print_fun f =
       ^ "This is definitely a bug in the interpreter"
       )
 
-let run_file (options : run_options) (filepath : string) : value = 
+let run_file (options : run_options) (filepath : string) = 
   let driver_options = {
     filename = filepath
   ; print_ast = options.print_ast
   ; print_renamed = options.print_renamed
+  ; backend = options.backend
   } in
   handle_errors fatal_error (fun _ -> 
     Driver.run driver_options (Lexing.from_channel (open_in filepath)))
 
 let run_repl (options : run_options) : unit =
   Sys.catch_break true;
+  let _ = match options.backend with
+    | EvalBackend -> ()
+    | BytecodeBackend -> fatal_error "The bytecode backend does not support interactive evaluation"
+  in
   let driver_options = {
       filename = "<interactive>"
     ; print_ast = options.print_ast
     ; print_renamed = options.print_renamed
+    ; backend = options.backend
     } in
   let rec go env scope =
     try
@@ -84,19 +91,24 @@ let () =
 
   let print_ast = ref false in
   let print_renamed = ref false in
-
+  let backend = ref "eval" in
 
   let speclist = [
     ("--print-ast", Arg.Set print_ast, "Print the parsed syntax tree before renaming");
-    ("--print-renamed", Arg.Set print_renamed, "Print the renamed syntax tree before evaluation")
+    ("--print-renamed", Arg.Set print_renamed, "Print the renamed syntax tree before evaluation");
+    ("--backend", Arg.Set_string backend, "The backend used for evaluation. Possible values: 'eval', 'bytecode'")
   ] in
   Arg.parse speclist anon_fun usage_message;
   
   let options = {
       print_ast = !print_ast;
-      print_renamed = !print_renamed
+      print_renamed = !print_renamed;
+      backend = match !backend with
+      | "eval" -> EvalBackend
+      | "bytecode" -> BytecodeBackend
+      | _ -> fatal_error ("Invalid or unsupported backend: '" ^ !backend ^ "'")
     } in
-  match !args with
-    | [filepath] -> ignore (run_file options filepath)
-    | [] -> run_repl options
-    | _ -> Arg.usage speclist usage_message; exit 1
+   match !args with
+      | [filepath] -> ignore (run_file options filepath)
+      | [] -> run_repl options
+      | _ -> Arg.usage speclist usage_message; exit 1

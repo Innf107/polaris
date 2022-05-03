@@ -1,2 +1,2 @@
 
-val compile : Ast.NameExpr.expr -> Bytecode.program
+val compile : Ast.NameExpr.expr list -> Bytecode.program

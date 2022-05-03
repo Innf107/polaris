@@ -13,7 +13,7 @@ type op =
   | TrueLit                 (* true *)
   | FalseLit                (* false *)
   | UnitLit                 (* unit *)
-  | ClosureLit of int       (* closure <function index> *)
+  | Closure of int          (* closure <function index> *)
 
   | AllocList of int        (* alloclist <argument count> *)
   (* stack manipulation *)
@@ -60,7 +60,7 @@ let pretty_op = function
   | TrueLit -> "true"
   | FalseLit -> "false"
   | UnitLit -> "unit"
-  | ClosureLit i -> "closure " ^ string_of_int i
+  | Closure i -> "closure " ^ string_of_int i
   | AllocList n -> "alloclist " ^ string_of_int n
   | Dup -> "dup"
   | CallDyn -> "calldyn"

@@ -286,6 +286,10 @@ and eval_primop env op args loc = let open EvalError in
               | [ListV []] -> raise (PrimOpArgumentError ("tail", args, "Empty list", loc))
               | _ -> raise (PrimOpArgumentError ("tail", args, "Expected a single list", loc))
               end
+  | "cons" -> begin match args with
+              | [x; ListV xs] -> ListV (x :: xs)
+              | _ -> raise (PrimOpArgumentError("cons", args, "Expected an element and a list", loc))
+              end
   | "require" -> begin match args with
                 (* Ideally, we would just have to read the file and call Driver.run with
                    the resulting lexbuf here. The issue is that Driver imports Eval and 

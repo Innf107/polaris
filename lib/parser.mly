@@ -18,7 +18,7 @@ let loc = Loc.from_pos
 %token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET
 %token EQUALS
 %token DOUBLEEQUALS LT GT LE GE
-%token PLUS MINUS STAR SLASH
+%token PLUS MINUS STAR SLASH DDOT
 %token <string> BANG
 %token IF THEN ELSE
 %token EOF
@@ -27,6 +27,7 @@ let loc = Loc.from_pos
 %left DOUBLEEQUALS LT GT LE GE
 %left PLUS MINUS
 %left STAR SLASH
+%right DDOT
 
 %start main
 
@@ -64,6 +65,7 @@ expr:
   | expr MINUS expr                                             { Sub(loc $startpos $endpos, $1, $3) }                             // e - e
   | expr STAR expr                                              { Mul(loc $startpos $endpos, $1, $3) }                             // e * e
   | expr SLASH expr                                             { Div(loc $startpos $endpos, $1, $3) }                             // e + e
+  | expr DDOT expr                                              { Concat(loc $startpos $endpos, $1, $3) }                          // e .. e
   | expr DOUBLEEQUALS expr                                      { Equals(loc $startpos $endpos, $1, $3) }                          // e = e
   | expr LT expr                                                { LT(loc $startpos $endpos, $1, $3)  }                             // e < e
   | expr GT expr                                                { GT(loc $startpos $endpos, $1, $3)  }                             // e > e

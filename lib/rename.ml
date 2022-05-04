@@ -49,10 +49,11 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
     | UnitLit loc -> UnitLit loc
     | ListLit (loc, exprs) -> ListLit (loc, List.map (rename_expr scope) exprs)
 
-    | Add(loc, e1,e2) -> Add(loc, rename_expr scope e1, rename_expr scope e2)
-    | Sub(loc, e1,e2) -> Sub(loc, rename_expr scope e1, rename_expr scope e2)
-    | Mul(loc, e1,e2) -> Mul(loc, rename_expr scope e1, rename_expr scope e2)
-    | Div(loc, e1,e2) -> Div(loc, rename_expr scope e1, rename_expr scope e2)
+    | Add(loc, e1,e2)    -> Add(loc, rename_expr scope e1, rename_expr scope e2)
+    | Sub(loc, e1,e2)    -> Sub(loc, rename_expr scope e1, rename_expr scope e2)
+    | Mul(loc, e1,e2)    -> Mul(loc, rename_expr scope e1, rename_expr scope e2)
+    | Div(loc, e1,e2)    -> Div(loc, rename_expr scope e1, rename_expr scope e2)
+    | Concat(loc, e1,e2) -> Concat(loc, rename_expr scope e1, rename_expr scope e2)
 
     | Equals(loc, e1,e2) -> Equals(loc, rename_expr scope e1, rename_expr scope e2)
     | LE(loc, e1,e2)     -> LE(loc, rename_expr scope e1, rename_expr scope e2)

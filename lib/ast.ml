@@ -45,6 +45,7 @@ struct
     | Sub of loc * expr * expr              (* e - e *)
     | Mul of loc * expr * expr              (* e * e *)
     | Div of loc * expr * expr              (* e / e *)
+    | Concat of loc * expr * expr           (* e .. e*)
     | Equals of loc * expr * expr           (* e == e *)
     | LE of loc * expr * expr               (* e <= e *)
     | GE of loc * expr * expr               (* e >= e *)
@@ -78,10 +79,11 @@ struct
     | UnitLit _ -> "()"
     | ListLit (_, exprs) -> "[" ^ String.concat ", " (List.map pretty exprs) ^ "]"
 
-    | Add (_, e1, e2) -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
-    | Sub (_, e1, e2) -> "(" ^ pretty e1 ^ " - " ^ pretty e2 ^ ")"
-    | Mul (_, e1, e2) -> "(" ^ pretty e1 ^ " * " ^ pretty e2 ^ ")"
-    | Div (_, e1, e2) -> "(" ^ pretty e1 ^ " / " ^ pretty e2 ^ ")"
+    | Add (_, e1, e2)     -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
+    | Sub (_, e1, e2)     -> "(" ^ pretty e1 ^ " - " ^ pretty e2 ^ ")"
+    | Mul (_, e1, e2)     -> "(" ^ pretty e1 ^ " * " ^ pretty e2 ^ ")"
+    | Div (_, e1, e2)     -> "(" ^ pretty e1 ^ " / " ^ pretty e2 ^ ")"
+    | Concat (_, e1, e2)  -> "(" ^ pretty e1 ^ " .. " ^ pretty e2 ^ ")"
 
     | Equals (_, e1, e2) -> "(" ^ pretty e1 ^ " == " ^ pretty e2 ^ ")"
     | LE (_, e1, e2)     -> "(" ^ pretty e1 ^ " <= " ^ pretty e2 ^ ")"

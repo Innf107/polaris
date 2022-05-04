@@ -104,6 +104,10 @@ let as_bool context loc = function
     end
   | x -> raise (EvalError.UnableToConvertTo ("boolean", x, context, loc))
 
+let as_string context loc = function
+  | (StringV x | Untyped x) -> x
+  | x -> raise (EvalError.UnableToConvertTo ("boolean", x, context, loc))
+
 let rec val_eq (x : value) (y : value) : bool = 
   match x, y with
   (* TODO: Handle untypeds *)
@@ -177,6 +181,12 @@ let rec eval_expr (env : eval_env) (expr : name_expr) : value =
     let v2 = eval_expr env e2 in
     let context = "Trying to divide " ^ Value.pretty v1 ^ " by " ^ Value.pretty v2 in
     NumV (as_num context loc v1 /. as_num context loc v2)
+  | Concat (loc, e1, e2) ->
+    (* See Note [left-to-right evaluation] *)
+    let v1 = eval_expr env e1 in
+    let v2 = eval_expr env e2 in
+    let context = "Trying to concatenate " ^ Value.pretty v1 ^ " and " ^ Value.pretty v2 in
+    StringV (as_string context loc v1 ^ as_string context loc v2)
 
   | Equals (_, e1, e2) -> 
     (* See Note [left-to-right evaluation] *)
@@ -261,7 +271,7 @@ and eval_seq_state (env : eval_env) (exprs : name_expr list) : value * eval_env 
       (* The result of 'eval_expr e' is purposefully ignored *)
       let _ = eval_expr env e in
       eval_seq_state env exprs
-and eval_seq env exprs = let (v, _) = eval_seq_state env exprs in v
+and eval_seq env exprs = fst (eval_seq_state env exprs)
 
 and eval_primop env op args loc = let open EvalError in
   (* TODO: intern primop names *)

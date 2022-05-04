@@ -9,6 +9,11 @@ let fatal_error (message : string) =
   print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
   exit 1
 
+let warning (message : string) =
+  print_endline "~~~~~~~~~~~~~WARNING~~~~~~~~~~~~~~";
+  print_endline message;
+  print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+
 let repl_error (message : string) = 
   print_endline ("\x1b[38;2;255;0;0mERROR\x1b[0m:\n" ^ message);
 
@@ -39,6 +44,11 @@ let handle_errors print_fun f =
       )
 
 let run_file (options : run_options) (filepath : string) = 
+  let _ = match options.backend with
+  | EvalBackend -> ()
+  | BytecodeBackend -> warning ("The bytecode backend is experimental and very incomplete. It will probably not work as expected")
+  in
+
   let driver_options = {
     filename = filepath
   ; print_ast = options.print_ast

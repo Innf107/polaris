@@ -293,6 +293,12 @@ and eval_primop env op args loc = let open EvalError in
                  | [StringV modPath | Untyped modPath] -> raise TODO 
                  | _ -> raise (PrimOpArgumentError ("require", args, "Expected a single string argument", loc))
                  end
+  | "lines" -> begin match args with
+              | [arg] -> 
+                let context = "Trying to apply 'lines'" in
+                ListV (List.map (fun s -> StringV s) (String.split_on_char '\n' (as_string context loc arg)))
+              | _ -> raise (PrimOpArgumentError ("lines", args, "Expected a single string", loc))
+              end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
 let empty_eval_env : eval_env = {

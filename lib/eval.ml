@@ -113,7 +113,7 @@ let as_string context loc = function
 let rec val_eq (x : value) (y : value) : bool = 
   match x, y with
   (* TODO: Handle untypeds *)
-  | StringV x, StringV y -> x == y
+  | StringV x, StringV y -> String.compare x y == 0;
   | NumV x, NumV y -> x == y
   (* Closure comparison always evaluates to false *)
   | (ClosureV _, _ | _, ClosureV _) -> false
@@ -389,7 +389,7 @@ and eval_primop env op args loc = let open EvalError in
                   let repl =  as_string context loc repl_v in
                   let str = as_string context loc str_v in
                   StringV (Str.global_replace (Str.regexp_string needle) repl str)
-                | _ -> raise (PrimOpArgumentError ("lines", args, "Expected three strings", loc))
+                | _ -> raise (PrimOpArgumentError ("replace", args, "Expected three strings", loc))
                 end
   | "regexp_replace" -> begin match args with
                 | [needle_v; repl_v; str_v] -> 
@@ -398,7 +398,19 @@ and eval_primop env op args loc = let open EvalError in
                   let repl =  as_string context loc repl_v in
                   let str = as_string context loc str_v in
                   StringV (Str.global_replace (Str.regexp needle) repl str)
-                | _ -> raise (PrimOpArgumentError ("lines", args, "Expected three strings", loc))
+                | _ -> raise (PrimOpArgumentError ("regexp_replace", args, "Expected three strings", loc))
+                end
+  | "write_file" -> begin match args with
+                | [path_v; content_v] ->
+                  let context = "Trying to apply 'write_file'" in
+                  let path = as_string context loc path_v in
+                  let content = as_string context loc content_v in
+
+                  let channel = open_out path in
+                  Out_channel.output_string channel content;
+                  Out_channel.close channel;
+                  UnitV
+                | _ -> raise (PrimOpArgumentError ("write_file", args, "Expected two string arguments", loc))
                 end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 

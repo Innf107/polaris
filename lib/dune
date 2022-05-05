@@ -2,7 +2,8 @@
  (name polaris)
  (libraries 
   menhirLib
-  unix))
+  unix
+  str))
 
 (rule
   (target lexer.ml)

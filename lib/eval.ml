@@ -382,6 +382,24 @@ and eval_primop env op args loc = let open EvalError in
                 ListV (List.map (fun s -> StringV s) (String.split_on_char '\n' (as_string context loc arg)))
               | _ -> raise (PrimOpArgumentError ("lines", args, "Expected a single string", loc))
               end
+  | "replace" -> begin match args with
+                | [needle_v; repl_v; str_v] -> 
+                  let context = "Trying to apply 'replace'" in
+                  let needle = as_string context loc needle_v in 
+                  let repl =  as_string context loc repl_v in
+                  let str = as_string context loc str_v in
+                  StringV (Str.global_replace (Str.regexp_string needle) repl str)
+                | _ -> raise (PrimOpArgumentError ("lines", args, "Expected three strings", loc))
+                end
+  | "regexp_replace" -> begin match args with
+                | [needle_v; repl_v; str_v] -> 
+                  let context = "Trying to apply 'regexp_replace'" in
+                  let needle = as_string context loc needle_v in 
+                  let repl =  as_string context loc repl_v in
+                  let str = as_string context loc str_v in
+                  StringV (Str.global_replace (Str.regexp needle) repl str)
+                | _ -> raise (PrimOpArgumentError ("lines", args, "Expected three strings", loc))
+                end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
 let empty_eval_env : eval_env = {

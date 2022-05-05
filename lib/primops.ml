@@ -6,6 +6,8 @@ let primops = PrimOpNameSet.of_list [
   "cons";
   "require";
   "lines";
+  "replace";
+  "regexp_replace";
 ]
 
 let is_primop name = PrimOpNameSet.mem name primops

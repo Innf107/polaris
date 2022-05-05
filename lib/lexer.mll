@@ -45,6 +45,7 @@ rule token = parse
 | '*'       { STAR }
 | '/'       { SLASH }
 | ".."      { DDOT }
+| "|"       { PIPE }
 | '='       { EQUALS }
 | "=="      { DOUBLEEQUALS }
 | '<'       { LT }

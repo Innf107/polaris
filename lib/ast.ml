@@ -102,11 +102,19 @@ struct
     | Assign (_, x, e) -> Name.pretty x ^ " = " ^ pretty e
     | Print (_, e) -> "print(" ^ pretty e ^ ")"
     | ProgCall (_, prog, args) ->
-        "/" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
+        "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
+
+  let get_loc = function
+    | Var (loc, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
+    | UnitLit loc | ListLit(loc, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) | Div(loc, _ , _)
+    | Concat(loc, _, _) | Equals(loc, _, _) | LE(loc, _, _) | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _)
+    | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
+    | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | Print(loc, _) | ProgCall(loc, _, _) | Pipe(loc, _)
+    -> loc
 end
 
 type name = { name : string; index : int }

@@ -42,6 +42,9 @@ let handle_errors print_fun f =
         Loc.pretty loc ^ ": Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
       ^ "This is definitely a bug in the interpreter"
       )
+  | NonProgCallInPipe (expr, loc) -> print_fun (
+      Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ NameExpr.pretty expr
+    )
 
 let run_file (options : run_options) (filepath : string) = 
   let _ = match options.backend with

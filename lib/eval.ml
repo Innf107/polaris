@@ -46,6 +46,8 @@ module EvalError = struct
   exception PrimOpArgumentError of string * value list * string * loc
 
   exception InvalidProcessArg of value * loc
+
+  exception NonProgCallInPipe of NameExpr.expr * loc
 end  
 
 module Value = struct
@@ -106,7 +108,7 @@ let as_bool context loc = function
 
 let as_string context loc = function
   | (StringV x | Untyped x) -> x
-  | x -> raise (EvalError.UnableToConvertTo ("boolean", x, context, loc))
+  | x -> raise (EvalError.UnableToConvertTo ("string", x, context, loc))
 
 let rec val_eq (x : value) (y : value) : bool = 
   match x, y with
@@ -126,6 +128,23 @@ let rec val_eq (x : value) (y : value) : bool =
     else List.for_all2 val_eq xs ys
   (* Comparisons of different (typed) values are always false *)
   | _, _ -> false
+
+let read_untyped_from_fd (fd : Unix.file_descr) : value =
+  let open Unix in
+  let chan = in_channel_of_descr fd in
+
+  let result = In_channel.input_all chan in
+
+  if String.length result > 0 && result.[String.length result - 1] == '\n' then 
+    Untyped (String.sub result 0 (String.length result - 1))
+  else 
+    Untyped result
+
+let rec close_all = function
+  | [] -> ()
+  | fd::fds ->
+    Unix.close fd;
+    close_all fds
 
 let rec eval_expr (env : eval_env) (expr : name_expr) : value =
   let open NameExpr in
@@ -243,20 +262,51 @@ let rec eval_expr (env : eval_env) (expr : name_expr) : value =
     let value = eval_expr env expr in
     print_endline (Value.pretty value);
     UnitV
+
   | ProgCall (loc, prog, args) -> 
-    let open Sys in
     let open Unix in
-    let open EvalError in
-    let values = List.map (eval_expr env) args in
-    let in_chan = open_process_args_in
-                prog
-                (Array.of_list (prog :: List.concat_map (Value.as_args (fun x -> raise (InvalidProcessArg (x, loc)))) values))
-    in
-    let result = In_channel.input_all in_chan in
-    if String.length result > 0 && result.[String.length result - 1] == '\n'
-    then Untyped (String.sub result 0 (String.length result - 1))
-    else Untyped result
-  | Pipe (loc, exprs) -> raise TODO
+
+    let prog_args = List.map (fun x -> Value.pretty (eval_expr env x)) args in
+    let stdout_chan = open_process_args_in prog (Array.of_list (prog :: prog_args)) in
+    
+    let result = In_channel.input_all stdout_chan in
+
+    if String.length result > 0 && result.[String.length result - 1] == '\n' then 
+      Untyped (String.sub result 0 (String.length result - 1))
+    else 
+      Untyped result
+  
+
+  | Pipe (loc, []) -> raise (Panic "empty pipe") 
+
+  | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
+    let open Unix in
+    let pid, out_read, out_writes = eval_pipe env stdin exprs in
+    let _ = waitpid [] pid in
+    close_all out_writes;
+    read_untyped_from_fd out_read
+
+  | Pipe (loc, (expr :: exprs)) ->
+    let open Unix in
+    let input_str = Value.pretty (eval_expr env expr) in
+
+    let in_pipe_read, in_pipe_write = pipe () in
+
+    let pid, out_read, out_writes = eval_pipe env in_pipe_read exprs in
+
+
+    (* let _ = write_substring in_pipe_write input_str 0 (String.length input_str) in
+     close in_pipe_write;
+     close in_pipe_read;*)
+
+    let in_pipe_chan = out_channel_of_descr in_pipe_write in
+    Out_channel.output_string in_pipe_chan input_str;
+    Out_channel.close in_pipe_chan;
+    
+    let _ = waitpid [] pid in
+    close_all out_writes;
+
+    read_untyped_from_fd out_read
 
 and eval_seq_state (env : eval_env) (exprs : name_expr list) : value * eval_env =
   match exprs with
@@ -272,6 +322,35 @@ and eval_seq_state (env : eval_env) (exprs : name_expr list) : value * eval_env 
       let _ = eval_expr env e in
       eval_seq_state env exprs
 and eval_seq env exprs = fst (eval_seq_state env exprs)
+
+and eval_pipe env (input_fd : Unix.file_descr) = 
+  let open NameExpr in
+  let open Sys in
+  let open Unix in
+  let open EvalError in
+  function
+  | [] -> raise (Panic "Empty pipe")
+
+  | [ProgCall (loc, prog, arg_exprs)] ->
+    let arguments = Array.of_list (prog :: List.map (fun e -> Value.pretty (eval_expr env e)) arg_exprs) in
+
+    let (out_pipe_read, out_pipe_write) = pipe () in
+
+
+    let pid = create_process prog arguments input_fd out_pipe_write stderr in
+
+    (pid, out_pipe_read, [out_pipe_write])
+
+  | (ProgCall (loc, prog, arg_exprs) :: exprs) ->
+    let arguments = Array.of_list (prog :: List.map (fun e -> Value.pretty (eval_expr env e)) arg_exprs) in  
+    let (out_pipe_read, out_pipe_write) = pipe () in
+    (* Pipes don't wait for intermediary commands to complete. This is how shells work, right? *)
+
+    let _pid = create_process prog arguments input_fd out_pipe_write stderr in
+    let pid, out_read, out_writes = eval_pipe env out_pipe_read exprs in
+    pid, out_read, out_pipe_read :: out_pipe_write :: out_writes
+
+  | (expr::exprs) -> raise (EvalError.NonProgCallInPipe (expr, NameExpr.get_loc expr))
 
 and eval_primop env op args loc = let open EvalError in
   (* TODO: intern primop names *)

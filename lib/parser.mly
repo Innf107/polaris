@@ -20,6 +20,7 @@ let loc = Loc.from_pos
 %token DOUBLEEQUALS LT GT LE GE
 %token PLUS MINUS STAR SLASH DDOT
 %token <string> BANG
+%token PIPE
 %token IF THEN ELSE
 %token EOF
 
@@ -28,6 +29,8 @@ let loc = Loc.from_pos
 %left PLUS MINUS
 %left STAR SLASH
 %right DDOT
+
+%nonassoc PIPE
 
 %start main
 
@@ -72,7 +75,14 @@ expr:
   | expr LE expr                                                { LE(loc $startpos $endpos, $1, $3)  }                             // e <= e
   | expr GE expr                                                { GE(loc $startpos $endpos, $1, $3)  }                             // e >= e
   | IF expr THEN expr ELSE expr                                 { If(loc $startpos $endpos, $2, $4, $6) }                          // if e then e else e
-  // TODO: Pipes
+  | expr PIPE pipe_list                                         { Pipe(loc $startpos $endpos, $1 :: $3) }
+
+pipe_list:
+  | prog_call PIPE pipe_list  { $1 :: $3 }
+  | prog_call                 { [$1] }
+
+prog_call:
+  | IDENT exprs { ProgCall(loc $startpos $endpos, $1, $2) }
 
 exprs:
   | expr exprs { $1 :: $2 }

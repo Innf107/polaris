@@ -45,6 +45,10 @@ let handle_errors print_fun f =
   | NonProgCallInPipe (expr, loc) -> print_fun (
       Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ NameExpr.pretty expr
     )
+  | UnableToConvertTo(ty, value, msg, loc) -> print_fun (
+      Loc.pretty loc ^ ": Unable to convert to " ^ ty ^ ": " ^ msg
+    ^ "\n    Value: " ^ Value.pretty value
+    )
 
 let run_file (options : run_options) (filepath : string) = 
   let _ = match options.backend with
@@ -91,7 +95,7 @@ let run_repl (options : run_options) : unit =
       print_newline ();
       go env scope
   in
-  go empty_eval_env Rename.RenameScope.empty
+  go EvalInst.empty_eval_env Rename.RenameScope.empty
 
   
 

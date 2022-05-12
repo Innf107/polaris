@@ -121,7 +121,8 @@ end) = struct
     match x, y with
     (* TODO: Handle untypeds *)
     | StringV x, StringV y -> String.compare x y == 0;
-    | NumV x, NumV y -> x == y
+    | NumV x, NumV y -> 
+      Float.equal x y;
     (* Closure comparison always evaluates to false *)
     | (ClosureV _, _ | _, ClosureV _) -> false
     | UnitV, UnitV -> true

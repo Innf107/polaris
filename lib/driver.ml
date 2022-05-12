@@ -22,6 +22,7 @@ module type EvalI = sig
   val eval_seq_state : eval_env -> name_expr list -> value * eval_env
 
   val empty_eval_env : eval_env
+
 end
 
 module type DriverI = sig
@@ -38,7 +39,7 @@ module rec EvalInst : EvalI = Eval.Make(struct
       filename = modPath;
       print_ast = false;
       print_renamed = false;
-      backend = EvalBackend (* TODO: The bytecode backend should really use a different implementation for require *)
+      backend = EvalBackend (* The bytecode backend does not use `Eval` anyway, so this is fine *)
     } in
     Driver.run_eval driver_options (Lexing.from_channel (In_channel.open_text modPath))
 end)

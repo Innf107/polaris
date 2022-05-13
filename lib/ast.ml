@@ -38,6 +38,7 @@ struct
     (* Literals *)
     | StringLit of loc * string             (* "str" *)
     | NumLit of loc * float                 (* f *)
+    | BoolLit of loc * bool                 (* true | false*)
     | UnitLit of loc                        (* () *)
     | ListLit of loc * expr list            (* [e, .., e] *)
     (* Common Operations *)
@@ -76,6 +77,7 @@ struct
         ^ ") -> " ^ pretty e
     | StringLit (_,l) -> "\"" ^ l ^ "\""
     | NumLit (_, f) -> string_of_float f
+    | BoolLit (_, b) -> string_of_bool b
     | UnitLit _ -> "()"
     | ListLit (_, exprs) -> "[" ^ String.concat ", " (List.map pretty exprs) ^ "]"
 
@@ -110,7 +112,7 @@ struct
 
   let get_loc = function
     | Var (loc, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
-    | UnitLit loc | ListLit(loc, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) | Div(loc, _ , _)
+    | BoolLit (loc, _) | UnitLit loc | ListLit(loc, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) | Div(loc, _ , _)
     | Concat(loc, _, _) | Equals(loc, _, _) | LE(loc, _, _) | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | Print(loc, _) | ProgCall(loc, _, _) | Pipe(loc, _)

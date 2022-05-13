@@ -31,6 +31,8 @@ rule token = parse
 | "if"      { IF }
 | "then"    { THEN }
 | "else"    { ELSE }
+| "true"    { TRUE }
+| "false"   { FALSE }
 | "->"      { ARROW }
 | ','       { COMMA }
 | ';'       { SEMI }

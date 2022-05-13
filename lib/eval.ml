@@ -177,6 +177,7 @@ end) = struct
     
     | StringLit (_, s) -> StringV s
     | NumLit (_, f)    -> NumV f
+    | BoolLit (_, b)   -> BoolV b
     | UnitLit _        -> UnitV
     
     | ListLit (_, exprs) -> 

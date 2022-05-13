@@ -316,20 +316,38 @@ end) = struct
 
       read_untyped_from_fd out_read
 
-  and eval_seq_state (env : eval_env) (exprs : name_expr list) : value * eval_env =
+  (* This takes a continuation argument in order to stay mutually tail recursive with eval_expr *)
+  and eval_seq_cont : 'r. eval_env -> name_expr list -> (eval_env -> (name_expr, value) either -> 'r) -> 'r =
+    fun env exprs cont ->
     match exprs with
-    | [] -> (UnitV, env)
+    | [] -> cont env (Right UnitV)
     | LetSeq (loc, x, e) :: exprs -> 
-      eval_seq_state (insert_vars [x] [(eval_expr env e)] env loc) exprs
+      eval_seq_cont (insert_vars [x] [(eval_expr env e)] env loc) exprs cont
     | LetRecSeq (loc, f, params, e) :: exprs ->
       let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e)] env loc) in
-      eval_seq_state (Lazy.force env') exprs
-    | [ e ] -> (eval_expr env e, env)
+      eval_seq_cont (Lazy.force env') exprs cont
+    | [ e ] -> 
+      cont env (Left e)
     | e :: exprs ->
         (* The result of 'eval_expr e' is purposefully ignored *)
         let _ = eval_expr env e in
-        eval_seq_state env exprs
-  and eval_seq env exprs = fst (eval_seq_state env exprs)
+        eval_seq_cont env exprs cont
+
+  and eval_seq (env : eval_env) (exprs : name_expr list) : value = 
+    eval_seq_cont env exprs 
+      (fun env expr_or_val -> 
+        match expr_or_val with
+        | Left expr -> eval_expr env expr
+        | Right value -> value
+        )
+
+  
+  and eval_seq_state (env : eval_env) (exprs : name_expr list) : value * eval_env = 
+    eval_seq_cont env exprs 
+      (fun env expr_or_val -> 
+        match expr_or_val with 
+        | Left expr -> (eval_expr env expr, env)
+        | Right value -> (value, env))
 
   and eval_pipe env (input_fd : Unix.file_descr) = 
     let open NameExpr in

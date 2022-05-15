@@ -483,6 +483,11 @@ end) = struct
                   exit (int_of_float arg)
                 | _ -> raise (PrimOpArgumentError ("exit", args, "Expected an integer", loc))
                 end
+    | "toString" -> begin match args with
+                | [NumV arg] -> 
+                  StringV (Float.to_string arg)
+                | _ -> raise (PrimOpArgumentError ("toString", args, "Expected a number", loc))
+                end            
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   let empty_eval_env : eval_env = {

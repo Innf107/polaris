@@ -12,12 +12,12 @@ let loc = Loc.from_pos
 %token <string> STRING
 %token <int> INT
 %token <float> FLOAT
-%token LET REC IN
+%token LET IN
 %token TRUE FALSE
 %token LAMBDA ARROW
 %token COMMA SEMI
 %token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET
-%token EQUALS
+%token EQUALS COLONEQUALS
 %token DOUBLEEQUALS LT GT LE GE
 %token PLUS MINUS STAR SLASH DDOT
 %token <string> BANG
@@ -57,15 +57,13 @@ expr:
   | LAMBDA LPAREN ident_list RPAREN ARROW expr                  { Lambda(loc $startpos $endpos, $3, $6) }                          // \(x, .., x) -> e
   | LET IDENT EQUALS expr IN expr                               { Let (loc $startpos $endpos, $2, $4, $6) }                        // let x = e in e
   | LET IDENT EQUALS expr                                       { LetSeq (loc $startpos $endpos, $2, $4) }                         // let x = e
-  | LET IDENT LPAREN ident_list RPAREN EQUALS expr              { LetSeq (loc $startpos $endpos, $2, Lambda(loc $startpos $endpos, $4, $7)) }             // let f(x, .., x) = e
-  | LET REC IDENT LPAREN ident_list RPAREN EQUALS expr          { LetRecSeq (loc $startpos $endpos, $3, $5, $8) }                  // let rec f(x, .., x) = e
-  | LET IDENT LPAREN ident_list RPAREN EQUALS expr IN expr      { Let (loc $startpos $endpos, $2, Lambda(loc $startpos $endpos, $4, $7), $9)}             // let f(x, .., x) = e in e
-  | LET REC IDENT LPAREN ident_list RPAREN EQUALS expr IN expr  { LetRec (loc $startpos $endpos, $3, $5, $8, $10) }                // let rec f(x, .., x) = e in e
+  | LET IDENT LPAREN ident_list RPAREN EQUALS expr              { LetRecSeq (loc $startpos $endpos, $2, $4, $7) }                  // let rec f(x, .., x) = e
+  | LET IDENT LPAREN ident_list RPAREN EQUALS expr IN expr      { LetRec (loc $startpos $endpos, $2, $4, $7, $9) }                // let rec f(x, .., x) = e in e
   | LBRACE expr_semi_list RBRACE                                { Seq(loc $startpos $endpos, $2) }                                 // {e; ..; e}
   | expr LPAREN expr_comma_list RPAREN                          { match $1 with 
                                                                   | Var (_, "print") -> Print(loc $startpos $endpos, List.hd $3) (* print(e) *)
                                                                   | _ -> App(loc $startpos $endpos, $1, $3) }                      // e(e,..,e)
-  | IDENT EQUALS expr                                           { Assign(loc $startpos $endpos, $1, $3)}                           // x = e
+  | IDENT COLONEQUALS expr                                      { Assign(loc $startpos $endpos, $1, $3)}                           // x = e
   | BANG exprs                                                  { ProgCall(loc $startpos $endpos, $1, $2) }                        // /p e .. e
   | expr PLUS expr                                              { Add(loc $startpos $endpos, $1, $3) }                             // e + e
   | expr MINUS expr                                             { Sub(loc $startpos $endpos, $1, $3) }                             // e - e

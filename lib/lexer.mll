@@ -26,7 +26,6 @@ rule token = parse
 | '!' '"' ([^'"']+ as cmd)'"' { BANG cmd }
 | '!' ([^' ' '\t' '\n' '(' ')' '[' ']' '{' '}']+ as cmd) { BANG cmd}
 | "let"     { LET }
-| "rec"     { REC }
 | "in"      { IN }
 | "if"      { IF }
 | "then"    { THEN }
@@ -49,6 +48,7 @@ rule token = parse
 | ".."      { DDOT }
 | "|"       { PIPE }
 | '='       { EQUALS }
+| ":="      { COLONEQUALS }
 | "=="      { DOUBLEEQUALS }
 | '<'       { LT }
 | '>'       { GT }

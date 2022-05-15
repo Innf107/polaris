@@ -453,16 +453,16 @@ end) = struct
                   | _ -> raise (PrimOpArgumentError ("writeFile", args, "Expected two string arguments", loc))
                   end
     | "parseInt" -> begin match args with
-                  | [StringV argStr] ->
-                    begin match int_of_string_opt argStr with
+                  | [StringV arg_str] ->
+                    begin match int_of_string_opt arg_str with
                     |  Some(int_val) -> NumV (float_of_int int_val)
                     |  None -> NullV
                     end
                   | _ -> raise (PrimOpArgumentError ("parseInt", args, "Expected a strings", loc))
                   end
     | "parseNum" -> begin match args with
-                  | [StringV argStr] ->
-                    begin match float_of_string_opt argStr with
+                  | [StringV arg_str] ->
+                    begin match float_of_string_opt arg_str with
                     | Some(float_val) -> NumV float_val
                     | None -> NullV
                     end
@@ -472,6 +472,12 @@ end) = struct
                     | [] -> StringV (read_line ())
                     | _ -> raise (PrimOpArgumentError ("readLine", args, "Expected no arguments", loc))
                     end
+    | "chdir" ->  begin match args with
+                  | [StringV path_str] -> 
+                    Sys.chdir path_str;
+                    UnitV
+                  | _ -> raise (PrimOpArgumentError ("chdir", args, "Expected a strings", loc))
+                  end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   let empty_eval_env : eval_env = {

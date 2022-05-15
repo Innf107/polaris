@@ -12,6 +12,7 @@ let primops = PrimOpNameSet.of_list [
   "parseInt";
   "parseNum";
   "readLine";
+  "chdir";
 ]
 
 let is_primop name = PrimOpNameSet.mem name primops

@@ -42,10 +42,34 @@ let handle_errors print_fun f =
         Loc.pretty loc ^ ": Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
       ^ "This is definitely a bug in the interpreter"
       )
-  | NotAValueOfType(ty, value, msg, loc) -> print_fun (
-        Loc.pretty loc ^ ": Not a value of type " ^ ty ^ ": " ^ msg
-      ^ "\n    Value: " ^ Value.pretty value
+  | NotAValueOfType(ty, value, cxt, loc) -> print_fun (
+        Loc.pretty loc ^ ": Not a value of type " ^ ty ^ "."
+      ^ "\n    Context: " ^ cxt
+      ^ "\n      Value: " ^ Value.pretty value
       )  
+  | TryingToApplyNonFunction (value, loc) -> print_fun (
+      Loc.pretty loc ^ ": Trying to apply a value that is not a function: " ^ Value.pretty value
+    )
+  | TryingToLookupInNonMap (value, key, loc) -> print_fun (
+      Loc.pretty loc ^ ": Trying to lookup key '" ^ key ^ "' in non-map value: " ^ Value.pretty value
+    )
+  | MapDoesNotContain (map, key, loc) -> print_fun (
+      Loc.pretty loc ^ ": Map does not contain key '" ^ key ^ "': " ^ Value.pretty (MapV map)
+    )
+  | InvalidNumberOfArguments (params, vals, loc) -> print_fun (
+      Loc.pretty loc ^ ": Invalid number of arguments in function call.\n"
+                     ^ "Expected " ^ Int.to_string (List.length params) ^ " arguments, but received " ^ Int.to_string (List.length vals) ^ ".\n"
+                     ^ "    Expected: (" ^ String.concat ", " (List.map Name.original_name params) ^ ")\n"
+                     ^ "      Actual: (" ^ String.concat ", " (List.map Value.pretty vals) ^ ")"
+    )
+  | PrimOpArgumentError (primop_name, vals, msg, loc) -> print_fun (
+      Loc.pretty loc ^ ": Invalid arguments to builtin function '" ^ primop_name ^ "': " ^ msg ^ "\n"
+                     ^ "    Arguments: " ^ Value.pretty (ListV vals)
+    )
+  | InvalidProcessArg (value, loc) -> print_fun (
+      Loc.pretty loc ^ ": Argument cannot be passed to an external process in an !-Expression."
+                     ^ "    Argument: " ^ Value.pretty value
+    )
   | NonProgCallInPipe (expr, loc) -> print_fun (
       Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ NameExpr.pretty expr
     )

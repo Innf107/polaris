@@ -133,6 +133,8 @@ type name = { name : string; index : int }
 module Name = struct
   type t = name
 
+  let original_name (name : t) = name.name
+
   let pretty (name : t) = name.name ^ "_" ^ string_of_int name.index
 
   (* Comparisons are purely based on the name index

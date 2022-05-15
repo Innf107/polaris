@@ -8,12 +8,6 @@ module VarMap = Map.Make (Name)
 type eval_env = { vars : value ref VarMap.t }
 
 and value =
-  (* Untypeds are special values that can be implicitly coerced
-     to any other type, whenever applicable. 
-     For example, `"3" + 5` should fail, whereas (/echo "3") + 5 should return 8.
-     The only way to obtain an untyped is by using the output value of
-     calling an external program with a / expression. *)
-  | Untyped of string
   | StringV of string
   | NumV of float
   (* The closure environment has to be lazy to
@@ -38,7 +32,7 @@ and value =
 
 module EvalError = struct
   exception DynamicVarNotFound of name * loc
-  exception UnableToConvertTo of string * value * string * loc
+  exception NotAValueOfType of string * value * string * loc
   exception TryingToApplyNonFunction of value * loc
   exception InvalidNumberOfArguments of name list * value list * loc
   (* TODO: Once exceptions are implemented, prim op argument errors should
@@ -57,7 +51,6 @@ module Value = struct
 
   let rec pretty (x : t) : string =
     match x with
-    | Untyped s -> s
     | StringV s -> s
     | NumV n -> 
       if Float.is_integer n
@@ -73,7 +66,7 @@ module Value = struct
 
   let rec as_args (fail : t -> 'a) (x : t) : string list =
     match x with
-    | Untyped _ | StringV _ | NumV _ | BoolV _ -> [pretty x]
+    | StringV _ | NumV _ | BoolV _ -> [pretty x]
     | ClosureV _ | PrimOpV _ | UnitV -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
@@ -97,25 +90,15 @@ end) = struct
   (* Tries to convert a number to a value. Throws an error if it can't *)
   let as_num context loc = function
     | NumV x -> x
-    | Untyped value ->
-      begin match float_of_string_opt value with
-      | Some x -> x
-      | None -> raise (EvalError.UnableToConvertTo ("number", Untyped value, context, loc))
-      end
-    | x -> raise (EvalError.UnableToConvertTo ("number", x, context, loc))
+    | x -> raise (EvalError.NotAValueOfType ("number", x, context, loc))
 
   let as_bool context loc = function
     | BoolV x -> x
-    | Untyped value ->
-      begin match bool_of_string_opt value with
-      | Some x -> x
-      | None -> raise (EvalError.UnableToConvertTo ("boolean", Untyped value, context, loc))
-      end
-    | x -> raise (EvalError.UnableToConvertTo ("boolean", x, context, loc))
+    | x -> raise (EvalError.NotAValueOfType ("boolean", x, context, loc))
 
   let as_string context loc = function
-    | (StringV x | Untyped x) -> x
-    | x -> raise (EvalError.UnableToConvertTo ("string", x, context, loc))
+    | StringV x -> x
+    | x -> raise (EvalError.NotAValueOfType ("string", x, context, loc))
 
   let rec val_eq (x : value) (y : value) : bool = 
     match x, y with
@@ -144,9 +127,9 @@ end) = struct
     let result = In_channel.input_all chan in
 
     if String.length result > 0 && result.[String.length result - 1] == '\n' then 
-      Untyped (String.sub result 0 (String.length result - 1))
+      StringV (String.sub result 0 (String.length result - 1))
     else 
-      Untyped result
+      StringV result
 
   let rec close_all = function
     | [] -> ()
@@ -281,9 +264,9 @@ end) = struct
       let result = In_channel.input_all stdout_chan in
 
       if String.length result > 0 && result.[String.length result - 1] == '\n' then 
-        Untyped (String.sub result 0 (String.length result - 1))
+        StringV (String.sub result 0 (String.length result - 1))
       else 
-        Untyped result
+        StringV result
     
 
     | Pipe (loc, []) -> raise (Panic "empty pipe") 
@@ -401,7 +384,7 @@ end) = struct
                      The main reason for doing this is to avoid cyclical imports between Driver and Eval,
                      but this also comes with the nice side effect of allowing
                      the calling code (the driver) to change the way module lookup is performed. *)
-                  | [StringV modPath | Untyped modPath] -> 
+                  | [StringV modPath] -> 
                       Require.eval_require modPath
                   | _ -> raise (PrimOpArgumentError ("require", args, "Expected a single string argument", loc))
                   end

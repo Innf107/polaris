@@ -45,8 +45,8 @@ let handle_errors print_fun f =
   | NonProgCallInPipe (expr, loc) -> print_fun (
       Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ NameExpr.pretty expr
     )
-  | UnableToConvertTo(ty, value, msg, loc) -> print_fun (
-      Loc.pretty loc ^ ": Unable to convert to " ^ ty ^ ": " ^ msg
+  | NotAValueOfType(ty, value, msg, loc) -> print_fun (
+      Loc.pretty loc ^ ": Not a value of type " ^ ty ^ ": " ^ msg
     ^ "\n    Value: " ^ Value.pretty value
     )
 

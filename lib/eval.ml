@@ -3,6 +3,8 @@ open Util
 
 module VarMap = Map.Make (Name)
 
+module MapVImpl = Map.Make (String)
+
 (* `eval_env` unfortunately has to be defined outside of `Eval.Make`,
    since `value` depends on it. *)
 type eval_env = { vars : value ref VarMap.t }
@@ -28,7 +30,8 @@ and value =
      anything but ideal. One should be able to approximate mutable lists
      by mutable references to immutable lists 99% of the time, so this is
      hopefully not going to be an issue. *)
-  | ListV of value list 
+  | ListV of value list
+  | MapV of (value MapVImpl.t)
   | NullV
 
 module EvalError = struct
@@ -65,11 +68,15 @@ module Value = struct
     | NullV -> "null"
     | BoolV b -> string_of_bool b
     | ListV vals -> "[" ^ String.concat ", " (List.map pretty vals) ^ "]"
+    | MapV kvs -> 
+      let kv_list = List.of_seq (MapVImpl.to_seq kvs) in
+      "#{" ^ String.concat ", " (List.map (fun (k, v) -> k ^ ": " ^ pretty v) kv_list) ^ "}"
 
   let rec as_args (fail : t -> 'a) (x : t) : string list =
     match x with
     | StringV _ | NumV _ | BoolV _ -> [pretty x]
-    | ClosureV _ | PrimOpV _ | UnitV | NullV -> fail x
+    (* TODO: Should Maps be converted to JSON? *)
+    | ClosureV _ | PrimOpV _ | UnitV | NullV | MapV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
@@ -119,6 +126,8 @@ end) = struct
       if List.compare_lengths xs ys != 0
       then false
       else List.for_all2 val_eq xs ys
+    | MapV m1, MapV m2 ->
+      MapVImpl.equal val_eq m1 m2
     | NullV, NullV -> true
     (* Comparisons of different values are always false *)
     | _, _ -> false
@@ -170,6 +179,9 @@ end) = struct
     | ListLit (_, exprs) -> 
       let vals = List.map (eval_expr env) exprs in 
       ListV vals
+    | MapLit (_, kvs) ->
+      let kv_vals = Seq.map (fun (k, e) -> (k, eval_expr env e)) (List.to_seq kvs) in
+      MapV (MapVImpl.of_seq kv_vals)
 
     (* TODO: Handle untyped *)
     | Add (loc, e1, e2) -> 

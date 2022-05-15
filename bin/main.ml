@@ -42,12 +42,12 @@ let handle_errors print_fun f =
         Loc.pretty loc ^ ": Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
       ^ "This is definitely a bug in the interpreter"
       )
+  | NotAValueOfType(ty, value, msg, loc) -> print_fun (
+        Loc.pretty loc ^ ": Not a value of type " ^ ty ^ ": " ^ msg
+      ^ "\n    Value: " ^ Value.pretty value
+      )  
   | NonProgCallInPipe (expr, loc) -> print_fun (
       Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ NameExpr.pretty expr
-    )
-  | NotAValueOfType(ty, value, msg, loc) -> print_fun (
-      Loc.pretty loc ^ ": Not a value of type " ^ ty ^ ": " ^ msg
-    ^ "\n    Value: " ^ Value.pretty value
     )
 
 let run_file (options : run_options) (filepath : string) = 

@@ -16,6 +16,7 @@ let loc = Loc.from_pos
 %token TRUE FALSE
 %token NULL
 %token LAMBDA ARROW
+%token DOT
 %token COMMA SEMI COLON
 %token LPAREN RPAREN HASHLBRACE LBRACE RBRACE LBRACKET RBRACKET
 %token EQUALS COLONEQUALS
@@ -53,8 +54,9 @@ expr:
   | FALSE                                                       { BoolLit (loc $startpos $endpos, false)}                          // false
   | NULL                                                        { NullLit (loc $startpos $endpos) }                                // null
   | IDENT                                                       { Var (loc $startpos $endpos, $1) }                                // x
-  | LBRACKET expr_comma_list RBRACKET                           { ListLit (loc $startpos $endpos, $2) }
-  | HASHLBRACE map_kv_list RBRACE                               { MapLit (loc $startpos $endpos, $2) }
+  | LBRACKET expr_comma_list RBRACKET                           { ListLit (loc $startpos $endpos, $2) }                            // [e, .., e]
+  | HASHLBRACE map_kv_list RBRACE                               { MapLit (loc $startpos $endpos, $2) }                             // #{ x: e, .., x: e }
+  | expr DOT IDENT                                              { MapLookup (loc $startpos $endpos, $1, $3) }                      // e.x
   | LPAREN expr RPAREN                                          { $2 }                                                             // ( e )
   | LAMBDA IDENT ARROW expr                                     { Lambda(loc $startpos $endpos, [$2], $4) }                        // \x -> e
   | LAMBDA LPAREN ident_list RPAREN ARROW expr                  { Lambda(loc $startpos $endpos, $3, $6) }                          // \(x, .., x) -> e

@@ -43,6 +43,8 @@ struct
     | NullLit of loc                        (* null *)
     | ListLit of loc * expr list            (* [e, .., e] *)
     | MapLit of loc * (string * expr) list  (* #{x₁: e₁, .., xₙ: eₙ}*)
+    (* Map Manipulation *)
+    | MapLookup of loc * expr * string      (* e.x *)
     (* Common Operations *)
     | Add of loc * expr * expr              (* e + e *)
     | Sub of loc * expr * expr              (* e - e *)
@@ -85,6 +87,8 @@ struct
     | ListLit (_, exprs) -> "[" ^ String.concat ", " (List.map pretty exprs) ^ "]"
     | MapLit (_, kvs) -> "{" ^ String.concat ", " (List.map (fun (k, e) -> k ^ ": " ^ pretty e) kvs) ^ "}"
 
+    | MapLookup (_, expr, key) -> "(" ^ pretty expr ^ ")." ^ key
+
     | Add (_, e1, e2)     -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
     | Sub (_, e1, e2)     -> "(" ^ pretty e1 ^ " - " ^ pretty e2 ^ ")"
     | Mul (_, e1, e2)     -> "(" ^ pretty e1 ^ " * " ^ pretty e2 ^ ")"
@@ -116,7 +120,8 @@ struct
 
   let get_loc = function
     | Var (loc, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
-    | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | MapLit(loc, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
+    | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | MapLit(loc, _) 
+    | MapLookup(loc, _, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
     | Div(loc, _ , _) | Concat(loc, _, _) | Equals(loc, _, _) | LE(loc, _, _) | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | Print(loc, _) | ProgCall(loc, _, _) | Pipe(loc, _)

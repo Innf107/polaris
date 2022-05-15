@@ -29,6 +29,7 @@ and value =
      by mutable references to immutable lists 99% of the time, so this is
      hopefully not going to be an issue. *)
   | ListV of value list 
+  | NullV
 
 module EvalError = struct
   exception DynamicVarNotFound of name * loc
@@ -61,13 +62,14 @@ module Value = struct
     | PrimOpV name ->
         "<primative: " ^ name ^ ">"
     | UnitV -> "()"
+    | NullV -> "null"
     | BoolV b -> string_of_bool b
     | ListV vals -> "[" ^ String.concat ", " (List.map pretty vals) ^ "]"
 
   let rec as_args (fail : t -> 'a) (x : t) : string list =
     match x with
     | StringV _ | NumV _ | BoolV _ -> [pretty x]
-    | ClosureV _ | PrimOpV _ | UnitV -> fail x
+    | ClosureV _ | PrimOpV _ | UnitV | NullV -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
@@ -102,11 +104,11 @@ end) = struct
 
   let rec val_eq (x : value) (y : value) : bool = 
     match x, y with
-    (* TODO: Handle untypeds *)
     | StringV x, StringV y -> String.compare x y == 0;
     | NumV x, NumV y -> 
       Float.equal x y;
-    (* Closure comparison always evaluates to false *)
+    (* Closure comparison always evaluates to false.
+       We're not going to solve the halting problem for this. *)
     | (ClosureV _, _ | _, ClosureV _) -> false
     | UnitV, UnitV -> true
     | BoolV x, BoolV y -> x == y
@@ -117,7 +119,8 @@ end) = struct
       if List.compare_lengths xs ys != 0
       then false
       else List.for_all2 val_eq xs ys
-    (* Comparisons of different (typed) values are always false *)
+    | NullV, NullV -> true
+    (* Comparisons of different values are always false *)
     | _, _ -> false
 
   let read_untyped_from_fd (fd : Unix.file_descr) : value =
@@ -162,7 +165,8 @@ end) = struct
     | NumLit (_, f)    -> NumV f
     | BoolLit (_, b)   -> BoolV b
     | UnitLit _        -> UnitV
-    
+    | NullLit _        -> NullV
+
     | ListLit (_, exprs) -> 
       let vals = List.map (eval_expr env) exprs in 
       ListV vals
@@ -403,18 +407,18 @@ end) = struct
                     StringV (Str.global_replace (Str.regexp_string needle) repl str)
                   | _ -> raise (PrimOpArgumentError ("replace", args, "Expected three strings", loc))
                   end
-    | "regexp_replace" -> begin match args with
+    | "regexpReplace" -> begin match args with
                   | [needle_v; repl_v; str_v] -> 
-                    let context = "Trying to apply 'regexp_replace'" in
+                    let context = "Trying to apply 'regexpReplace'" in
                     let needle = as_string context loc needle_v in 
                     let repl =  as_string context loc repl_v in
                     let str = as_string context loc str_v in
                     StringV (Str.global_replace (Str.regexp needle) repl str)
-                  | _ -> raise (PrimOpArgumentError ("regexp_replace", args, "Expected three strings", loc))
+                  | _ -> raise (PrimOpArgumentError ("regexpReplace", args, "Expected three strings", loc))
                   end
-    | "write_file" -> begin match args with
+    | "writeFile" -> begin match args with
                   | [path_v; content_v] ->
-                    let context = "Trying to apply 'write_file'" in
+                    let context = "Trying to apply 'writeFile'" in
                     let path = as_string context loc path_v in
                     let content = as_string context loc content_v in
 
@@ -422,7 +426,23 @@ end) = struct
                     Out_channel.output_string channel content;
                     Out_channel.close channel;
                     UnitV
-                  | _ -> raise (PrimOpArgumentError ("write_file", args, "Expected two string arguments", loc))
+                  | _ -> raise (PrimOpArgumentError ("writeFile", args, "Expected two string arguments", loc))
+                  end
+    | "parseInt" -> begin match args with
+                  | [StringV argStr] ->
+                    begin match int_of_string_opt argStr with
+                    |  Some(int_val) -> NumV (float_of_int int_val)
+                    |  None -> NullV
+                    end
+                  | _ -> raise (PrimOpArgumentError ("parseInt", args, "Expected a strings", loc))
+                  end
+    | "parseNum" -> begin match args with
+                  | [StringV argStr] ->
+                    begin match float_of_string_opt argStr with
+                    | Some(float_val) -> NumV float_val
+                    | None -> NullV
+                    end
+                  | _ -> raise (PrimOpArgumentError ("parseNum", args, "Expected a strings", loc))
                   end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 

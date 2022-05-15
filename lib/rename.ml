@@ -48,6 +48,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
     | NumLit (loc, n) -> NumLit (loc, n)
     | BoolLit (loc, b) -> BoolLit (loc, b)
     | UnitLit loc -> UnitLit loc
+    | NullLit loc -> NullLit loc
     | ListLit (loc, exprs) -> ListLit (loc, List.map (rename_expr scope) exprs)
 
     | Add(loc, e1,e2)    -> Add(loc, rename_expr scope e1, rename_expr scope e2)

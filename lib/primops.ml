@@ -7,8 +7,10 @@ let primops = PrimOpNameSet.of_list [
   "require";
   "lines";
   "replace";
-  "regexp_replace";
-  "write_file";
+  "regexpReplace";
+  "writeFile";
+  "parseInt";
+  "parseNum";
 ]
 
 let is_primop name = PrimOpNameSet.mem name primops

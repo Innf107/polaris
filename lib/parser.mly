@@ -14,6 +14,7 @@ let loc = Loc.from_pos
 %token <float> FLOAT
 %token LET IN
 %token TRUE FALSE
+%token NULL
 %token LAMBDA ARROW
 %token COMMA SEMI
 %token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET
@@ -50,6 +51,7 @@ expr:
   | LPAREN RPAREN                                               { UnitLit (loc $startpos $endpos) }                                // ()
   | TRUE                                                        { BoolLit (loc $startpos $endpos, true)}                           // true
   | FALSE                                                       { BoolLit (loc $startpos $endpos, false)}                          // false
+  | NULL                                                        { NullLit (loc $startpos $endpos) }                                // null
   | IDENT                                                       { Var (loc $startpos $endpos, $1) }                                // x
   | LBRACKET expr_comma_list RBRACKET                           { ListLit (loc $startpos $endpos, $2) }
   | LPAREN expr RPAREN                                          { $2 }                                                             // ( e )

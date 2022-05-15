@@ -32,6 +32,7 @@ rule token = parse
 | "else"    { ELSE }
 | "true"    { TRUE }
 | "false"   { FALSE }
+| "null"    { NULL }
 | "->"      { ARROW }
 | ','       { COMMA }
 | ';'       { SEMI }

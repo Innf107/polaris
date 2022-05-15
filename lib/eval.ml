@@ -336,8 +336,7 @@ end) = struct
       Pipe.compose_out_with progs (fun out_chan -> 
           List.iter (fun line -> Out_channel.output_string out_chan (line ^ "\n")) output_lines
         );
-      raise TODO
-    
+      eval_seq_cont env exprs cont
 
     | [ e ] -> 
       cont env (Left e)

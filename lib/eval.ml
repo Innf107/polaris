@@ -478,6 +478,11 @@ end) = struct
                     UnitV
                   | _ -> raise (PrimOpArgumentError ("chdir", args, "Expected a strings", loc))
                   end
+    | "exit" -> begin match args with
+                | [NumV arg] ->
+                  exit (int_of_float arg)
+                | _ -> raise (PrimOpArgumentError ("exit", args, "Expected an integer", loc))
+                end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   let empty_eval_env : eval_env = {

@@ -468,6 +468,10 @@ end) = struct
                     end
                   | _ -> raise (PrimOpArgumentError ("parseNum", args, "Expected a strings", loc))
                   end
+    | "readLine" -> begin match args with
+                    | [] -> StringV (read_line ())
+                    | _ -> raise (PrimOpArgumentError ("readLine", args, "Expected no arguments", loc))
+                    end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   let empty_eval_env : eval_env = {

@@ -11,6 +11,7 @@ let primops = PrimOpNameSet.of_list [
   "writeFile";
   "parseInt";
   "parseNum";
+  "readLine";
 ]
 
 let is_primop name = PrimOpNameSet.mem name primops

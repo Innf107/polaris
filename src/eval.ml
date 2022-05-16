@@ -47,6 +47,8 @@ module EvalError = struct
     become a feature? *)
   exception PrimOpArgumentError of string * value list * string * loc
 
+  exception InvalidOperatorArgs of string * value list * loc
+
   exception InvalidProcessArg of value * loc
 
   exception NonProgCallInPipe of NameExpr.expr * loc
@@ -224,8 +226,12 @@ end) = struct
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
-      let context = "Trying to concatenate " ^ Value.pretty v1 ^ " and " ^ Value.pretty v2 in
-      StringV (as_string context loc v1 ^ as_string context loc v2)
+      begin match v1, v2 with
+      | ListV xs, ListV ys -> ListV (xs @ ys)
+      | StringV s1, StringV s2 -> StringV (s1 ^ s2)
+      | StringV s1, NumV _ -> StringV(s1 ^ Value.pretty v2)
+      | _, _ -> raise (EvalError.InvalidOperatorArgs("..", [v1; v2], loc))
+      end 
 
     | Equals (_, e1, e2) -> 
       (* See Note [left-to-right evaluation] *)
@@ -426,7 +432,7 @@ end) = struct
                   end
     | "parseInt" -> begin match args with
                   | [StringV arg_str] ->
-                    begin match int_of_string_opt arg_str with
+                    begin match int_of_string_opt (String.trim arg_str) with
                     |  Some(int_val) -> NumV (float_of_int int_val)
                     |  None -> NullV
                     end
@@ -434,7 +440,7 @@ end) = struct
                   end
     | "parseNum" -> begin match args with
                   | [StringV arg_str] ->
-                    begin match float_of_string_opt arg_str with
+                    begin match float_of_string_opt (String.trim arg_str) with
                     | Some(float_val) -> NumV float_val
                     | None -> NullV
                     end
@@ -457,7 +463,9 @@ end) = struct
                 end
     | "toString" -> begin match args with
                 | [NumV arg] -> 
-                  StringV (Float.to_string arg)
+                  (* We have to use `Value.pretty` instead of `Float.to_string`, since
+                     the latter always appends a trailing dot. *)
+                  StringV (Value.pretty (NumV arg))
                 | _ -> raise (PrimOpArgumentError ("toString", args, "Expected a number", loc))
                 end            
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))

@@ -116,7 +116,6 @@ let run_repl (options : run_options) : unit =
     with
     | End_of_file -> exit 0
     | Sys.Break -> 
-      print_newline ();
       go env scope
   in
   go EvalInst.empty_eval_env Rename.RenameScope.empty

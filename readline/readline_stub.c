@@ -8,6 +8,8 @@
 CAMLprim value readline_stub(value prompt) {
     using_history();
 
+    rl_getc_function = getc;
+
     char* result_str = readline(String_val(prompt));
 
     if (result_str == NULL){

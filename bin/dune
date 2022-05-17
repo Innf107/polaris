@@ -1,7 +1,10 @@
 (executable
  (public_name polaris)
  (name main)
- (libraries polaris))
+ (libraries 
+    polaris
+    readline
+  ))
 
 (env
   (dev

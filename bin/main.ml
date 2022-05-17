@@ -104,15 +104,15 @@ let run_repl (options : run_options) : unit =
   let rec go env scope =
     try
       handle_errors (fun msg -> repl_error msg; go env scope)
-        (fun _ ->  
-          print_string "\x1b[1;36mλ>\x1b[0m ";
-          flush stdout;
-          let input = read_line () in
+        (fun _ -> 
+          let prompt = "\x1b[1;36mλ>\x1b[0m " in
+          match Readline.readline prompt with
+          | None -> exit 0
+          | Some input -> 
+            let result, new_env, new_scope = Driver.run_env driver_options (Lexing.from_string input) env scope in
 
-          let result, new_env, new_scope = Driver.run_env driver_options (Lexing.from_string input) env scope in
-
-          print_endline (" - " ^ Value.pretty result);
-          go new_env new_scope)
+            print_endline (" - " ^ Value.pretty result);
+            go new_env new_scope)
     with
     | End_of_file -> exit 0
     | Sys.Break -> 

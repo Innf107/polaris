@@ -1,0 +1,12 @@
+; This is included directly, instead of importing the
+; readline package via opam, since I did not have the patience
+; to get opam working properly 
+(library
+ (name readline)
+
+ (foreign_stubs
+  (language c)
+  (names readline_stub)
+ )
+ (flags :standard -cclib -lreadline)
+)

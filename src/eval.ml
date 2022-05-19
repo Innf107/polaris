@@ -477,6 +477,13 @@ end) = struct
                    | [] -> ListV (List.map (fun x -> StringV x) env.argv)
                    | _ -> raise (PrimOpArgumentError ("getArgv", args, "Expected no arguments", loc))
                    end
+    | "getEnv" -> begin match args with
+                  | [StringV var] -> begin match Sys.getenv_opt var with
+                    | None -> NullV
+                    | Some(value) -> StringV value
+                    end
+                  | _ -> raise (PrimOpArgumentError ("getEnv", args, "Expected a single string", loc))
+                  end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   and progs_of_exprs env = function

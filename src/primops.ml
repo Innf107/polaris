@@ -15,6 +15,7 @@ let primops = PrimOpNameSet.of_list [
   "chdir";
   "exit";
   "toString";
+  "getArgv";
 ]
 
 let is_primop name = PrimOpNameSet.mem name primops

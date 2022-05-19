@@ -74,7 +74,7 @@ let handle_errors print_fun f =
       Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ NameExpr.pretty expr
     )
 
-let run_file (options : run_options) (filepath : string) = 
+let run_file (options : run_options) (filepath : string) (args : string list) = 
   let _ = match options.backend with
   | EvalBackend -> ()
   | BytecodeBackend -> warning ("The bytecode backend is experimental and very incomplete. It will probably not work as expected")
@@ -82,6 +82,7 @@ let run_file (options : run_options) (filepath : string) =
 
   let driver_options = {
     filename = filepath
+  ; argv = filepath :: args
   ; print_ast = options.print_ast
   ; print_renamed = options.print_renamed
   ; backend = options.backend
@@ -97,6 +98,7 @@ let run_repl (options : run_options) : unit =
   in
   let driver_options = {
       filename = "<interactive>"
+    ; argv = Array.to_list Sys.argv
     ; print_ast = options.print_ast
     ; print_renamed = options.print_renamed
     ; backend = options.backend
@@ -120,7 +122,7 @@ let run_repl (options : run_options) : unit =
     | Sys.Break -> 
       go env scope
   in
-  go EvalInst.empty_eval_env Rename.RenameScope.empty
+  go (EvalInst.empty_eval_env driver_options.argv) Rename.RenameScope.empty
 
   
 
@@ -150,7 +152,6 @@ let () =
       | "bytecode" -> BytecodeBackend
       | _ -> fatal_error ("Invalid or unsupported backend: '" ^ !backend ^ "'")
     } in
-   match !args with
-      | [filepath] -> ignore (run_file options filepath)
-      | [] -> run_repl options
-      | _ -> Arg.usage speclist usage_message; exit 1
+  match List.rev !args with
+  | [] -> run_repl options
+  | (filepath :: args) -> ignore (run_file options filepath args)

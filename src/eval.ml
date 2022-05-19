@@ -7,7 +7,7 @@ module MapVImpl = Map.Make (String)
 
 (* `eval_env` unfortunately has to be defined outside of `Eval.Make`,
    since `value` depends on it. *)
-type eval_env = { vars : value ref VarMap.t }
+type eval_env = { vars : value ref VarMap.t; argv : string list }
 
 and value =
   | StringV of string
@@ -98,7 +98,7 @@ end) = struct
   let insert_vars (vars : name list) (vals : value list) (env : eval_env) (loc : loc) : eval_env =
     if (List.compare_lengths vars vals != 0) 
     then raise (EvalError.InvalidNumberOfArguments (vars, vals, loc))
-    else { vars = List.fold_right2 (fun x v r -> VarMap.add x (ref v) r) vars vals env.vars }
+    else { env with vars = List.fold_right2 (fun x v r -> VarMap.add x (ref v) r) vars vals env.vars }
 
   (* Tries to convert a number to a value. Throws an error if it can't *)
   let as_num context loc = function
@@ -446,9 +446,14 @@ end) = struct
                     end
                   | _ -> raise (PrimOpArgumentError ("parseNum", args, "Expected a strings", loc))
                   end
-    | "readLine" -> begin match args with
-                    | [] -> StringV (read_line ())
-                    | _ -> raise (PrimOpArgumentError ("readLine", args, "Expected no arguments", loc))
+    | "readLine" -> let prompt = match args with
+                    | [] -> ""
+                    | [StringV prompt] -> prompt
+                    | _ -> raise (PrimOpArgumentError ("readLine", args, "Expected no arguments or a single string", loc))
+                    in
+                    begin match Readline.readline prompt with
+                    | Some input -> StringV input
+                    | None -> NullV
                     end
     | "chdir" ->  begin match args with
                   | [StringV path_str] -> 
@@ -468,6 +473,10 @@ end) = struct
                   StringV (Value.pretty (NumV arg))
                 | _ -> raise (PrimOpArgumentError ("toString", args, "Expected a number", loc))
                 end            
+    | "getArgv" -> begin match args with
+                   | [] -> ListV (List.map (fun x -> StringV x) env.argv)
+                   | _ -> raise (PrimOpArgumentError ("getArgv", args, "Expected no arguments", loc))
+                   end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   and progs_of_exprs env = function
@@ -479,11 +488,12 @@ end) = struct
       raise (EvalError.NonProgCallInPipe (expr, NameExpr.get_loc expr))
     | [] -> []
 
-  let empty_eval_env : eval_env = {
-    vars = VarMap.empty
+  let empty_eval_env (argv: string list): eval_env = {
+    vars = VarMap.empty;
+    argv = argv
   }
 
-  let eval (exprs : name_expr list) : value = eval_seq empty_eval_env exprs
+  let eval (argv : string list) (exprs : name_expr list) : value = eval_seq (empty_eval_env argv) exprs
 end
 
 (* Note [left-to-right evaluation]

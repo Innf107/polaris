@@ -1,6 +1,7 @@
 (library
  (name polaris)
- (libraries 
+ (libraries
+  readline 
   menhirLib
   unix
   str))

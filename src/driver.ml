@@ -8,6 +8,7 @@ type backend =
 
 type driver_options = {
   filename : string;
+  argv : string list;
   print_ast : bool;
   print_renamed : bool;
   backend : backend
@@ -17,11 +18,11 @@ exception ParseError of loc
 
 
 module type EvalI = sig
-  val eval : name_expr list -> value
+  val eval : string list -> name_expr list -> value
 
   val eval_seq_state : eval_env -> name_expr list -> value * eval_env
 
-  val empty_eval_env : eval_env
+  val empty_eval_env : string list -> eval_env
 
 end
 
@@ -37,6 +38,7 @@ module rec EvalInst : EvalI = Eval.Make(struct
   let eval_require modPath = 
     let driver_options = {
       filename = modPath;
+      argv = [];
       print_ast = false;
       print_renamed = false;
       backend = EvalBackend (* The bytecode backend does not use `Eval` anyway, so this is fine *)
@@ -89,7 +91,7 @@ and Driver : DriverI = struct
     | EvalBackend -> ()
     | BytecodeBackend -> raise (Util.Panic "The bytecode backend does not support value evaluation")
     in
-    let res, _, _ = run_env options lexbuf EvalInst.empty_eval_env RenameScope.empty in
+    let res, _, _ = run_env options lexbuf (EvalInst.empty_eval_env options.argv) RenameScope.empty in
     res
 
   let run (options : driver_options) (lexbuf : Lexing.lexbuf) : unit =

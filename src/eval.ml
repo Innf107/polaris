@@ -7,7 +7,11 @@ module MapVImpl = Map.Make (String)
 
 (* `eval_env` unfortunately has to be defined outside of `Eval.Make`,
    since `value` depends on it. *)
-type eval_env = { vars : value ref VarMap.t; argv : string list }
+type eval_env = { 
+  vars : value ref VarMap.t
+; argv : string list 
+; call_trace : loc list
+}
 
 and value =
   | StringV of string
@@ -35,25 +39,25 @@ and value =
   | NullV
 
 module EvalError = struct
-  exception DynamicVarNotFound of name * loc
-  exception NotAValueOfType of string * value * string * loc
-  exception TryingToApplyNonFunction of value * loc
-  exception TryingToLookupInNonMap of value * string * loc
-  exception TryingToLookupDynamicInNonMap of value * loc
-  exception InvalidKey of value * value MapVImpl.t * loc
-  exception MapDoesNotContain of value MapVImpl.t * string * loc
-  exception InvalidNumberOfArguments of name list * value list * loc
+  exception DynamicVarNotFound of name * loc list
+  exception NotAValueOfType of string * value * string * loc list
+  exception TryingToApplyNonFunction of value * loc list
+  exception TryingToLookupInNonMap of value * string * loc list
+  exception TryingToLookupDynamicInNonMap of value * loc list
+  exception InvalidKey of value * value MapVImpl.t * loc list
+  exception MapDoesNotContain of value MapVImpl.t * string * loc list
+  exception InvalidNumberOfArguments of name list * value list * loc list
   (* TODO: Once exceptions are implemented, prim op argument errors should
     just be polaris exceptions. 
     Maybe these could even just be contract failures, if those ever
     become a feature? *)
-  exception PrimOpArgumentError of string * value list * string * loc
+  exception PrimOpArgumentError of string * value list * string * loc list
 
-  exception InvalidOperatorArgs of string * value list * loc
+  exception InvalidOperatorArgs of string * value list * loc list
 
-  exception InvalidProcessArg of value * loc
+  exception InvalidProcessArg of value * loc list
 
-  exception NonProgCallInPipe of NameExpr.expr * loc
+  exception NonProgCallInPipe of NameExpr.expr * loc list
 end  
 
 module Value = struct
@@ -95,11 +99,11 @@ end) = struct
     try 
       VarMap.find var env.vars
     with
-      Not_found -> raise (EvalError.DynamicVarNotFound (var, loc))
+      Not_found -> raise (EvalError.DynamicVarNotFound (var, loc :: env.call_trace))
 
   let insert_vars (vars : name list) (vals : value list) (env : eval_env) (loc : loc) : eval_env =
     if (List.compare_lengths vars vals != 0) 
-    then raise (EvalError.InvalidNumberOfArguments (vars, vals, loc))
+    then raise (EvalError.InvalidNumberOfArguments (vars, vals, loc :: env.call_trace))
     else { env with vars = List.fold_right2 (fun x v r -> VarMap.add x (ref v) r) vars vals env.vars }
 
   (* Tries to convert a number to a value. Throws an error if it can't *)
@@ -168,12 +172,14 @@ end) = struct
         | ClosureV (clos_env, params, body) ->
             (* Function arguments are evaluated left to right *)
             let arg_vals = List.map (eval_expr env) args in
-            eval_expr (insert_vars params arg_vals (Lazy.force clos_env) loc) body
+            let updated_clos_env = insert_vars params arg_vals (Lazy.force clos_env) loc in
+            (* The call trace is extended and carried over to the closure environment *)
+            eval_expr {updated_clos_env with call_trace = loc :: env.call_trace} body
         | PrimOpV prim_name ->
             let arg_vals = List.map (eval_expr env) args in
-            eval_primop env prim_name arg_vals loc
+            eval_primop {env with call_trace = loc :: env.call_trace} prim_name arg_vals loc
         | x ->
-            raise (EvalError.TryingToApplyNonFunction (x, loc)))
+            raise (EvalError.TryingToApplyNonFunction (x, loc :: env.call_trace)))
     | Lambda (_, params, e) -> ClosureV (lazy env, params, e)
     
     | StringLit (_, s) -> StringV s
@@ -194,9 +200,9 @@ end) = struct
       | MapV map -> 
         begin match MapVImpl.find_opt key map with
         | Some value -> value
-        | None -> raise (EvalError.MapDoesNotContain (map, key, loc))
+        | None -> raise (EvalError.MapDoesNotContain (map, key, loc :: env.call_trace))
         end
-      | value -> raise (EvalError.TryingToLookupInNonMap (value, key, loc))
+      | value -> raise (EvalError.TryingToLookupInNonMap (value, key, loc :: env.call_trace))
       end
     | DynLookup (loc, map_expr, key_expr) ->
       begin match eval_expr env map_expr with
@@ -204,11 +210,11 @@ end) = struct
         begin match eval_expr env key_expr with
         | StringV key -> begin match MapVImpl.find_opt key map with
                          | Some value -> value
-                         | None -> raise (EvalError.MapDoesNotContain (map, key, loc))
+                         | None -> raise (EvalError.MapDoesNotContain (map, key, loc :: env.call_trace))
                          end
-        | value -> raise (EvalError.InvalidKey (value, map, loc))
+        | value -> raise (EvalError.InvalidKey (value, map, loc :: env.call_trace))
         end
-      | value -> raise (EvalError.TryingToLookupDynamicInNonMap (value, loc))
+      | value -> raise (EvalError.TryingToLookupDynamicInNonMap (value, loc :: env.call_trace))
       end
 
     (* TODO: Handle untyped *)
@@ -217,25 +223,25 @@ end) = struct
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to add " ^ Value.pretty v1 ^ " and " ^ Value.pretty v2 in
-      NumV (as_num context loc v1 +. as_num context loc v2)
+      NumV (as_num context (loc :: env.call_trace) v1 +. as_num context (loc :: env.call_trace) v2)
     | Sub (loc, e1, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to subtract " ^ Value.pretty v2 ^ " from " ^ Value.pretty v1 in
-      NumV (as_num context loc v1 -. as_num context loc v2)
+      NumV (as_num context (loc :: env.call_trace) v1 -. as_num context (loc :: env.call_trace) v2)
     | Mul (loc, e1, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to multiply " ^ Value.pretty v1 ^ " and " ^ Value.pretty v2 in
-      NumV (as_num context loc v1 *. as_num context loc v2)
+      NumV (as_num context (loc :: env.call_trace) v1 *. as_num context (loc :: env.call_trace) v2)
     | Div (loc, e1, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to divide " ^ Value.pretty v1 ^ " by " ^ Value.pretty v2 in
-      NumV (as_num context loc v1 /. as_num context loc v2)
+      NumV (as_num context (loc :: env.call_trace) v1 /. as_num context (loc :: env.call_trace) v2)
     | Concat (loc, e1, e2) ->
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
@@ -244,7 +250,7 @@ end) = struct
       | ListV xs, ListV ys -> ListV (xs @ ys)
       | StringV s1, StringV s2 -> StringV (s1 ^ s2)
       | StringV s1, NumV _ -> StringV(s1 ^ Value.pretty v2)
-      | _, _ -> raise (EvalError.InvalidOperatorArgs("..", [v1; v2], loc))
+      | _, _ -> raise (EvalError.InvalidOperatorArgs("..", [v1; v2], loc :: env.call_trace))
       end 
 
     | Equals (_, e1, e2) -> 
@@ -258,25 +264,25 @@ end) = struct
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to compute " ^ Value.pretty v1 ^ " <= " ^ Value.pretty v2 in
-      BoolV (as_num context loc v1 <= as_num context loc v2)
+      BoolV (as_num context (loc :: env.call_trace) v1 <= as_num context (loc :: env.call_trace) v2)
     | GE (loc, e1, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to compute " ^ Value.pretty v1 ^ " >= " ^ Value.pretty v2 in
-      BoolV (as_num context loc v1 >= as_num context loc v2)
+      BoolV (as_num context (loc :: env.call_trace) v1 >= as_num context (loc :: env.call_trace) v2)
     | LT (loc, e1, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to compute " ^ Value.pretty v1 ^ " < " ^ Value.pretty v2 in
-      BoolV (as_num context loc v1 < as_num context loc v2)
+      BoolV (as_num context (loc :: env.call_trace) v1 < as_num context (loc :: env.call_trace) v2)
     | GT (loc, e1, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to compute " ^ Value.pretty v1 ^ " > " ^ Value.pretty v2 in
-      BoolV (as_num context loc v1 > as_num context loc v2)
+      BoolV (as_num context (loc :: env.call_trace) v1 > as_num context (loc :: env.call_trace) v2)
     
     | Or(loc, e1, e2) ->
       begin match eval_expr env e1 with
@@ -285,9 +291,9 @@ end) = struct
         begin match eval_expr env e2 with 
         | BoolV true -> BoolV true
         | BoolV false -> BoolV false
-        | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the second argument of an || expression", loc))
+        | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the second argument of an || expression", loc :: env.call_trace))
         end
-      | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the first argument of an || expression", loc))
+      | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the first argument of an || expression", loc :: env.call_trace))
       end
     | And(loc, e1, e2) ->
         begin match eval_expr env e1 with
@@ -296,20 +302,20 @@ end) = struct
           begin match eval_expr env e2 with 
           | BoolV true -> BoolV true
           | BoolV false -> BoolV false
-          | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the second argument of an || expression", loc))
+          | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the second argument of an || expression", loc :: env.call_trace))
           end
-        | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the first argument of an && expression", loc))
+        | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the first argument of an && expression", loc :: env.call_trace))
         end
     | Not(loc, e) ->
         begin match eval_expr env e with
         | BoolV b -> BoolV (not b)
-        | value -> raise (EvalError.NotAValueOfType("bool", value, "In the argument of a 'not' expression", loc))
+        | value -> raise (EvalError.NotAValueOfType("bool", value, "In the argument of a 'not' expression", loc :: env.call_trace))
         end
   
     | If (loc, e1, e2, e3) ->
       let v1 = eval_expr env e1 in
       let context = "In the condition of an if expression" in
-      if as_bool context loc v1 then 
+      if as_bool context (loc :: env.call_trace) v1 then 
         eval_expr env e2
       else
         eval_expr env e3
@@ -344,7 +350,7 @@ end) = struct
       StringV (In_channel.input_all in_chan)
 
     | Pipe (loc, (expr :: exprs)) ->
-      let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc))) (eval_expr env expr) in
+      let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
 
       let progs = progs_of_exprs env exprs in
 
@@ -380,7 +386,7 @@ end) = struct
       Pipe.compose progs;
       eval_seq_cont env exprs cont
     | Pipe (loc, (expr :: prog_exprs)) :: exprs ->
-      let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc))) (eval_expr env expr) in
+      let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
       
       let progs = progs_of_exprs env prog_exprs in
       
@@ -415,17 +421,17 @@ end) = struct
     match op with
     | "head" -> begin match args with
                 | [ListV (head::tail)] -> head
-                | [ListV []] -> raise (PrimOpArgumentError ("head", args, "Empty list", loc))
-                | _ -> raise (PrimOpArgumentError ("head", args, "Expected a single list", loc))
+                | [ListV []] -> raise (PrimOpArgumentError ("head", args, "Empty list", loc :: env.call_trace))
+                | _ -> raise (PrimOpArgumentError ("head", args, "Expected a single list", loc :: env.call_trace))
                 end
     | "tail" -> begin match args with
                 | [ListV (head::tail)] -> ListV tail
-                | [ListV []] -> raise (PrimOpArgumentError ("tail", args, "Empty list", loc))
-                | _ -> raise (PrimOpArgumentError ("tail", args, "Expected a single list", loc))
+                | [ListV []] -> raise (PrimOpArgumentError ("tail", args, "Empty list", loc :: env.call_trace))
+                | _ -> raise (PrimOpArgumentError ("tail", args, "Expected a single list", loc :: env.call_trace))
                 end
     | "cons" -> begin match args with
                 | [x; ListV xs] -> ListV (x :: xs)
-                | _ -> raise (PrimOpArgumentError("cons", args, "Expected an element and a list", loc))
+                | _ -> raise (PrimOpArgumentError("cons", args, "Expected an element and a list", loc :: env.call_trace))
                 end
     | "require" -> begin match args with
                   (* This just calls out to Require.eval_require.
@@ -438,43 +444,43 @@ end) = struct
                     | p -> Filename.dirname p
                     in
                     Require.eval_require cwd modPath
-                  | _ -> raise (PrimOpArgumentError ("require", args, "Expected a single string argument", loc))
+                  | _ -> raise (PrimOpArgumentError ("require", args, "Expected a single string argument", loc :: env.call_trace))
                   end
     | "lines" -> begin match args with
                 | [arg] -> 
                   let context = "Trying to apply 'lines'" in
-                  ListV (List.map (fun s -> StringV s) (String.split_on_char '\n' (as_string context loc arg)))
-                | _ -> raise (PrimOpArgumentError ("lines", args, "Expected a single string", loc))
+                  ListV (List.map (fun s -> StringV s) (String.split_on_char '\n' (as_string context (loc :: env.call_trace) arg)))
+                | _ -> raise (PrimOpArgumentError ("lines", args, "Expected a single string", loc :: env.call_trace))
                 end
     | "replace" -> begin match args with
                   | [needle_v; repl_v; str_v] -> 
                     let context = "Trying to apply 'replace'" in
-                    let needle = as_string context loc needle_v in 
-                    let repl =  as_string context loc repl_v in
-                    let str = as_string context loc str_v in
+                    let needle = as_string context (loc :: env.call_trace) needle_v in 
+                    let repl =  as_string context (loc :: env.call_trace) repl_v in
+                    let str = as_string context (loc :: env.call_trace) str_v in
                     StringV (Str.global_replace (Str.regexp_string needle) repl str)
-                  | _ -> raise (PrimOpArgumentError ("replace", args, "Expected three strings", loc))
+                  | _ -> raise (PrimOpArgumentError ("replace", args, "Expected three strings", loc :: env.call_trace))
                   end
     | "regexpReplace" -> begin match args with
                   | [needle_v; repl_v; str_v] -> 
                     let context = "Trying to apply 'regexpReplace'" in
-                    let needle = as_string context loc needle_v in 
-                    let repl =  as_string context loc repl_v in
-                    let str = as_string context loc str_v in
+                    let needle = as_string context (loc :: env.call_trace) needle_v in 
+                    let repl =  as_string context (loc :: env.call_trace) repl_v in
+                    let str = as_string context (loc :: env.call_trace) str_v in
                     StringV (Str.global_replace (Str.regexp needle) repl str)
-                  | _ -> raise (PrimOpArgumentError ("regexpReplace", args, "Expected three strings", loc))
+                  | _ -> raise (PrimOpArgumentError ("regexpReplace", args, "Expected three strings", loc :: env.call_trace))
                   end
     | "writeFile" -> begin match args with
                   | [path_v; content_v] ->
                     let context = "Trying to apply 'writeFile'" in
-                    let path = as_string context loc path_v in
-                    let content = as_string context loc content_v in
+                    let path = as_string context (loc :: env.call_trace) path_v in
+                    let content = as_string context (loc :: env.call_trace) content_v in
 
                     let channel = open_out path in
                     Out_channel.output_string channel content;
                     Out_channel.close channel;
                     UnitV
-                  | _ -> raise (PrimOpArgumentError ("writeFile", args, "Expected two string arguments", loc))
+                  | _ -> raise (PrimOpArgumentError ("writeFile", args, "Expected two string arguments", loc :: env.call_trace))
                   end
     | "parseInt" -> begin match args with
                   | [StringV arg_str] ->
@@ -482,7 +488,7 @@ end) = struct
                     |  Some(int_val) -> NumV (float_of_int int_val)
                     |  None -> NullV
                     end
-                  | _ -> raise (PrimOpArgumentError ("parseInt", args, "Expected a strings", loc))
+                  | _ -> raise (PrimOpArgumentError ("parseInt", args, "Expected a strings", loc :: env.call_trace))
                   end
     | "parseNum" -> begin match args with
                   | [StringV arg_str] ->
@@ -490,12 +496,12 @@ end) = struct
                     | Some(float_val) -> NumV float_val
                     | None -> NullV
                     end
-                  | _ -> raise (PrimOpArgumentError ("parseNum", args, "Expected a strings", loc))
+                  | _ -> raise (PrimOpArgumentError ("parseNum", args, "Expected a strings", loc :: env.call_trace))
                   end
     | "readLine" -> let prompt = match args with
                     | [] -> ""
                     | [StringV prompt] -> prompt
-                    | _ -> raise (PrimOpArgumentError ("readLine", args, "Expected no arguments or a single string", loc))
+                    | _ -> raise (PrimOpArgumentError ("readLine", args, "Expected no arguments or a single string", loc :: env.call_trace))
                     in
                     begin match Readline.readline prompt with
                     | Some input -> StringV input
@@ -505,45 +511,46 @@ end) = struct
                   | [StringV path_str] -> 
                     Sys.chdir path_str;
                     UnitV
-                  | _ -> raise (PrimOpArgumentError ("chdir", args, "Expected a strings", loc))
+                  | _ -> raise (PrimOpArgumentError ("chdir", args, "Expected a strings", loc :: env.call_trace))
                   end
     | "exit" -> begin match args with
                 | [NumV arg] ->
                   exit (int_of_float arg)
-                | _ -> raise (PrimOpArgumentError ("exit", args, "Expected an integer", loc))
+                | _ -> raise (PrimOpArgumentError ("exit", args, "Expected an integer", loc :: env.call_trace))
                 end
     | "toString" -> begin match args with
                 | [NumV arg] -> 
                   (* We have to use `Value.pretty` instead of `Float.to_string`, since
                      the latter always appends a trailing dot. *)
                   StringV (Value.pretty (NumV arg))
-                | _ -> raise (PrimOpArgumentError ("toString", args, "Expected a number", loc))
+                | _ -> raise (PrimOpArgumentError ("toString", args, "Expected a number", loc :: env.call_trace))
                 end            
     | "getArgv" -> begin match args with
                    | [] -> ListV (List.map (fun x -> StringV x) env.argv)
-                   | _ -> raise (PrimOpArgumentError ("getArgv", args, "Expected no arguments", loc))
+                   | _ -> raise (PrimOpArgumentError ("getArgv", args, "Expected no arguments", loc :: env.call_trace))
                    end
     | "getEnv" -> begin match args with
                   | [StringV var] -> begin match Sys.getenv_opt var with
                     | None -> NullV
                     | Some(value) -> StringV value
                     end
-                  | _ -> raise (PrimOpArgumentError ("getEnv", args, "Expected a single string", loc))
+                  | _ -> raise (PrimOpArgumentError ("getEnv", args, "Expected a single string", loc :: env.call_trace))
                   end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   and progs_of_exprs env = function
     | ProgCall (loc, progName, args) :: exprs ->
-      let fail x = raise (EvalError.InvalidProcessArg (x, loc)) in
+      let fail x = raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace)) in
       let arg_strings = List.concat_map (fun arg -> Value.as_args fail (eval_expr env arg)) args in
       (progName, arg_strings) :: progs_of_exprs env exprs
     | expr :: exprs -> 
-      raise (EvalError.NonProgCallInPipe (expr, NameExpr.get_loc expr))
+      raise (EvalError.NonProgCallInPipe (expr, NameExpr.get_loc expr :: env.call_trace))
     | [] -> []
 
   let empty_eval_env (argv: string list): eval_env = {
     vars = VarMap.empty;
-    argv = argv
+    argv = argv;
+    call_trace = []
   }
 
   let eval (argv : string list) (exprs : name_expr list) : value = eval_seq (empty_eval_env argv) exprs

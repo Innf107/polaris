@@ -23,6 +23,10 @@ type run_options = {
   backend : backend;
 }
 
+let pretty_call_trace (locs : loc list) =
+  "Call trace:"
+  ^ "\n    " ^ String.concat "\n    " (List.map Loc.pretty locs)
+
 let handle_errors print_fun f = 
   let open Rename.RenameError in 
   let open Eval.EvalError in
@@ -38,47 +42,58 @@ let handle_errors print_fun f =
       ^ "    Expression: " ^ StringExpr.pretty expr
       )
   (* EvalError *)
-  | DynamicVarNotFound (x, loc) -> print_fun (
+  | DynamicVarNotFound (x, loc::locs) -> print_fun (
         Loc.pretty loc ^ ": Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
       ^ "This is definitely a bug in the interpreter"
+      ^ pretty_call_trace locs
       )
-  | NotAValueOfType(ty, value, cxt, loc) -> print_fun (
+  | NotAValueOfType(ty, value, cxt, loc :: locs) -> print_fun (
         Loc.pretty loc ^ ": Not a value of type " ^ ty ^ "."
       ^ "\n    Context: " ^ cxt
       ^ "\n      Value: " ^ Value.pretty value
+      ^ "\n" ^ pretty_call_trace locs
       )  
-  | TryingToApplyNonFunction (value, loc) -> print_fun (
+  | TryingToApplyNonFunction (value, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Trying to apply a value that is not a function: " ^ Value.pretty value
+      ^ "\n" ^ pretty_call_trace locs
     )
-  | TryingToLookupInNonMap (value, key, loc) -> print_fun (
+  | TryingToLookupInNonMap (value, key, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Trying to lookup key '" ^ key ^ "' in non-map value: " ^ Value.pretty value
+      ^ "\n" ^ pretty_call_trace locs
     )
-  | TryingToLookupDynamicInNonMap (value, loc) -> print_fun (
+  | TryingToLookupDynamicInNonMap (value, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Trying to lookup dynamic key in non-map value: " ^ Value.pretty value
+      ^ "\n" ^ pretty_call_trace locs
     )
-  | InvalidKey (key, map, loc) -> print_fun (
+  | InvalidKey (key, map, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in map: " ^ Value.pretty (MapV map)
+      ^ "\n" ^ pretty_call_trace locs
     )
 
-  | MapDoesNotContain (map, key, loc) -> print_fun (
+  | MapDoesNotContain (map, key, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Map does not contain key '" ^ key ^ "': " ^ Value.pretty (MapV map)
+      ^ "\n" ^ pretty_call_trace locs
     )
-  | InvalidNumberOfArguments (params, vals, loc) -> print_fun (
+  | InvalidNumberOfArguments (params, vals, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Invalid number of arguments in function call.\n"
                      ^ "Expected " ^ Int.to_string (List.length params) ^ " arguments, but received " ^ Int.to_string (List.length vals) ^ ".\n"
                      ^ "    Expected: (" ^ String.concat ", " (List.map Name.original_name params) ^ ")\n"
                      ^ "      Actual: (" ^ String.concat ", " (List.map Value.pretty vals) ^ ")"
-    )
-  | PrimOpArgumentError (primop_name, vals, msg, loc) -> print_fun (
+                     ^ "\n" ^ pretty_call_trace locs
+      )
+  | PrimOpArgumentError (primop_name, vals, msg, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Invalid arguments to builtin function '" ^ primop_name ^ "': " ^ msg ^ "\n"
                      ^ "    Arguments: " ^ Value.pretty (ListV vals)
+                     ^ "\n" ^ pretty_call_trace locs
     )
-  | InvalidProcessArg (value, loc) -> print_fun (
+  | InvalidProcessArg (value, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Argument cannot be passed to an external process in an !-Expression."
                      ^ "    Argument: " ^ Value.pretty value
+                     ^ "\n" ^ pretty_call_trace locs
     )
-  | NonProgCallInPipe (expr, loc) -> print_fun (
+  | NonProgCallInPipe (expr, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ NameExpr.pretty expr
+      ^ "\n" ^ pretty_call_trace locs
     )
 
 let run_file (options : run_options) (filepath : string) (args : string list) = 

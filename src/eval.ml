@@ -260,6 +260,11 @@ end) = struct
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       BoolV (val_eq v1 v2)
+    | NotEquals (_, e1, e2) -> 
+        (* See Note [left-to-right evaluation] *)
+        let v1 = eval_expr env e1 in
+        let v2 = eval_expr env e2 in
+        BoolV (not (val_eq v1 v2))
 
     | LE (loc, e1, e2) -> 
       (* See Note [left-to-right evaluation] *)
@@ -509,6 +514,14 @@ end) = struct
                     | Some input -> StringV input
                     | None -> NullV
                     end
+    | "readLineDefault" -> begin match args with
+                  | [StringV prompt; StringV default] ->
+                    begin match Readline.readline_default prompt default with
+                    | Some input -> StringV input
+                    | None -> NullV
+                    end
+                  | _ -> raise (PrimOpArgumentError ("readLineDefault", args, "Expected 2 strings", loc :: env.call_trace))
+                  end
     | "chdir" ->  begin match args with
                   | [StringV path_str] -> 
                     Sys.chdir path_str;

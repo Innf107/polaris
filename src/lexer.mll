@@ -24,6 +24,7 @@ rule token = parse
 | '-'? digit+ '.' digit* as lit_string { FLOAT (float_of_string lit_string) }
 | '-'? digit+ as lit_string { INT (int_of_string lit_string)}
 | '!' '"' ([^'"']+ as cmd)'"' { BANG cmd }
+| "!="      { BANGEQUALS }
 | '!' ([^' ' '\t' '\n' '(' ')' '[' ']' '{' '}']+ as cmd) { BANG cmd}
 | "let"     { LET }
 | "in"      { IN }

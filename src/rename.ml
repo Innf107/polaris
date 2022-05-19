@@ -62,6 +62,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
     | Concat(loc, e1,e2) -> Concat(loc, rename_expr scope e1, rename_expr scope e2)
 
     | Equals(loc, e1,e2) -> Equals(loc, rename_expr scope e1, rename_expr scope e2)
+    | NotEquals(loc, e1,e2) -> NotEquals(loc, rename_expr scope e1, rename_expr scope e2)
     | LE(loc, e1,e2)     -> LE(loc, rename_expr scope e1, rename_expr scope e2)
     | GE(loc, e1,e2)     -> GE(loc, rename_expr scope e1, rename_expr scope e2)
     | LT(loc, e1,e2)     -> LT(loc, rename_expr scope e1, rename_expr scope e2)

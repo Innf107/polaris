@@ -53,6 +53,7 @@ struct
     | Div of loc * expr * expr              (* e / e *)
     | Concat of loc * expr * expr           (* e .. e*)
     | Equals of loc * expr * expr           (* e == e *)
+    | NotEquals of loc * expr * expr        (* e != e *)
     | LE of loc * expr * expr               (* e <= e *)
     | GE of loc * expr * expr               (* e >= e *)
     | LT of loc * expr * expr               (* e <  e *)
@@ -103,6 +104,7 @@ struct
     | Concat (_, e1, e2)  -> "(" ^ pretty e1 ^ " .. " ^ pretty e2 ^ ")"
 
     | Equals (_, e1, e2) -> "(" ^ pretty e1 ^ " == " ^ pretty e2 ^ ")"
+    | NotEquals (_, e1, e2) -> "(" ^ pretty e1 ^ " != " ^ pretty e2 ^ ")"
     | LE (_, e1, e2)     -> "(" ^ pretty e1 ^ " <= " ^ pretty e2 ^ ")"
     | GE (_, e1, e2)     -> "(" ^ pretty e1 ^ " >= " ^ pretty e2 ^ ")"
     | LT (_, e1, e2)     -> "(" ^ pretty e1 ^ " <  " ^ pretty e2 ^ ")"
@@ -133,8 +135,8 @@ struct
     | Var (loc, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | MapLit(loc, _) 
     | MapLookup(loc, _, _) | DynLookup(loc, _, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
-    | Div(loc, _ , _) | Concat(loc, _, _) | Equals(loc, _, _) | LE(loc, _, _) | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _)
-    | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
+    | Div(loc, _ , _) | Concat(loc, _, _) | Equals(loc, _, _) | NotEquals(loc, _, _) | LE(loc, _, _) 
+    | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _) | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | Print(loc, _) | ProgCall(loc, _, _) | Pipe(loc, _)
     -> loc

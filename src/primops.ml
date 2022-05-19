@@ -12,6 +12,7 @@ let primops = PrimOpNameSet.of_list [
   "parseInt";
   "parseNum";
   "readLine";
+  "readLineDefault";
   "chdir";
   "exit";
   "toString";

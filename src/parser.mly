@@ -20,7 +20,7 @@ let loc = Loc.from_pos
 %token COMMA SEMI COLON
 %token LPAREN RPAREN HASHLBRACE LBRACE RBRACE LBRACKET RBRACKET
 %token EQUALS COLONEQUALS
-%token DOUBLEEQUALS LT GT LE GE
+%token BANGEQUALS DOUBLEEQUALS LT GT LE GE
 %token PLUS MINUS STAR SLASH DDOT
 %token OR AND NOT
 %token <string> BANG
@@ -29,7 +29,7 @@ let loc = Loc.from_pos
 %token EOF
 
 %left OR AND NOT
-%left DOUBLEEQUALS LT GT LE GE
+%left BANGEQUALS DOUBLEEQUALS LT GT LE GE
 %left PLUS MINUS
 %left STAR SLASH
 %right DDOT
@@ -77,7 +77,8 @@ expr:
   | expr STAR expr                                              { Mul(loc $startpos $endpos, $1, $3) }                             // e * e
   | expr SLASH expr                                             { Div(loc $startpos $endpos, $1, $3) }                             // e + e
   | expr DDOT expr                                              { Concat(loc $startpos $endpos, $1, $3) }                          // e .. e
-  | expr DOUBLEEQUALS expr                                      { Equals(loc $startpos $endpos, $1, $3) }                          // e = e
+  | expr DOUBLEEQUALS expr                                      { Equals(loc $startpos $endpos, $1, $3) }                          // e == e
+  | expr BANGEQUALS expr                                        { NotEquals(loc $startpos $endpos, $1, $3) }                       // e != e
   | expr LT expr                                                { LT(loc $startpos $endpos, $1, $3)  }                             // e < e
   | expr GT expr                                                { GT(loc $startpos $endpos, $1, $3)  }                             // e > e
   | expr LE expr                                                { LE(loc $startpos $endpos, $1, $3)  }                             // e <= e

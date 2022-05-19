@@ -105,7 +105,9 @@ let run_repl (options : run_options) : unit =
   in
   let driver_options = {
       filename = "<interactive>"
-    ; argv = Array.to_list Sys.argv
+      (* argv.(0) is "", to signify that this is a repl process.
+         This is in line with what python does. *)
+    ; argv = "" :: List.tl (Array.to_list Sys.argv)
     ; print_ast = options.print_ast
     ; print_renamed = options.print_renamed
     ; backend = options.backend

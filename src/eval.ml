@@ -88,7 +88,7 @@ end
 
 
 module Make (Require : sig
-  val eval_require : string -> value
+  val eval_require : string -> string -> value
 end) = struct
 
   let lookup_var (env : eval_env) (loc : loc) (var : name) : value ref = 
@@ -433,7 +433,11 @@ end) = struct
                      but this also comes with the nice side effect of allowing
                      the calling code (the driver) to change the way module lookup is performed. *)
                   | [StringV modPath] -> 
-                      Require.eval_require modPath
+                    let cwd = match List.hd (env.argv) with
+                    | "" -> Sys.getcwd ()
+                    | p -> Filename.dirname p
+                    in
+                    Require.eval_require cwd modPath
                   | _ -> raise (PrimOpArgumentError ("require", args, "Expected a single string argument", loc))
                   end
     | "lines" -> begin match args with

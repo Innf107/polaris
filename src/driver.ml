@@ -35,15 +35,21 @@ module type DriverI = sig
 end
 
 module rec EvalInst : EvalI = Eval.Make(struct
-  let eval_require modPath = 
+  let eval_require scriptPathDir modPath = 
     let driver_options = {
       filename = modPath;
-      argv = [];
+      argv = [modPath];
       print_ast = false;
       print_renamed = false;
       backend = EvalBackend (* The bytecode backend does not use `Eval` anyway, so this is fine *)
     } in
-    Driver.run_eval driver_options (Lexing.from_channel (In_channel.open_text modPath))
+    let filePath = 
+      if Filename.is_relative modPath then  
+        scriptPathDir ^ "/" ^ modPath
+      else
+        modPath
+      in
+    Driver.run_eval driver_options (Lexing.from_channel (In_channel.open_text filePath))
 end)
 and Driver : DriverI = struct
 

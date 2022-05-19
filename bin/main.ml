@@ -117,7 +117,6 @@ let run_repl (options : run_options) : unit =
             end;
             go new_env new_scope)
     with
-    | End_of_file -> exit 0
     | Sys.Break -> 
       go env scope
   in

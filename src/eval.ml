@@ -60,6 +60,8 @@ module EvalError = struct
   exception NonProgCallInPipe of NameExpr.expr * loc list
 
   exception RuntimeError of string * loc list
+
+  exception ModuleNotFound of string * string list
 end  
 
 module Value = struct

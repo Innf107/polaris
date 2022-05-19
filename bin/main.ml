@@ -104,6 +104,11 @@ let handle_errors print_fun f =
     Loc.pretty loc ^ ": Runtime error: " ^ msg
     ^ "\n" ^ pretty_call_trace locs
   )
+  | ModuleNotFound (modName, triedPaths) -> print_fun (
+      "Module not found: " ^ modName ^ "\n"
+    ^ "Tried paths:"
+    ^ "\n    " ^ String.concat "\n    " triedPaths
+  )
 
 let run_file (options : run_options) (filepath : string) (args : string list) = 
   let _ = match options.backend with

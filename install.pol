@@ -36,7 +36,7 @@ else {
 };
 
 print("Copying stdlib files to ~/.polaris/lib/");
-!mkdir (getEnv("HOME") .. "/.polaris");
+!mkdir "-p" (getEnv("HOME") .. "/.polaris");
 !cp "-r" "lib" (getEnv("HOME") .. "/.polaris");
 
 print("Installation successful!")

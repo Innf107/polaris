@@ -34,22 +34,32 @@ module type DriverI = sig
   val run_env : driver_options -> Lexing.lexbuf -> eval_env -> RenameScope.t -> value * eval_env * RenameScope.t
 end
 
+let polaris_home = Sys.getenv "HOME" ^ "/.polaris"
+
 module rec EvalInst : EvalI = Eval.Make(struct
-  let eval_require scriptPathDir modPath = 
+  let eval_require scriptPathDir mod_path = 
     let driver_options = {
-      filename = modPath;
-      argv = [modPath];
+      filename = mod_path;
+      argv = [mod_path];
       print_ast = false;
       print_renamed = false;
       backend = EvalBackend (* The bytecode backend does not use `Eval` anyway, so this is fine *)
     } in
-    let filePath = 
-      if Filename.is_relative modPath then  
-        scriptPathDir ^ "/" ^ modPath
+    let file_path = 
+      if Filename.is_relative mod_path then  
+        scriptPathDir ^ "/" ^ mod_path
       else
-        modPath
+        mod_path
       in
-    Driver.run_eval driver_options (Lexing.from_channel (In_channel.open_text filePath))
+    let stdlib_file_path = polaris_home ^ "/lib/" ^ mod_path in
+    let in_chan = if Sys.file_exists file_path then
+        In_channel.open_text file_path
+      else if Sys.file_exists stdlib_file_path then
+        In_channel.open_text stdlib_file_path
+      else 
+        raise (EvalError.ModuleNotFound (mod_path, [file_path; stdlib_file_path]))
+    in
+    Driver.run_eval driver_options (Lexing.from_channel in_chan)
 end)
 and Driver : DriverI = struct
 

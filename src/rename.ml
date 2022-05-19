@@ -53,6 +53,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
     | MapLit (loc, kvs) -> MapLit (loc, List.map (fun (k, e) -> (k, rename_expr scope e)) kvs)
 
     | MapLookup (loc, expr, key) -> MapLookup (loc, rename_expr scope expr, key)
+    | DynLookup (loc, mexpr, kexpr) -> DynLookup (loc, rename_expr scope mexpr, rename_expr scope kexpr)
 
     | Add(loc, e1,e2)    -> Add(loc, rename_expr scope e1, rename_expr scope e2)
     | Sub(loc, e1,e2)    -> Sub(loc, rename_expr scope e1, rename_expr scope e2)

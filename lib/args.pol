@@ -1,0 +1,8 @@
+
+let parse(optionSpec) = {
+    let argv = getArgv();
+    let args = tail(argv);
+
+    
+}
+

@@ -53,6 +53,13 @@ let handle_errors print_fun f =
   | TryingToLookupInNonMap (value, key, loc) -> print_fun (
       Loc.pretty loc ^ ": Trying to lookup key '" ^ key ^ "' in non-map value: " ^ Value.pretty value
     )
+  | TryingToLookupDynamicInNonMap (value, loc) -> print_fun (
+      Loc.pretty loc ^ ": Trying to lookup dynamic key in non-map value: " ^ Value.pretty value
+    )
+  | InvalidKey (key, map, loc) -> print_fun (
+      Loc.pretty loc ^ ": Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in map: " ^ Value.pretty (MapV map)
+    )
+
   | MapDoesNotContain (map, key, loc) -> print_fun (
       Loc.pretty loc ^ ": Map does not contain key '" ^ key ^ "': " ^ Value.pretty (MapV map)
     )

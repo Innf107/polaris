@@ -39,6 +39,8 @@ module EvalError = struct
   exception NotAValueOfType of string * value * string * loc
   exception TryingToApplyNonFunction of value * loc
   exception TryingToLookupInNonMap of value * string * loc
+  exception TryingToLookupDynamicInNonMap of value * loc
+  exception InvalidKey of value * value MapVImpl.t * loc
   exception MapDoesNotContain of value MapVImpl.t * string * loc
   exception InvalidNumberOfArguments of name list * value list * loc
   (* TODO: Once exceptions are implemented, prim op argument errors should
@@ -195,6 +197,18 @@ end) = struct
         | None -> raise (EvalError.MapDoesNotContain (map, key, loc))
         end
       | value -> raise (EvalError.TryingToLookupInNonMap (value, key, loc))
+      end
+    | DynLookup (loc, map_expr, key_expr) ->
+      begin match eval_expr env map_expr with
+      | MapV map -> 
+        begin match eval_expr env key_expr with
+        | StringV key -> begin match MapVImpl.find_opt key map with
+                         | Some value -> value
+                         | None -> raise (EvalError.MapDoesNotContain (map, key, loc))
+                         end
+        | value -> raise (EvalError.InvalidKey (value, map, loc))
+        end
+      | value -> raise (EvalError.TryingToLookupDynamicInNonMap (value, loc))
       end
 
     (* TODO: Handle untyped *)

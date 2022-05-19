@@ -111,7 +111,10 @@ let run_repl (options : run_options) : unit =
           | Some input -> 
             let result, new_env, new_scope = Driver.run_env driver_options (Lexing.from_string input) env scope in
 
-            print_endline (" - " ^ Value.pretty result);
+            begin match result with
+            | UnitV -> ()
+            | _ -> print_endline (" - " ^ Value.pretty result)
+            end;
             go new_env new_scope)
     with
     | End_of_file -> exit 0

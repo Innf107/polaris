@@ -48,6 +48,9 @@ rule token = parse
 | '-'       { MINUS }
 | '*'       { STAR }
 | '/'       { SLASH }
+| "||"      { OR }
+| "&&"      { AND }
+| "not"     { NOT }
 | '.'       { DOT }
 | ".."      { DDOT }
 | "|"       { PIPE }

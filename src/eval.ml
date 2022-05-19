@@ -278,6 +278,34 @@ end) = struct
       let context = "Trying to compute " ^ Value.pretty v1 ^ " > " ^ Value.pretty v2 in
       BoolV (as_num context loc v1 > as_num context loc v2)
     
+    | Or(loc, e1, e2) ->
+      begin match eval_expr env e1 with
+      | BoolV true -> BoolV true
+      | BoolV false -> 
+        begin match eval_expr env e2 with 
+        | BoolV true -> BoolV true
+        | BoolV false -> BoolV false
+        | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the second argument of an || expression", loc))
+        end
+      | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the first argument of an || expression", loc))
+      end
+    | And(loc, e1, e2) ->
+        begin match eval_expr env e1 with
+        | BoolV false -> BoolV false
+        | BoolV true -> 
+          begin match eval_expr env e2 with 
+          | BoolV true -> BoolV true
+          | BoolV false -> BoolV false
+          | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the second argument of an || expression", loc))
+          end
+        | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the first argument of an && expression", loc))
+        end
+    | Not(loc, e) ->
+        begin match eval_expr env e with
+        | BoolV b -> BoolV (not b)
+        | value -> raise (EvalError.NotAValueOfType("bool", value, "In the argument of a 'not' expression", loc))
+        end
+  
     | If (loc, e1, e2, e3) ->
       let v1 = eval_expr env e1 in
       let context = "In the condition of an if expression" in

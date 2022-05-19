@@ -22,12 +22,13 @@ let loc = Loc.from_pos
 %token EQUALS COLONEQUALS
 %token DOUBLEEQUALS LT GT LE GE
 %token PLUS MINUS STAR SLASH DDOT
+%token OR AND NOT
 %token <string> BANG
 %token PIPE
 %token IF THEN ELSE
 %token EOF
 
-%left EQUALS
+%left OR AND NOT
 %left DOUBLEEQUALS LT GT LE GE
 %left PLUS MINUS
 %left STAR SLASH
@@ -81,6 +82,10 @@ expr:
   | expr GT expr                                                { GT(loc $startpos $endpos, $1, $3)  }                             // e > e
   | expr LE expr                                                { LE(loc $startpos $endpos, $1, $3)  }                             // e <= e
   | expr GE expr                                                { GE(loc $startpos $endpos, $1, $3)  }                             // e >= e
+  | expr OR expr                                                { Or(loc $startpos $endpos, $1, $3)  }                             // e || e
+  | expr AND expr                                               { And(loc $startpos $endpos, $1, $3) }                             // e && e
+  | NOT expr                                                    { Not(loc $startpos $endpos, $2)     }                             // not e
+
   | IF expr THEN expr ELSE expr                                 { If(loc $startpos $endpos, $2, $4, $6) }                          // if e then e else e
   | expr PIPE pipe_list                                         { Pipe(loc $startpos $endpos, $1 :: $3) }
 

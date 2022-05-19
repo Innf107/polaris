@@ -67,6 +67,10 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
     | LT(loc, e1,e2)     -> LT(loc, rename_expr scope e1, rename_expr scope e2)
     | GT(loc, e1,e2)     -> GT(loc, rename_expr scope e1, rename_expr scope e2)
 
+    | Or(loc, e1, e2)    -> Or(loc, rename_expr scope e1, rename_expr scope e2)
+    | And(loc, e1, e2)   -> And(loc, rename_expr scope e1, rename_expr scope e2)
+    | Not(loc, expr)     -> Not(loc, rename_expr scope expr)
+
     | If(loc, e1, e2, e3) -> If(loc, rename_expr scope e1, rename_expr scope e2, rename_expr scope e3)
 
     | Seq (loc, es) -> Seq (loc, rename_seq scope es)

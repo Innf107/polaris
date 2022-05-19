@@ -57,6 +57,11 @@ struct
     | GE of loc * expr * expr               (* e >= e *)
     | LT of loc * expr * expr               (* e <  e *)
     | GT of loc * expr * expr               (* e >  e *)
+
+    | Or of loc * expr * expr               (* e || e *)
+    | And of loc * expr * expr              (* e && e *)
+    | Not of loc * expr                     (* not e *)
+
     (* Branching *)
     | If of loc * expr * expr * expr        (* if e then e else e*)
     (* Sequencing *)
@@ -103,6 +108,10 @@ struct
     | LT (_, e1, e2)     -> "(" ^ pretty e1 ^ " <  " ^ pretty e2 ^ ")"
     | GT (_, e1, e2)     -> "(" ^ pretty e1 ^ " >  " ^ pretty e2 ^ ")"
 
+    | Or (_, e1, e2)     -> "(" ^ pretty e1 ^ " || " ^ pretty e2 ^ ")"
+    | And (_, e1, e2)    -> "(" ^ pretty e1 ^ " && " ^ pretty e2 ^ ")"
+    | Not (_, e)         -> "(not " ^ pretty e ^ ")"
+
     | If (_, e1, e2, e3) -> "if " ^ pretty e1 ^ " then " ^ pretty e2 ^ " else " ^ pretty e3
 
     | Seq (_, exprs) -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
@@ -125,6 +134,7 @@ struct
     | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | MapLit(loc, _) 
     | MapLookup(loc, _, _) | DynLookup(loc, _, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
     | Div(loc, _ , _) | Concat(loc, _, _) | Equals(loc, _, _) | LE(loc, _, _) | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _)
+    | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | Print(loc, _) | ProgCall(loc, _, _) | Pipe(loc, _)
     -> loc

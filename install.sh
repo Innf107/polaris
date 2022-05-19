@@ -7,4 +7,4 @@ dune build
 dune install
 
 echo "Handing control to the polairs build script"
-dune exec polaris -- install.pol
+dune exec polaris -- install.pol $@

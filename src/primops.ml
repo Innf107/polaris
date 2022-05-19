@@ -8,6 +8,7 @@ let primops = PrimOpNameSet.of_list [
   "lines";
   "replace";
   "regexpReplace";
+  "regexpMatch";
   "writeFile";
   "parseInt";
   "parseNum";

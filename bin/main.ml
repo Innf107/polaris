@@ -86,8 +86,13 @@ let handle_errors print_fun f =
                      ^ "    Arguments: " ^ Value.pretty (ListV vals)
                      ^ "\n" ^ pretty_call_trace locs
     )
+  | InvalidOperatorArgs (op_name, vals, loc::locs) -> print_fun (
+      Loc.pretty loc ^ ": Invalid arguments for operator '" ^ op_name ^ "'\n"
+                      ^ "    Arguments: " ^ Value.pretty (ListV vals)
+                      ^ "\n" ^ pretty_call_trace locs
+    )
   | InvalidProcessArg (value, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Argument cannot be passed to an external process in an !-Expression."
+      Loc.pretty loc ^ ": Argument cannot be passed to an external process in an !-Expression.\n"
                      ^ "    Argument: " ^ Value.pretty value
                      ^ "\n" ^ pretty_call_trace locs
     )

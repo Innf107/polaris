@@ -477,6 +477,16 @@ end) = struct
                     StringV (Str.global_replace (Str.regexp needle) repl str)
                   | _ -> raise (PrimOpArgumentError ("regexpReplace", args, "Expected three strings", loc :: env.call_trace))
                   end
+    | "regexpMatch" -> begin match args with
+                  | [StringV pattern; StringV arg] ->
+                    let found = Str.string_match (Str.regexp pattern) arg 0 in
+                    if found then
+                      (* Why the hell does OCaml use global state for regex? *)
+                      StringV (Str.matched_string arg)
+                    else
+                      NullV
+                  | _ -> raise (PrimOpArgumentError ("regexpMatch", args, "Expected two strings", loc :: env.call_trace))
+                  end
     | "writeFile" -> begin match args with
                   | [path_v; content_v] ->
                     let context = "Trying to apply 'writeFile'" in

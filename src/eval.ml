@@ -58,6 +58,8 @@ module EvalError = struct
   exception InvalidProcessArg of value * loc list
 
   exception NonProgCallInPipe of NameExpr.expr * loc list
+
+  exception RuntimeError of string * loc list
 end  
 
 module Value = struct
@@ -536,6 +538,15 @@ end) = struct
                     end
                   | _ -> raise (PrimOpArgumentError ("getEnv", args, "Expected a single string", loc :: env.call_trace))
                   end
+    | "insert" -> begin match args with
+                  | [StringV key; value; MapV map] ->
+                    MapV (MapVImpl.add key value map)
+                  | _ -> raise(PrimOpArgumentError ("insert", args, "Expected a string, a value and a map", loc :: env.call_trace))
+                  end
+    | "fail" -> begin match args with
+                | [StringV msg] -> raise (RuntimeError (msg, loc :: env.call_trace))
+                | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))
+                end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   and progs_of_exprs env = function

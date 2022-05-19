@@ -95,6 +95,10 @@ let handle_errors print_fun f =
       Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ NameExpr.pretty expr
       ^ "\n" ^ pretty_call_trace locs
     )
+  | RuntimeError (msg, loc::locs) -> print_fun (
+    Loc.pretty loc ^ ": Runtime error: " ^ msg
+    ^ "\n" ^ pretty_call_trace locs
+  )
 
 let run_file (options : run_options) (filepath : string) (args : string list) = 
   let _ = match options.backend with

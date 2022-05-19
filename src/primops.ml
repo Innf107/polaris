@@ -17,6 +17,8 @@ let primops = PrimOpNameSet.of_list [
   "toString";
   "getArgv";
   "getEnv";
+  "insert";
+  "fail";
 ]
 
 let is_primop name = PrimOpNameSet.mem name primops

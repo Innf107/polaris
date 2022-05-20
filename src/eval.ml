@@ -55,6 +55,8 @@ module EvalError = struct
 
   exception InvalidOperatorArgs of string * value list * loc list
 
+  exception NonNumberInRangeBounds of value * value * loc list
+
   exception InvalidProcessArg of value * loc list
 
   exception NonProgCallInPipe of NameExpr.expr * loc list
@@ -320,7 +322,21 @@ end) = struct
         | BoolV b -> BoolV (not b)
         | value -> raise (EvalError.NotAValueOfType("bool", value, "In the argument of a 'not' expression", loc :: env.call_trace))
         end
-  
+    
+    | Range(loc, e1, e2) ->
+      let start_val = eval_expr env e1 in
+      let end_val = eval_expr env e2 in
+      begin match start_val, end_val with
+      | NumV start_num, NumV end_num ->
+        let rec build_range acc x = 
+          if x < start_num then
+            acc
+          else
+            build_range (NumV x::acc) (x -. 1.)
+          in
+        ListV (build_range [] end_num) 
+      | _ -> raise (EvalError.NonNumberInRangeBounds(start_val, end_val, loc :: env.call_trace))
+      end
     | If (loc, e1, e2, e3) ->
       let v1 = eval_expr env e1 in
       let context = "In the condition of an if expression" in

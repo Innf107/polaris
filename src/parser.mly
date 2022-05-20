@@ -88,6 +88,8 @@ expr:
   | expr AND expr                                               { And(loc $startpos $endpos, $1, $3) }                             // e && e
   | NOT expr                                                    { Not(loc $startpos $endpos, $2)     }                             // not e
 
+  | LBRACKET expr DDOT expr RBRACKET                            { Range(loc $startpos $endpos, $2, $4) }
+
   | IF expr THEN expr ELSE expr                                 { If(loc $startpos $endpos, $2, $4, $6) }                          // if e then e else e
   | expr PIPE pipe_list                                         { Pipe(loc $startpos $endpos, $1 :: $3) }
 

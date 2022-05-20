@@ -91,6 +91,11 @@ let handle_errors print_fun f =
                       ^ "    Arguments: " ^ Value.pretty (ListV vals)
                       ^ "\n" ^ pretty_call_trace locs
     )
+  | NonNumberInRangeBounds (start_val, end_val, loc::locs) -> print_fun (
+      Loc.pretty loc ^ ": Non-number in range bounds.\n"
+                     ^ "    Range: [" ^ Value.pretty start_val ^ " .. " ^ Value.pretty end_val ^ "]"
+                     ^ "\n" ^ pretty_call_trace locs
+    )
   | InvalidProcessArg (value, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Argument cannot be passed to an external process in an !-Expression.\n"
                      ^ "    Argument: " ^ Value.pretty value

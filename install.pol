@@ -27,8 +27,8 @@ if installLocation == null || installLocation == "" then {
     print("No installation to a custom location")
 }
 else {
-    let originalPath = getEnv("OPAM_SWITCH_PREFIX") .. "/bin/polaris";
-    print("Copying file from '" .. originalPath .. "' to '" .. installLocation .. "'.");
+    let originalPath = getEnv("OPAM_SWITCH_PREFIX") ~ "/bin/polaris";
+    print("Copying file from '" ~ originalPath ~ "' to '" ~ installLocation ~ "'.");
     if useSudo then
         !sudo "cp" originalPath installLocation
     else
@@ -36,7 +36,7 @@ else {
 };
 
 print("Copying stdlib files to ~/.polaris/lib/");
-!mkdir "-p" (getEnv("HOME") .. "/.polaris");
-!cp "-r" "lib" (getEnv("HOME") .. "/.polaris");
+!mkdir "-p" (getEnv("HOME") ~ "/.polaris");
+!cp "-r" "lib" (getEnv("HOME") ~ "/.polaris");
 
 print("Installation successful!")

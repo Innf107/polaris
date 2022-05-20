@@ -21,7 +21,8 @@ let loc = Loc.from_pos
 %token LPAREN RPAREN HASHLBRACE LBRACE RBRACE LBRACKET RBRACKET
 %token EQUALS COLONEQUALS
 %token BANGEQUALS DOUBLEEQUALS LT GT LE GE
-%token PLUS MINUS STAR SLASH DDOT
+%token PLUS MINUS STAR SLASH TILDE
+%token DDOT
 %token OR AND NOT
 %token <string> BANG
 %token PIPE
@@ -32,7 +33,7 @@ let loc = Loc.from_pos
 %left BANGEQUALS DOUBLEEQUALS LT GT LE GE
 %left PLUS MINUS
 %left STAR SLASH
-%right DDOT
+%right TILDE
 
 %nonassoc PIPE
 
@@ -76,7 +77,7 @@ expr:
   | expr MINUS expr                                             { Sub(loc $startpos $endpos, $1, $3) }                             // e - e
   | expr STAR expr                                              { Mul(loc $startpos $endpos, $1, $3) }                             // e * e
   | expr SLASH expr                                             { Div(loc $startpos $endpos, $1, $3) }                             // e + e
-  | expr DDOT expr                                              { Concat(loc $startpos $endpos, $1, $3) }                          // e .. e
+  | expr TILDE expr                                             { Concat(loc $startpos $endpos, $1, $3) }                          // e ~ e
   | expr DOUBLEEQUALS expr                                      { Equals(loc $startpos $endpos, $1, $3) }                          // e == e
   | expr BANGEQUALS expr                                        { NotEquals(loc $startpos $endpos, $1, $3) }                       // e != e
   | expr LT expr                                                { LT(loc $startpos $endpos, $1, $3)  }                             // e < e

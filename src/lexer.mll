@@ -54,6 +54,7 @@ rule token = parse
 | "not"     { NOT }
 | '.'       { DOT }
 | ".."      { DDOT }
+| '~'       { TILDE }
 | "|"       { PIPE }
 | '='       { EQUALS }
 | ":="      { COLONEQUALS }

@@ -25,7 +25,7 @@ let parse(optionSpec) = {
             else if head(args) == flag then {
                 let results = List.take(argCount, args);
                 if List.length(results) != argCount || not List.any(isFlag, results) then {
-                    print("Not enough arguments to flag '" .. flag .. "'.");
+                    print("Not enough arguments to flag '" ~ flag ~ "'.");
                     printUsage();
                     exit(1);
                 } else
@@ -57,7 +57,7 @@ let parse(optionSpec) = {
         } 
         else if flagSpec.type == "flag-ask" then {
             let flagArgs = getFlag(flag, 0);
-            let flagNegative = getFlag("no-" .. flag, 0);
+            let flagNegative = getFlag("no-" ~ flag, 0);
             let flagValue = 
                 if flagNegative != null then #{
                     get: \() -> false
@@ -68,7 +68,7 @@ let parse(optionSpec) = {
                 else #{
                     get: \() -> {
                         let go() = {
-                            let answer = readLine(flagSpec.prompt .. " (y/n) ");
+                            let answer = readLine(flagSpec.prompt ~ " (y/n) ");
                             if answer == "y" || answer == "Y" then
                                 true
                             else if answer == "n" || answer == "N" then
@@ -82,7 +82,7 @@ let parse(optionSpec) = {
             options := insert(flag, flagValue, options);
         }
         else {
-            fail("Invalid flag type '" .. flagSpec.type .. ")");
+            fail("Invalid flag type '" ~ flagSpec.type ~ ")");
         };
     });
 

@@ -216,7 +216,7 @@ end) = struct
         begin match eval_expr env key_expr with
         | StringV key -> begin match MapVImpl.find_opt key map with
                          | Some value -> value
-                         | None -> raise (EvalError.MapDoesNotContain (map, key, loc :: env.call_trace))
+                         | None -> NullV
                          end
         | value -> raise (EvalError.InvalidKey (value, map, loc :: env.call_trace))
         end

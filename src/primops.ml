@@ -20,6 +20,7 @@ let primops = PrimOpNameSet.of_list [
   "getArgv";
   "getEnv";
   "insert";
+  "mapToList";
   "fail";
 ]
 

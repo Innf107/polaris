@@ -584,6 +584,11 @@ end) = struct
                     MapV (MapVImpl.add key value map)
                   | _ -> raise(PrimOpArgumentError ("insert", args, "Expected a string, a value and a map", loc :: env.call_trace))
                   end
+    | "mapToList" -> begin match args with
+                  | [MapV map] ->
+                    ListV (List.map (fun (k, v) -> ListV [StringV k; v]) (MapVImpl.bindings map))
+                  | _ -> raise(PrimOpArgumentError ("mapToList", args, "Expected a single map", loc :: env.call_trace))
+                  end
     | "fail" -> begin match args with
                 | [StringV msg] -> raise (RuntimeError (msg, loc :: env.call_trace))
                 | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))

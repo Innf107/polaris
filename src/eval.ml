@@ -372,7 +372,7 @@ end) = struct
     | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
       let progs = progs_of_exprs env exprs in
       let in_chan = Pipe.compose_in progs in
-      StringV (In_channel.input_all in_chan)
+      StringV (String.trim (In_channel.input_all in_chan))
 
     | Pipe (loc, (expr :: exprs)) ->
       let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
@@ -382,7 +382,7 @@ end) = struct
       let in_chan = Pipe.compose_in_out progs (fun out_chan ->
           List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
         ) in
-      StringV (In_channel.input_all in_chan)
+      StringV (String.trim (In_channel.input_all in_chan))
 
 
 

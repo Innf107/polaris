@@ -64,6 +64,7 @@ struct
     | Not of loc * expr                     (* not e *)
 
     | Range of loc * expr * expr            (* [e .. e] *)
+    | ListComp of loc * expr * list_comp_clause list (* [e | c, .., c] *)
 
     (* Branching *)
     | If of loc * expr * expr * expr        (* if e then e else e*)
@@ -79,6 +80,11 @@ struct
     | Print of loc * expr                   (* print(e) (Temporary. 'print' should really just be an intrinsic)*)
     | ProgCall of loc * string * expr list  (* /p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
+  
+  and list_comp_clause =
+    | DrawClause of name * expr (* x <- e *)
+    | FilterClause of expr            (* e *)
+
 
   let rec pretty = function
     | Var (_, x) -> Name.pretty x
@@ -117,6 +123,12 @@ struct
     | Not (_, e)         -> "(not " ^ pretty e ^ ")"
 
     | Range(_, e1, e2) -> "[" ^ pretty e1 ^ " .. " ^ pretty e2 ^ "]"
+    | ListComp(_, e, clauses) -> 
+      let pretty_list_comp = function
+      | DrawClause (x, e) -> Name.pretty x ^ " <- " ^ pretty e
+      | FilterClause e -> pretty e
+      in 
+      "[" ^ pretty e ^ " | " ^ String.concat ", " (List.map pretty_list_comp clauses)
 
     | If (_, e1, e2, e3) -> "if " ^ pretty e1 ^ " then " ^ pretty e2 ^ " else " ^ pretty e3
 
@@ -141,7 +153,7 @@ struct
     | MapLookup(loc, _, _) | DynLookup(loc, _, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
     | Div(loc, _ , _) | Concat(loc, _, _) | Equals(loc, _, _) | NotEquals(loc, _, _) | LE(loc, _, _) 
     | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _) | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
-    | Range(loc, _, _)
+    | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | Print(loc, _) | ProgCall(loc, _, _) | Pipe(loc, _)
     -> loc

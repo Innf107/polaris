@@ -73,6 +73,19 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
     | Not(loc, expr)     -> Not(loc, rename_expr scope expr)
 
     | Range(loc, start_expr, end_expr) -> Range(loc, rename_expr scope start_expr, rename_expr scope end_expr)
+    | ListComp(loc, result_expr, comp_exprs) ->
+        let rec rename_comp scope renamed_comp_exprs_rev = function
+        | [] -> NameExpr.ListComp(loc, rename_expr scope result_expr, List.rev renamed_comp_exprs_rev)
+        | StringExpr.FilterClause expr :: comps ->
+            let expr' = rename_expr scope expr in
+            rename_comp scope (FilterClause expr' :: renamed_comp_exprs_rev) comps
+        | StringExpr.DrawClause (name, expr) :: comps -> 
+            let expr' = rename_expr scope expr in
+            let name' = fresh_var scope name in
+            let scope' = insert_var name name' scope in
+            rename_comp scope' (DrawClause (name', expr') :: renamed_comp_exprs_rev) comps
+        in
+        rename_comp scope [] comp_exprs
 
     | If(loc, e1, e2, e3) -> If(loc, rename_expr scope e1, rename_expr scope e2, rename_expr scope e3)
 

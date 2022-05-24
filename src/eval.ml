@@ -57,6 +57,9 @@ module EvalError = struct
 
   exception NonNumberInRangeBounds of value * value * loc list
 
+  exception NonBoolInListComp of value * loc list
+  exception NonListInListComp of value * loc list
+
   exception InvalidProcessArg of value * loc list
 
   exception NonProgCallInPipe of NameExpr.expr * loc list
@@ -338,6 +341,8 @@ end) = struct
         ListV (build_range [] end_num) 
       | _ -> raise (EvalError.NonNumberInRangeBounds(start_val, end_val, loc :: env.call_trace))
       end
+    | ListComp (loc, result_expr, comp_exprs) ->
+      ListV (eval_list_comp env loc result_expr comp_exprs)
     | If (loc, e1, e2, e3) ->
       let v1 = eval_expr env e1 in
       let context = "In the condition of an if expression" in
@@ -441,6 +446,27 @@ end) = struct
         match expr_or_val with 
         | Left expr -> (eval_expr env expr, env)
         | Right value -> (value, env))
+
+  (* TODO: This should probably be tail recursive if possible (probably via CPS) *)
+  and eval_list_comp env loc result_expr = function
+    | FilterClause expr :: comps -> 
+      begin match eval_expr env expr with
+      | BoolV false -> []
+      | BoolV true -> eval_list_comp env loc result_expr comps
+      | v -> raise (EvalError.NonBoolInListComp (v, loc :: env.call_trace))
+      end
+    | DrawClause (name, expr) :: comps ->
+      begin match eval_expr env expr with
+      | ListV values ->
+        let eval_with_val v =
+          let env' = insert_vars [name] [v] env loc in
+          eval_list_comp env' loc result_expr comps
+        in
+        List.concat_map eval_with_val values
+      | v -> raise (EvalError.NonListInListComp (v, loc :: env.call_trace))
+      end
+    | [] -> 
+      [eval_expr env result_expr]
 
   and eval_primop env op args loc = let open EvalError in
     (* TODO: intern primop names *)

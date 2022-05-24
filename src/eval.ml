@@ -254,9 +254,10 @@ end) = struct
       let v2 = eval_expr env e2 in
       begin match v1, v2 with
       | ListV xs, ListV ys -> ListV (xs @ ys)
+      | MapV xs, MapV ys -> MapV (MapVImpl.union (fun _ _ y -> Some y) xs ys)
       | StringV s1, StringV s2 -> StringV (s1 ^ s2)
       | StringV s1, NumV _ -> StringV(s1 ^ Value.pretty v2)
-      | _, _ -> raise (EvalError.InvalidOperatorArgs("..", [v1; v2], loc :: env.call_trace))
+      | _, _ -> raise (EvalError.InvalidOperatorArgs("~", [v1; v2], loc :: env.call_trace))
       end 
 
     | Equals (_, e1, e2) -> 

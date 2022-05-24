@@ -96,6 +96,14 @@ let handle_errors print_fun f =
                      ^ "    Range: [" ^ Value.pretty start_val ^ " .. " ^ Value.pretty end_val ^ "]"
                      ^ "\n" ^ pretty_call_trace locs
     )
+  | NonBoolInListComp (value, loc::locs) -> print_fun (
+    Loc.pretty loc ^ ": Non-boolean in list comprehension condition: " ^ Value.pretty value
+                   ^ "\n" ^ pretty_call_trace locs
+  )
+  | NonListInListComp (value, loc::locs) -> print_fun (
+    Loc.pretty loc ^ ": Trying to draw from a non-list in a list comprehension: " ^ Value.pretty value
+                   ^ "\n" ^ pretty_call_trace locs
+  )
   | InvalidProcessArg (value, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Argument cannot be passed to an external process in an !-Expression.\n"
                      ^ "    Argument: " ^ Value.pretty value

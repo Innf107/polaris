@@ -4,7 +4,8 @@
   readline 
   menhirLib
   unix
-  str))
+  str
+  oniguruma))
 
 (rule
   (target lexer.ml)

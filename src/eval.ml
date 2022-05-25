@@ -52,6 +52,7 @@ module EvalError = struct
     Maybe these could even just be contract failures, if those ever
     become a feature? *)
   exception PrimOpArgumentError of string * value list * string * loc list
+  exception PrimOpError of string * string * loc list
 
   exception InvalidOperatorArgs of string * value list * loc list
 
@@ -176,19 +177,11 @@ end) = struct
         if x.index == -1 
         then PrimOpV x.name
         else !(lookup_var env loc x)
-    | App (loc, f, args) -> (
-        match eval_expr env f with
-        | ClosureV (clos_env, params, body) ->
-            (* Function arguments are evaluated left to right *)
-            let arg_vals = List.map (eval_expr env) args in
-            let updated_clos_env = insert_vars params arg_vals (Lazy.force clos_env) loc in
-            (* The call trace is extended and carried over to the closure environment *)
-            eval_expr {updated_clos_env with call_trace = loc :: env.call_trace} body
-        | PrimOpV prim_name ->
-            let arg_vals = List.map (eval_expr env) args in
-            eval_primop {env with call_trace = loc :: env.call_trace} prim_name arg_vals loc
-        | x ->
-            raise (EvalError.TryingToApplyNonFunction (x, loc :: env.call_trace)))
+    | App (loc, f, args) ->
+      (* See Note [left-to-right evaluation] *)
+      let f_val = eval_expr env f in
+      let arg_vals = List.map (eval_expr env) args in
+      eval_app env loc f_val arg_vals
     | Lambda (_, params, e) -> ClosureV (lazy env, params, e)
     
     | StringLit (_, s) -> StringV s
@@ -390,6 +383,19 @@ end) = struct
         ) in
       StringV (String.trim (In_channel.input_all in_chan))
 
+  and eval_app env loc fun_v arg_vals = 
+    match fun_v with
+    | ClosureV (clos_env, params, body) ->
+        (* Function arguments are evaluated left to right *)
+        let updated_clos_env = insert_vars params arg_vals (Lazy.force clos_env) loc in
+        (* The call trace is extended and carried over to the closure environment *)
+        eval_expr {updated_clos_env with call_trace = loc :: env.call_trace} body
+    
+    | PrimOpV prim_name ->
+        eval_primop {env with call_trace = loc :: env.call_trace} prim_name arg_vals loc
+    | x ->
+        raise (EvalError.TryingToApplyNonFunction (x, loc :: env.call_trace))
+
 
 
   (* This takes a continuation argument in order to stay mutually tail recursive with eval_expr *)
@@ -524,13 +530,13 @@ end) = struct
                   end
     | "regexpMatch" -> begin match args with
                   | [StringV pattern; StringV arg] ->
-                    let found = Str.string_match (Str.regexp pattern) arg 0 in
-                    if found then
-                      (* Why the hell does OCaml use global state for regex? *)
-                      StringV (Str.matched_string arg)
-                    else
-                      NullV
-                  | _ -> raise (PrimOpArgumentError ("regexpMatch", args, "Expected two strings", loc :: env.call_trace))
+                    ListV (List.map (fun x -> StringV x) (Oniguruma_wrapper.search pattern arg))
+                  | _ -> raise (PrimOpArgumentError ("regexpMatch", args, "Expected (string, string)", loc :: env.call_trace))
+                  end
+    | "regexpTransform" -> begin match args with
+                  | [StringV pattern; transformClos; StringV str_v] ->
+                    raise TODO
+                  | _ -> raise (PrimOpArgumentError ("regexpTransform", args, "Expected (string, function, string)", loc :: env.call_trace))
                   end
     | "writeFile" -> begin match args with
                   | [path_v; content_v] ->

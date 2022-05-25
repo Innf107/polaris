@@ -527,8 +527,8 @@ end) = struct
     | "regexpMatch" -> begin match args with
                   | [StringV pattern; StringV arg] ->
                     let regexp = Pcre.regexp pattern in
-                    let results = Pcre.exec_all ~rex:regexp ~flags:[] arg in
                     begin try
+                      let results = Pcre.exec_all ~rex:regexp ~flags:[] arg in
                       ListV (List.map (fun x -> StringV (Pcre.get_substring x 0)) (Array.to_list results))
                     with
                     | Not_found -> ListV []
@@ -538,7 +538,29 @@ end) = struct
                   end
     | "regexpTransform" -> begin match args with
                   | [StringV pattern; transformClos; StringV str_v] ->
-                    raise TODO
+                    begin try
+                      let results = Pcre.exec_all ~pat:pattern str_v in
+                      let rec go pos = function
+                      | (substr::results) ->
+                        let start_pos, end_pos = Pcre.get_substring_ofs substr 0 in
+
+                        let subject = Pcre.get_substring substr 0 in
+
+                        let replacement = match eval_app env loc transformClos [StringV subject] with
+                        | StringV repl -> repl
+                        | value -> raise (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace))
+                        in
+
+                        let start_string = String.sub str_v pos (start_pos - pos) in 
+
+
+                        start_string ^ replacement ^ go end_pos results
+                      | [] -> String.sub str_v pos (String.length str_v - pos)
+                      in
+                      StringV (go 0 (Array.to_list results))
+                    with
+                    | Not_found -> StringV str_v
+                    end
                   | _ -> raise (PrimOpArgumentError ("regexpTransform", args, "Expected (string, function, string)", loc :: env.call_trace))
                   end
     | "writeFile" -> begin match args with

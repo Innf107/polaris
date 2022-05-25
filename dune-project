@@ -19,7 +19,7 @@
  (name polaris)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune menhir menhirLib oniguruma)
+ (depends ocaml dune menhir menhirLib pcre)
  (tags
   (topics "to describe" your project)))
 

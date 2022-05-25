@@ -14,7 +14,7 @@ depends: [
   "dune" {>= "3.0"}
   "menhir"
   "menhirLib"
-  "oniguruma"
+  "pcre"
   "odoc" {with-doc}
 ]
 build: [

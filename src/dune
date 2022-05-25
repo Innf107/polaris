@@ -5,7 +5,7 @@
   menhirLib
   unix
   str
-  oniguruma))
+  pcre))
 
 (rule
   (target lexer.ml)

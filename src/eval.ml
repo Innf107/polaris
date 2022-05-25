@@ -520,17 +520,20 @@ end) = struct
                   | _ -> raise (PrimOpArgumentError ("replace", args, "Expected three strings", loc :: env.call_trace))
                   end
     | "regexpReplace" -> begin match args with
-                  | [needle_v; repl_v; str_v] -> 
-                    let context = "Trying to apply 'regexpReplace'" in
-                    let needle = as_string context (loc :: env.call_trace) needle_v in 
-                    let repl =  as_string context (loc :: env.call_trace) repl_v in
-                    let str = as_string context (loc :: env.call_trace) str_v in
-                    StringV (Str.global_replace (Str.regexp needle) repl str)
+                  | [StringV pattern; StringV repl; StringV str] -> 
+                    StringV (Pcre.replace ~pat:pattern ~templ:repl str)
                   | _ -> raise (PrimOpArgumentError ("regexpReplace", args, "Expected three strings", loc :: env.call_trace))
                   end
     | "regexpMatch" -> begin match args with
                   | [StringV pattern; StringV arg] ->
-                    ListV (List.map (fun x -> StringV x) (Oniguruma_wrapper.search pattern arg))
+                    let regexp = Pcre.regexp pattern in
+                    let results = Pcre.exec_all ~rex:regexp ~flags:[] arg in
+                    begin try
+                      ListV (List.map (fun x -> StringV (Pcre.get_substring x 0)) (Array.to_list results))
+                    with
+                    | Not_found -> ListV []
+                    end
+
                   | _ -> raise (PrimOpArgumentError ("regexpMatch", args, "Expected (string, string)", loc :: env.call_trace))
                   end
     | "regexpTransform" -> begin match args with

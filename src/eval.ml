@@ -499,9 +499,9 @@ end) = struct
                   | _ -> raise (PrimOpArgumentError ("require", args, "Expected a single string argument", loc :: env.call_trace))
                   end
     | "lines" -> begin match args with
-                | [arg] -> 
-                  let context = "Trying to apply 'lines'" in
-                  ListV (List.map (fun s -> StringV s) (String.split_on_char '\n' (as_string context (loc :: env.call_trace) arg)))
+                | [StringV ""] -> ListV []
+                | [StringV arg] -> 
+                  ListV (List.map (fun s -> StringV s) (String.split_on_char '\n' arg))
                 | _ -> raise (PrimOpArgumentError ("lines", args, "Expected a single string", loc :: env.call_trace))
                 end
     | "replace" -> begin match args with

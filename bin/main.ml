@@ -158,7 +158,7 @@ let run_repl (options : run_options) : unit =
     try
       handle_errors (fun msg -> repl_error msg; go env scope)
         (fun _ -> 
-          let prompt = "\x1b[38;5;160mλ>\x1b[0m " in
+          let prompt = "\x1b[38;5;160m\x02λ>\x1b[0m\x02 " in
           match Readline.readline prompt with
           | None -> exit 0
           | Some input -> 

@@ -11,7 +11,7 @@
 
 (maintainers "Prophet")
 
-(license LICENSE)
+(license MIT)
 
 (documentation https://url/to/documentation)
 
@@ -19,7 +19,7 @@
  (name polaris)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune menhirLib)
+ (depends ocaml dune menhir menhirLib)
  (tags
   (topics "to describe" your project)))
 

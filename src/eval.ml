@@ -544,9 +544,9 @@ end) = struct
                       | (substr::results) ->
                         let start_pos, end_pos = Pcre.get_substring_ofs substr 0 in
 
-                        let subject = Pcre.get_substring substr 0 in
+                        let matched = Pcre.get_substring substr 0 in
 
-                        let replacement = match eval_app env loc transformClos [StringV subject] with
+                        let replacement = match eval_app env loc transformClos [StringV matched] with
                         | StringV repl -> repl
                         | value -> raise (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace))
                         in

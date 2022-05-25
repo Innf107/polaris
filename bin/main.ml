@@ -15,7 +15,7 @@ let warning (message : string) =
   print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 
 let repl_error (message : string) = 
-  print_endline ("\x1b[38;2;255;0;0mERROR\x1b[0m:\n" ^ message);
+  print_endline ("\x1b[38;2;255;0;0m\x02ERROR\x1b[0m\x02:\n" ^ message);
 
 type run_options = {
   print_ast : bool;

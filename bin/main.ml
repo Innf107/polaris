@@ -154,6 +154,7 @@ let run_repl (options : run_options) : unit =
     ; print_renamed = options.print_renamed
     ; backend = options.backend
     } in
+  print_endline "Welcome to Polaris! Press Ctrl+D or type \"exit(0)\" to exit.";
   let rec go env scope =
     try
       handle_errors (fun msg -> repl_error msg; go env scope)

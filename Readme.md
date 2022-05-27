@@ -4,7 +4,7 @@
 A scripting language with shell scripting capabilities (WIP) 
 
 ## Installation
-Install [opam](https://opam.ocaml.org/doc/Install.html)
+Install [opam](https://opam.ocaml.org/doc/Install.html) and run ```opam init```
 
 Then run
 ```bash

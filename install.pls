@@ -1,0 +1,42 @@
+let Args = require("lib/args.pls");
+let List = require("lib/list.pls");
+
+let optionSpec = [
+    ["--bin-install-location", #{
+        default: "/usr/bin/polaris",
+        type: "readline",
+        prompt: "Install binary to: "
+    }],
+
+    ["--copy-with-sudo", #{
+        type: "flag-ask",
+        prompt: "Use sudo to copy files?"
+    }],
+];
+
+# TODO: Use destructuring
+let t = Args.parse(optionSpec);
+let arguments = List.fst(t);
+let options = List.snd(t);
+
+
+let installLocation = options["--bin-install-location"].get();
+let useSudo = options["--copy-with-sudo"].get();
+
+if installLocation == null || installLocation == "" then {
+    print("No installation to a custom location")
+}
+else {
+    let originalPath = getEnv("OPAM_SWITCH_PREFIX") ~ "/bin/polaris";
+    print("Copying file from '" ~ originalPath ~ "' to '" ~ installLocation ~ "'.");
+    if useSudo then
+        !sudo "cp" originalPath installLocation
+    else
+        !cp originalPath installLocation
+};
+
+print("Copying stdlib files to ~/.polaris/lib/");
+!mkdir "-p" (getEnv("HOME") ~ "/.polaris");
+!cp "-r" "lib" (getEnv("HOME") ~ "/.polaris");
+
+print("Installation successful!")

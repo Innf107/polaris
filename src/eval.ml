@@ -262,6 +262,7 @@ end) = struct
       | MapV xs, MapV ys -> MapV (MapVImpl.union (fun _ _ y -> Some y) xs ys)
       | StringV s1, StringV s2 -> StringV (s1 ^ s2)
       | StringV s1, NumV _ -> StringV(s1 ^ Value.pretty v2)
+      | NumV _, StringV s2 -> StringV(Value.pretty v1 ^ s2)
       | _, _ -> raise (EvalError.InvalidOperatorArgs("~", [v1; v2], loc :: env.call_trace))
       end 
 

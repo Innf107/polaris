@@ -115,6 +115,10 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
         ProgCall (loc, p, List.map (rename_expr scope) args)
     | Pipe (loc, exprs) ->
         Pipe (loc, List.map (rename_expr scope) exprs)
+    | Async (loc, expr) ->
+        Async (loc, rename_expr scope expr)
+    | Await (loc, expr) ->
+        Await (loc, rename_expr scope expr)
 
 and rename_seq_state (scope : RenameScope.t) (exprs : string_expr list) : name_expr list * RenameScope.t = let open RenameScope in
     match exprs with

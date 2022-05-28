@@ -28,6 +28,7 @@ let loc = Loc.from_pos
 %token <string> BANG
 %token PIPE
 %token IF THEN ELSE
+%token ASYNC AWAIT
 %token EOF
 
 %left OR AND NOT
@@ -97,6 +98,8 @@ expr:
 
   | IF expr THEN expr ELSE expr                                 { If(loc $startpos $endpos, $2, $4, $6) }                          // if e then e else e
   | expr PIPE pipe_list                                         { Pipe(loc $startpos $endpos, $1 :: $3) }
+  | ASYNC expr                                                  { Async(loc $startpos $endpos, $2) }
+  | AWAIT expr                                                  { Await(loc $startpos $endpos, $2) }
 
 pipe_list:
   | prog_call PIPE pipe_list  { $1 :: $3 }

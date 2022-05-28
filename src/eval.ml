@@ -37,6 +37,8 @@ and value =
   | ListV of value list
   | MapV of (value MapVImpl.t)
   | NullV
+  (* Represents a concurrent thread of execution *)
+  | PromiseV of value Promise.t
 
 module EvalError = struct
   exception DynamicVarNotFound of name * loc list
@@ -68,6 +70,8 @@ module EvalError = struct
   exception RuntimeError of string * loc list
 
   exception ModuleNotFound of string * string list
+
+  exception AwaitNonPromise of value * loc list
 end  
 
 module Value = struct
@@ -91,12 +95,17 @@ module Value = struct
     | MapV kvs -> 
       let kv_list = List.of_seq (MapVImpl.to_seq kvs) in
       "#{" ^ String.concat ", " (List.map (fun (k, v) -> k ^ ": " ^ pretty v) kv_list) ^ "}"
+    | PromiseV p ->
+      match Promise.peek p with
+      | Finished value -> "<promise: " ^ pretty value ^ ">"
+      | Failed _ex -> "<promise: <<failure>>>" 
+      | Pending -> "<promise: <<pending>>>"
 
   let rec as_args (fail : t -> 'a) (x : t) : string list =
     match x with
     | StringV _ | NumV _ | BoolV _ -> [pretty x]
     (* TODO: Should Maps be converted to JSON? *)
-    | ClosureV _ | PrimOpV _ | UnitV | NullV | MapV _ -> fail x
+    | ClosureV _ | PrimOpV _ | UnitV | NullV | MapV _ | PromiseV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
@@ -382,6 +391,16 @@ end) = struct
           List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
         ) in
       StringV (String.trim (In_channel.input_all in_chan))
+    | Async (loc, expr) ->
+      let promise = Promise.create begin fun _ ->
+        eval_expr env expr
+      end in
+      PromiseV promise
+    | Await (loc, expr) ->
+      match eval_expr env expr with
+      | PromiseV p -> 
+        Promise.await p
+      | value -> raise (EvalError.AwaitNonPromise (value, loc :: env.call_trace))
 
   and eval_app env loc fun_v arg_vals = 
     match fun_v with

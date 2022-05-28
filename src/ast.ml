@@ -80,7 +80,10 @@ struct
     | Print of loc * expr                   (* print(e) (Temporary. 'print' should really just be an intrinsic)*)
     | ProgCall of loc * string * expr list  (* /p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
-  
+    (* Async / Await (colorless) *)
+    | Async of loc * expr                   (* async e *)
+    | Await of loc * expr                   (* await e*)
+
   and list_comp_clause =
     | DrawClause of name * expr (* x <- e *)
     | FilterClause of expr            (* e *)
@@ -143,6 +146,8 @@ struct
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
+    | Async (_, expr) -> "async " ^ pretty expr
+    | Await (_, expr) -> "await " ^ pretty expr
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
@@ -156,6 +161,7 @@ struct
     | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | Print(loc, _) | ProgCall(loc, _, _) | Pipe(loc, _)
+    | Async(loc, _) | Await(loc, _)
     -> loc
 end
 

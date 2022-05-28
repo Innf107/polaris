@@ -5,7 +5,8 @@
   menhirLib
   unix
   str
-  pcre))
+  pcre
+  threads))
 
 (rule
   (target lexer.ml)

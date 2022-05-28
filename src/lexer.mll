@@ -34,6 +34,8 @@ rule token = parse
 | "true"    { TRUE }
 | "false"   { FALSE }
 | "null"    { NULL }
+| "async"   { ASYNC }
+| "await"   { AWAIT }
 | "->"      { ARROW }
 | "<-"      { LARROW }
 | ','       { COMMA }

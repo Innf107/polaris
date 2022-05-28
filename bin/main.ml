@@ -122,6 +122,10 @@ let handle_errors print_fun f =
     ^ "Tried paths:"
     ^ "\n    " ^ String.concat "\n    " triedPaths
   )
+  | AwaitNonPromise (value, loc::locs) -> print_fun (
+    Loc.pretty loc ^ ": Trying to await non-promise: " ^ Value.pretty value
+    ^ "\n" ^ pretty_call_trace locs
+  )
 
 let run_file (options : run_options) (filepath : string) (args : string list) = 
   let _ = match options.backend with

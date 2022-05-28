@@ -7,7 +7,7 @@ let pure(x) = async x;
 let bind(promise, cont) = async {
     let x = await promise;
     await cont(x);
-}
+};
 
 #{
     # Combining promises

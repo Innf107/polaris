@@ -21,8 +21,8 @@ rule token = parse
 | [ ' ' '\t' ]           { token lexbuf }
 | newline                { next_line lexbuf; token lexbuf }
 | '#' | '#' [^'{'] [^'\n']*? (newline | eof) { next_line lexbuf; token lexbuf } (* TODO: Correctly handle \r\n *)
-| '-'? digit+ '.' digit* as lit_string { FLOAT (float_of_string lit_string) }
 | '-'? digit+ as lit_string { INT (int_of_string lit_string)}
+| '-'? digit+ '.' digit+ as lit_string { FLOAT (float_of_string lit_string) }
 | '!' '"' ([^'"']+ as cmd)'"' { BANG cmd }
 | "!="      { BANGEQUALS }
 | '!' ([^' ' '\t' '\n' '(' ')' '[' ']' '{' '}']+ as cmd) { BANG cmd}

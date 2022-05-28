@@ -16,9 +16,9 @@ List.forConcurrent(files, \file -> {
         !echo "-e" ("\e[32m[" ~ file ~ "]: PASSED\e[0m");
         ()
     } else {
-        !echo "-e" ("\e[31m[" ~ file ~ "]: FAILED!");
-        !echo "-e" ("    EXPECTED: '" ~ expectation ~ "'");
-        !echo "-e" ("      ACTUAL: '" ~ result ~ "'\e[0m");
+        !echo "-e" ("\e[31m[" ~ file ~ "]: FAILED!\n"
+                  ~ "    EXPECTED: '" ~ expectation ~ "'\n"
+                  ~ "      ACTUAL: '" ~ result ~ "'\e[0m");
         errors := errors + 1;
     };
 });

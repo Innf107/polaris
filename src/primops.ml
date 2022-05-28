@@ -23,6 +23,7 @@ let primops = PrimOpNameSet.of_list [
   "insert";
   "mapToList";
   "fail";
+  "scriptLocal";
 ]
 
 let is_primop name = PrimOpNameSet.mem name primops

@@ -670,6 +670,11 @@ end) = struct
                 | [StringV msg] -> raise (RuntimeError (msg, loc :: env.call_trace))
                 | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))
                 end
+    | "scriptLocal" -> begin match args with
+                | [StringV path] -> 
+                  StringV (Filename.dirname (List.hd env.argv) ^ "/" ^ path)
+                | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))
+                end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   and progs_of_exprs env = function

@@ -78,22 +78,6 @@ let sum(xs) = foldl(\(r, x) -> r + x, 0, xs);
 # O(n), tail recursive
 let product(xs) = foldl(\(r, x) -> r * x, 1, xs);
 
-# Generator functions
-
-# Generate a list of all numbers between `min`(inclusive) and `max`(inclusive)
-# separated by a step size of `step`
-# O(n), tail recursive
-let range(min, max, step) = {
-    # go takes a continuation to stay tail recursive while avoiding the 
-    # O(n^2) time complexity hit from repeatedly appending to a list.
-    let go(val, cont) = {
-        if val > max then
-            cont([])
-        else
-            go(val + step, \r -> cont(cons(val, r)))
-    };
-    go(min, \x -> x)
-};
 
 # O(n), tail recursive
 let for(xs, f) = {
@@ -105,6 +89,12 @@ let for(xs, f) = {
     }
 };
 
+# Evaluates each argument on a separate thread
+# O(n), tail recursive
+let forConcurrent(xs, f) = {
+    let promises = [(async f(x)) | x <- xs];
+    for(promises, \p -> await p);
+};
 
 let fst(t) = head(t);
 
@@ -128,9 +118,8 @@ let snd(t) = head(tail(t));
     sum: sum,
     product: product,
 
-    range: range,
-
     for: for,
+    forConcurrent: forConcurrent,
 
     fst: fst,
     snd: snd,

@@ -3,9 +3,9 @@ let List = require("list.pls");
 
 let files = lines(!find (scriptLocal("categories")) "-name" "*.pls");
 
-let errors = [];
+let errors = 0;
 
-List.for(files, \file -> {
+List.forConcurrent(files, \file -> {
     let expectation = !grep "-Po" "(?<=# EXPECT:).+" file;
 
     let result = !polaris file;
@@ -16,10 +16,17 @@ List.for(files, \file -> {
         !echo "-e" ("\e[32m[" ~ file ~ "]: PASSED\e[0m");
         ()
     } else {
-        print("b");
         !echo "-e" ("\e[31m[" ~ file ~ "]: FAILED!");
         !echo "-e" ("    EXPECTED: '" ~ expectation ~ "'");
-        !echo "-e" ("      ACTUAL: '" ~ result ~ "'");
-        ()
+        !echo "-e" ("      ACTUAL: '" ~ result ~ "'\e[0m");
+        errors := errors + 1;
     };
 });
+
+if errors == 0 then {
+    !echo "-e" "\e[32mAll test passed.\e[0m";
+    ()
+} else {
+    !echo "-e" "\e[31m" ~ errors ~ " TESTS FAILED!\e[0m";
+    ()
+}

@@ -62,7 +62,11 @@ expr:
 
   (* The first element has to be a draw clause to differentiate 
   between list comprehensions and pipes *)
-  | LBRACKET expr PIPE IDENT LARROW expr list_comp_list RBRACKET  { ListComp (loc $startpos $endpos, $2, DrawClause ($4, $6) :: $7) } // [ e | x <- e, ...]
+  | LBRACKET expr PIPE IDENT LARROW expr list_comp_list RBRACKET       { ListComp (loc $startpos $endpos, $2, DrawClause ($4, $6) :: $7) } // [ e | x <- e, ... ]
+  (* We need a special case for async/await expressions in list comprehensions*)
+  | LBRACKET ASYNC expr PIPE IDENT LARROW expr list_comp_list RBRACKET { ListComp (loc $startpos $endpos, Async(loc $startpos $endpos, $3), DrawClause ($5, $7) :: $8)} // [ async e | x <- e, ... ]
+  | LBRACKET AWAIT expr PIPE IDENT LARROW expr list_comp_list RBRACKET { ListComp (loc $startpos $endpos, Await(loc $startpos $endpos, $3), DrawClause ($5, $7) :: $8)} // [ async e | x <- e, ... ]
+
   | HASHLBRACE map_kv_list RBRACE                               { MapLit (loc $startpos $endpos, $2) }                             // #{ x: e, .., x: e }
   | expr DOT IDENT                                              { MapLookup (loc $startpos $endpos, $1, $3) }                      // e.x
   | expr LBRACKET expr RBRACKET                                 { DynLookup (loc $startpos $endpos, $1, $3) }                      // e[e]

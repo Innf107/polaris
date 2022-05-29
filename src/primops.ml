@@ -1,6 +1,7 @@
 module PrimOpNameSet = Set.Make(String)
 
 let primops = PrimOpNameSet.of_list [
+  "print";
   "head";
   "tail";
   "cons";

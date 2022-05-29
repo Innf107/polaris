@@ -78,9 +78,7 @@ expr:
   | LET IDENT LPAREN ident_list RPAREN EQUALS expr              { LetRecSeq (loc $startpos $endpos, $2, $4, $7) }                  // let rec f(x, .., x) = e
   | LET IDENT LPAREN ident_list RPAREN EQUALS expr IN expr      { LetRec (loc $startpos $endpos, $2, $4, $7, $9) }                 // let rec f(x, .., x) = e in e
   | LBRACE expr_semi_list RBRACE                                { Seq(loc $startpos $endpos, $2) }                                 // {e; ..; e}
-  | expr LPAREN expr_comma_list RPAREN                          { match $1 with 
-                                                                  | Var (_, "print") -> Print(loc $startpos $endpos, List.hd $3) (* print(e) *)
-                                                                  | _ -> App(loc $startpos $endpos, $1, $3) }                      // e(e,..,e)
+  | expr LPAREN expr_comma_list RPAREN                          { App(loc $startpos $endpos, $1, $3) }                             // e(e, .., e)
   | IDENT COLONEQUALS expr                                      { Assign(loc $startpos $endpos, $1, $3)}                           // x = e
   | BANG exprs                                                  { ProgCall(loc $startpos $endpos, $1, $2) }                        // /p e .. e
   | expr PLUS expr                                              { Add(loc $startpos $endpos, $1, $3) }                             // e + e

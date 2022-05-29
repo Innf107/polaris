@@ -109,8 +109,6 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
         let x' = lookup_var scope loc x in
         Assign (loc, x', rename_expr scope e)
 
-    | Print (loc, e) -> Print (loc, rename_expr scope e)
-
     | ProgCall (loc, p, args) ->
         ProgCall (loc, p, List.map (rename_expr scope) args)
     | Pipe (loc, exprs) ->

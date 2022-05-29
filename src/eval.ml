@@ -366,10 +366,6 @@ end) = struct
       let x_ref = lookup_var env loc x  in
       x_ref := (eval_expr env e1);
       UnitV
-    | Print (_, expr) ->
-      let value = eval_expr env expr in
-      print_endline (Value.pretty value);
-      UnitV
 
     | ProgCall (loc, prog, args) as expr -> 
       eval_expr env (Pipe (loc, [expr]))
@@ -497,6 +493,13 @@ end) = struct
   and eval_primop env op args loc = let open EvalError in
     (* TODO: intern primop names *)
     match op with
+    | "print" ->
+      let pretty_print = function
+      | StringV str -> str
+      | x -> Value.pretty x
+      in
+      print_endline (String.concat " " (List.map pretty_print args));
+      UnitV
     | "head" -> begin match args with
                 | [ListV (head::tail)] -> head
                 | [ListV []] -> raise (PrimOpArgumentError ("head", args, "Empty list", loc :: env.call_trace))

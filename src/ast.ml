@@ -77,7 +77,6 @@ struct
     | LetRec of loc * name * name list * expr * expr  (* let rec f(x, .., x) = e*)
     | Assign of loc * name * expr                     (* x = e *)
     (* Scripting capabilities *)
-    | Print of loc * expr                   (* print(e) (Temporary. 'print' should really just be an intrinsic)*)
     | ProgCall of loc * string * expr list  (* /p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
     (* Async / Await (colorless) *)
@@ -142,7 +141,6 @@ struct
         "let " ^ Name.pretty x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
     | LetRec (_, x, xs, e1, e2) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
     | Assign (_, x, e) -> Name.pretty x ^ " = " ^ pretty e
-    | Print (_, e) -> "print(" ^ pretty e ^ ")"
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
@@ -160,7 +158,7 @@ struct
     | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _) | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
-    | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | Print(loc, _) | ProgCall(loc, _, _) | Pipe(loc, _)
+    | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _)
     | Async(loc, _) | Await(loc, _)
     -> loc
 end

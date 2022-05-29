@@ -79,7 +79,7 @@ module Value = struct
 
   let rec pretty (x : t) : string =
     match x with
-    | StringV s -> s
+    | StringV s -> "\"" ^ s ^ "\""
     | NumV n -> 
       if Float.is_integer n
       then string_of_int (int_of_float n)
@@ -103,7 +103,8 @@ module Value = struct
 
   let rec as_args (fail : t -> 'a) (x : t) : string list =
     match x with
-    | StringV _ | NumV _ | BoolV _ -> [pretty x]
+    | StringV v -> [v]
+    | NumV _ | BoolV _ -> [pretty x]
     (* TODO: Should Maps be converted to JSON? *)
     | ClosureV _ | PrimOpV _ | UnitV | NullV | MapV _ | PromiseV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x

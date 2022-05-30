@@ -644,10 +644,10 @@ end) = struct
                 | _ -> raise (PrimOpArgumentError ("exit", args, "Expected an integer", loc :: env.call_trace))
                 end
     | "toString" -> begin match args with
-                | [NumV arg] -> 
+                | [arg] -> 
                   (* We have to use `Value.pretty` instead of `Float.to_string`, since
                      the latter always appends a trailing dot. *)
-                  StringV (Value.pretty (NumV arg))
+                  StringV (Value.pretty arg)
                 | _ -> raise (PrimOpArgumentError ("toString", args, "Expected a number", loc :: env.call_trace))
                 end            
     | "getArgv" -> begin match args with

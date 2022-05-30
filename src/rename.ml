@@ -145,5 +145,25 @@ and rename_seq scope exprs =
     let res, _ = rename_seq_state scope exprs in
     res
 
-let rename (exprs : Parsed.expr list): Renamed.expr list =
-    rename_seq RenameScope.empty exprs    
+let rec rename_headers : RenameScope.t -> Parsed.header list -> Renamed. header list * RenameScope.t =
+    fun scope -> let open RenameScope in function
+    | [] -> [], scope
+    | Description(loc, descr) :: hs -> 
+        let rest, scope = rename_headers scope hs in
+        Description(loc, descr) :: rest, scope
+    | Options(loc, flag_defs) :: hs -> 
+        let rec rename_flag_defs scope = function
+        | [] -> [], scope
+        | Parsed.{ flag_var; flags; arg_count } :: defs ->
+            let flag_var' = fresh_var scope flag_var in
+            let scope = insert_var flag_var flag_var' scope in
+            let rest, scope = rename_flag_defs scope defs in
+            Renamed.{ flag_var = flag_var'; flags; arg_count } :: rest, scope
+        in 
+        let flag_defs', scope = rename_flag_defs scope flag_defs in
+        let rest, scope = rename_headers scope hs in
+        Options (loc, flag_defs') :: rest, scope
+
+let rename (headers : Parsed.header list) (exprs : Parsed.expr list): Renamed.header list * Renamed.expr list =
+    let headers', env = rename_headers RenameScope.empty headers in 
+    headers', rename_seq env exprs    

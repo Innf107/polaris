@@ -698,6 +698,10 @@ end) = struct
   }
 
   let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs
+
+  let eval_headers (env : eval_env) (headers : Renamed.header list) =
+    
+    raise (Panic "eval_headers NYI")
 end
 
 (* Note [left-to-right evaluation]

@@ -1,6 +1,6 @@
 %{
-open Ast
-open StringExpr
+open Syntax
+open Parsed
 module E = MenhirLib.ErrorReports
 module L = MenhirLib.LexerUtil
 

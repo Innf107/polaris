@@ -1,4 +1,4 @@
-open Ast
+open Syntax
 open Util
 
 module VarMap = Map.Make (Name)
@@ -19,7 +19,7 @@ and value =
   (* The closure environment has to be lazy to
      support recursive lets, since the definition of a recursive function has
      to be stored in its own closure, which also stores its on environment, etc.*)
-  | ClosureV of eval_env lazy_t * name list * name_expr
+  | ClosureV of eval_env lazy_t * name list * Renamed.expr
   (* PrimOps should be mostly indistinguishable from regular closures.
      The only exception is pretty printing, where primops are printed as
      "<primative: name>" instead of <closure(args)>
@@ -65,7 +65,7 @@ module EvalError = struct
 
   exception InvalidProcessArg of value * loc list
 
-  exception NonProgCallInPipe of NameExpr.expr * loc list
+  exception NonProgCallInPipe of Renamed.expr * loc list
 
   exception RuntimeError of string * loc list
 
@@ -179,8 +179,8 @@ end) = struct
       Unix.close fd;
       close_all fds
 
-  let rec eval_expr (env : eval_env) (expr : name_expr) : value =
-    let open NameExpr in
+  let rec eval_expr (env : eval_env) (expr : Renamed.expr) : value =
+    let open Renamed in
     match expr with
     (* The name index -1 specifies primops *)
     | Var (loc, x) ->
@@ -416,7 +416,7 @@ end) = struct
 
 
   (* This takes a continuation argument in order to stay mutually tail recursive with eval_expr *)
-  and eval_seq_cont : 'r. eval_env -> name_expr list -> (eval_env -> (name_expr, value) either -> 'r) -> 'r =
+  and eval_seq_cont : 'r. eval_env -> Renamed.expr list -> (eval_env -> (Renamed.expr, value) either -> 'r) -> 'r =
     fun env exprs cont ->
     match exprs with
     | [] -> cont env (Right UnitV)
@@ -454,7 +454,7 @@ end) = struct
         let _ = eval_expr env e in
         eval_seq_cont env exprs cont
 
-  and eval_seq (env : eval_env) (exprs : name_expr list) : value = 
+  and eval_seq (env : eval_env) (exprs : Renamed.expr list) : value = 
     eval_seq_cont env exprs 
       (fun env expr_or_val -> 
         match expr_or_val with
@@ -463,7 +463,7 @@ end) = struct
         )
 
   
-  and eval_seq_state (env : eval_env) (exprs : name_expr list) : value * eval_env = 
+  and eval_seq_state (env : eval_env) (exprs : Renamed.expr list) : value * eval_env = 
     eval_seq_cont env exprs 
       (fun env expr_or_val -> 
         match expr_or_val with 
@@ -472,7 +472,7 @@ end) = struct
 
   (* TODO: This should probably be tail recursive if possible (probably via CPS) *)
   and eval_list_comp env loc result_expr = function
-    | FilterClause expr :: comps -> 
+    | Renamed.FilterClause expr :: comps -> 
       begin match eval_expr env expr with
       | BoolV false -> []
       | BoolV true -> eval_list_comp env loc result_expr comps
@@ -688,7 +688,7 @@ end) = struct
       let arg_strings = List.concat_map (fun arg -> Value.as_args fail (eval_expr env arg)) args in
       (progName, arg_strings) :: progs_of_exprs env exprs
     | expr :: exprs -> 
-      raise (EvalError.NonProgCallInPipe (expr, NameExpr.get_loc expr :: env.call_trace))
+      raise (EvalError.NonProgCallInPipe (expr, Renamed.get_loc expr :: env.call_trace))
     | [] -> []
 
   let empty_eval_env (argv: string list): eval_env = {
@@ -697,7 +697,7 @@ end) = struct
     call_trace = []
   }
 
-  let eval (argv : string list) (exprs : name_expr list) : value = eval_seq (empty_eval_env argv) exprs
+  let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs
 end
 
 (* Note [left-to-right evaluation]

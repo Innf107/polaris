@@ -1,5 +1,5 @@
 open Polaris
-open Polaris.Ast
+open Polaris.Syntax
 open Polaris.Eval
 open Polaris.Driver
 
@@ -39,7 +39,7 @@ let handle_errors print_fun f =
   | VarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Variable not found: '" ^ x ^ "'")
   | LetSeqInNonSeq (expr, loc) -> print_fun (
         Loc.pretty loc ^ ": Let expression without 'in' found outside a sequence expression.\n"
-      ^ "    Expression: " ^ StringExpr.pretty expr
+      ^ "    Expression: " ^ Parsed.pretty expr
       )
   (* EvalError *)
   | DynamicVarNotFound (x, loc::locs) -> print_fun (
@@ -110,7 +110,7 @@ let handle_errors print_fun f =
                      ^ "\n" ^ pretty_call_trace locs
     )
   | NonProgCallInPipe (expr, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ NameExpr.pretty expr
+      Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ Renamed.pretty expr
       ^ "\n" ^ pretty_call_trace locs
     )
   | RuntimeError (msg, loc::locs) -> print_fun (

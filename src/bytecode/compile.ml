@@ -1,11 +1,11 @@
 open Util
-open Ast
+open Syntax
 open Bytecode
 
 module VarMap = Map.Make (Name)
 module StringMap = Map.Make (String)
 
-type expr = NameExpr.expr
+type expr = Renamed.expr
 
 type compile_state = {
     mutable functions : function_block list

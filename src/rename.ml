@@ -1,11 +1,11 @@
-open Ast
+open Syntax
 open Util
 
 module RenameMap = Map.Make(String)
 
 module RenameError = struct
     exception VarNotFound of string * loc
-    exception LetSeqInNonSeq of StringExpr.expr * loc
+    exception LetSeqInNonSeq of Parsed.expr * loc
 end
 
 module RenameScope = struct
@@ -31,7 +31,7 @@ module RenameScope = struct
 end
 
 
-let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = let open RenameScope in
+let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
     match expr with 
     | Var (loc, var_name) ->
         if Primops.is_primop var_name
@@ -75,11 +75,11 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
     | Range(loc, start_expr, end_expr) -> Range(loc, rename_expr scope start_expr, rename_expr scope end_expr)
     | ListComp(loc, result_expr, comp_exprs) ->
         let rec rename_comp scope renamed_comp_exprs_rev = function
-        | [] -> NameExpr.ListComp(loc, rename_expr scope result_expr, List.rev renamed_comp_exprs_rev)
-        | StringExpr.FilterClause expr :: comps ->
+        | [] -> Renamed.ListComp(loc, rename_expr scope result_expr, List.rev renamed_comp_exprs_rev)
+        | Parsed.FilterClause expr :: comps ->
             let expr' = rename_expr scope expr in
             rename_comp scope (FilterClause expr' :: renamed_comp_exprs_rev) comps
-        | StringExpr.DrawClause (name, expr) :: comps -> 
+        | Parsed.DrawClause (name, expr) :: comps -> 
             let expr' = rename_expr scope expr in
             let name' = fresh_var scope name in
             let scope' = insert_var name name' scope in
@@ -118,7 +118,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
     | Await (loc, expr) ->
         Await (loc, rename_expr scope expr)
 
-and rename_seq_state (scope : RenameScope.t) (exprs : string_expr list) : name_expr list * RenameScope.t = let open RenameScope in
+and rename_seq_state (scope : RenameScope.t) (exprs : Parsed.expr list) : Renamed.expr list * RenameScope.t = let open RenameScope in
     match exprs with
     | (LetSeq (loc, x, e) :: exprs) -> 
         let x' = fresh_var scope x in
@@ -145,5 +145,5 @@ and rename_seq scope exprs =
     let res, _ = rename_seq_state scope exprs in
     res
 
-let rename (exprs : string_expr list): name_expr list =
+let rename (exprs : Parsed.expr list): Renamed.expr list =
     rename_seq RenameScope.empty exprs    

@@ -1,4 +1,4 @@
-open Ast
+open Syntax
 open Rename
 open Eval
 
@@ -18,9 +18,9 @@ exception ParseError of loc
 
 
 module type EvalI = sig
-  val eval : string list -> name_expr list -> value
+  val eval : string list -> Renamed.expr list -> value
 
-  val eval_seq_state : eval_env -> name_expr list -> value * eval_env
+  val eval_seq_state : eval_env -> Renamed.expr list -> value * eval_env
 
   val empty_eval_env : string list -> eval_env
 
@@ -63,7 +63,7 @@ module rec EvalInst : EvalI = Eval.Make(struct
 end)
 and Driver : DriverI = struct
 
-  let parse_and_rename (options : driver_options) (lexbuf : Lexing.lexbuf) (scope : RenameScope.t) : NameExpr.expr list * RenameScope.t =
+  let parse_and_rename (options : driver_options) (lexbuf : Lexing.lexbuf) (scope : RenameScope.t) : Renamed.expr list * RenameScope.t =
     Lexing.set_filename lexbuf options.filename;
     let ast = 
       try 
@@ -76,7 +76,7 @@ and Driver : DriverI = struct
     in
     if options.print_ast then begin
       print_endline "~~~~~~~~Parsed AST~~~~~~~~";
-      print_endline (StringExpr.pretty_list ast);
+      print_endline (Parsed.pretty_list ast);
       print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~"
     end
     else ();
@@ -84,7 +84,7 @@ and Driver : DriverI = struct
     let renamed, new_scope = Rename.rename_seq_state scope ast in
     if options.print_renamed then begin
       print_endline "~~~~~~~~Renamed AST~~~~~~~";
-      print_endline (NameExpr.pretty_list renamed);
+      print_endline (Renamed.pretty_list renamed);
       print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~"
     end
     else ();

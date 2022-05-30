@@ -22,7 +22,7 @@ module Loc = struct
 
 end
 
-module Expr (Name : sig
+module Make (Name : sig
   type t
 
   val pretty : t -> string
@@ -178,13 +178,10 @@ module Name = struct
   let compare (x : t) (y : t) : int = Int.compare x.index y.index
 end
 
-module StringExpr = Expr (struct
+module Parsed = Make (struct
   type t = string
 
   let pretty (x : t) = x
 end)
 
-module NameExpr = Expr (Name)
-
-type string_expr = StringExpr.expr
-type name_expr = NameExpr.expr
+module Renamed = Make (Name)

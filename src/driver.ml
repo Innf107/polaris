@@ -65,7 +65,7 @@ and Driver : DriverI = struct
 
   let parse_and_rename (options : driver_options) (lexbuf : Lexing.lexbuf) (scope : RenameScope.t) : Renamed.expr list * RenameScope.t =
     Lexing.set_filename lexbuf options.filename;
-    let ast = 
+    let header, ast = 
       try 
         Parser.main Lexer.token lexbuf 
       with 

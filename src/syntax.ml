@@ -51,7 +51,7 @@ struct
     | Sub of loc * expr * expr              (* e - e *)
     | Mul of loc * expr * expr              (* e * e *)
     | Div of loc * expr * expr              (* e / e *)
-    | Concat of loc * expr * expr           (* e .. e*)
+    | Concat of loc * expr * expr           (* e ~ e*)
     | Equals of loc * expr * expr           (* e == e *)
     | NotEquals of loc * expr * expr        (* e != e *)
     | LE of loc * expr * expr               (* e <= e *)
@@ -77,7 +77,7 @@ struct
     | LetRec of loc * name * name list * expr * expr  (* let rec f(x, .., x) = e*)
     | Assign of loc * name * expr                     (* x = e *)
     (* Scripting capabilities *)
-    | ProgCall of loc * string * expr list  (* /p e₁ .. eₙ *)
+    | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
     (* Async / Await (colorless) *)
     | Async of loc * expr                   (* async e *)
@@ -87,6 +87,15 @@ struct
     | DrawClause of name * expr (* x <- e *)
     | FilterClause of expr            (* e *)
 
+  type flag_def = {
+    flag_var: name
+  ; flags: string list
+  ; arg_count: int
+  }
+
+  type header =
+    | Description of loc * string (* description: ... *)
+    | Options of loc * flag_def list (* options { ... }*)
 
   let rec pretty = function
     | Var (_, x) -> Name.pretty x

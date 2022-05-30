@@ -39,13 +39,15 @@ let loc = Loc.from_pos
 
 %nonassoc PIPE
 
+%token DESCRIPTION OPTIONS AS
+
 %start main
 
-%type <expr list> main
+%type <header list * expr list> main
 
 %%
 main:
-    expr_semi_list EOF { $1 }
+  header* expr_semi_list EOF { ($1, $2) }
 
 ;
 
@@ -143,6 +145,25 @@ list_comp_list:
 list_comp_elem:
   | IDENT LARROW expr { DrawClause ($1, $3) }
   | expr              { FilterClause $1 }
+
+
+
+
+header:
+  | DESCRIPTION COLON STRING SEMI? { Description(loc $startpos $endpos, $3) }
+  | OPTIONS LBRACE options_list RBRACE { Options(loc $startpos $endpos, $3) }
+
+options_list:
+  | option_def SEMI? options_list { $1 :: $3 }
+  | { [] }
+
+option_def:
+  | STRING+ maybe_arg_count AS IDENT { {flag_var = $4; flags = $1; arg_count = $2} }
+
+maybe_arg_count:
+  | LPAREN INT RPAREN { $2 }
+  | { 0 }
+
 
 %%
 

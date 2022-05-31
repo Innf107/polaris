@@ -13,6 +13,7 @@ let loc = Loc.from_pos
 %token <int> INT
 %token <float> FLOAT
 %token LET IN
+%token FUNCDEF
 %token TRUE FALSE
 %token NULL
 %token LAMBDA ARROW
@@ -75,8 +76,8 @@ expr:
   | LAMBDA LPAREN ident_list RPAREN ARROW expr                  { Lambda(loc $startpos $endpos, $3, $6) }                          // \(x, .., x) -> e
   | LET IDENT EQUALS expr IN expr                               { Let (loc $startpos $endpos, $2, $4, $6) }                        // let x = e in e
   | LET IDENT EQUALS expr                                       { LetSeq (loc $startpos $endpos, $2, $4) }                         // let x = e
-  | LET IDENT LPAREN ident_list RPAREN EQUALS expr              { LetRecSeq (loc $startpos $endpos, $2, $4, $7) }                  // let rec f(x, .., x) = e
-  | LET IDENT LPAREN ident_list RPAREN EQUALS expr IN expr      { LetRec (loc $startpos $endpos, $2, $4, $7, $9) }                 // let rec f(x, .., x) = e in e
+  | FUNCDEF IDENT LPAREN ident_list RPAREN EQUALS expr          { LetRecSeq (loc $startpos $endpos, $2, $4, $7) }                  // let rec f(x, .., x) = e
+  | FUNCDEF IDENT LPAREN ident_list RPAREN EQUALS expr IN expr  { LetRec (loc $startpos $endpos, $2, $4, $7, $9) }                 // let rec f(x, .., x) = e in e
   | LBRACE expr_semi_list RBRACE                                { Seq(loc $startpos $endpos, $2) }                                 // {e; ..; e}
   | expr LPAREN expr_comma_list RPAREN                          { App(loc $startpos $endpos, $1, $3) }                             // e(e, .., e)
   | IDENT COLONEQUALS expr                                      { Assign(loc $startpos $endpos, $1, $3)}                           // x = e

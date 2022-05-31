@@ -27,6 +27,7 @@ rule token = parse
 | "!="      { BANGEQUALS }
 | '!' ([^' ' '\t' '\n' '(' ')' '[' ']' '{' '}']+ as cmd) { BANG cmd}
 | "let"     { LET }
+| "≝"    { FUNCDEF }
 | "in"      { IN }
 | "if"      { IF }
 | "then"    { THEN }

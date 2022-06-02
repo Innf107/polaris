@@ -23,7 +23,7 @@ let max z list =
   List.fold_left (fun r x -> if x > r then x else r) z list
 
 let pad_right count padding str =
-  str ^ String.make count padding
+  str ^ String.make (count - String.length str) padding
 
 type void
 

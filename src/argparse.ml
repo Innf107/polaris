@@ -17,7 +17,7 @@ let pretty_flags flags =
   let flag_data = List.map (fun flag -> String.concat ", " flag.aliases, flag.description) flags in
   let max_flag_width = Util.max 0 (List.map (fun (x, _) -> String.length x) flag_data) in
   String.concat "\n    " ("    "
-    :: (List.map (fun (flags, descr) -> Util.pad_right max_flag_width ' ' flags ^ " " ^ descr) flag_data)
+    :: (List.map (fun (flags, descr) -> Util.pad_right (max_flag_width + 1) ' ' flags ^ " " ^ descr) flag_data)
   )
 
 (* TODO *)

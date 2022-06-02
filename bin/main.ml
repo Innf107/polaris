@@ -126,7 +126,10 @@ let handle_errors print_fun f =
     Loc.pretty loc ^ ": Trying to await non-promise: " ^ Value.pretty value
     ^ "\n" ^ pretty_call_trace locs
   )
-  | ArgParseError msg -> print_fun msg
+
+  (* We can safely abort the program, since this can only ever happen when directly
+     running a script *)
+  | ArgParseError msg -> print_endline msg; exit 1
 
 let run_file (options : run_options) (filepath : string) (args : string list) = 
   let _ = match options.backend with

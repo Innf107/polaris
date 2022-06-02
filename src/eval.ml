@@ -729,7 +729,7 @@ end) = struct
 
   let eval_header (env : eval_env) (header : Renamed.header) : eval_env =
     let description = Option.value ~default:"" header.description in
-    let usage = Option.value ~default: "..." header.usage in
+    let usage = Option.value ~default: "[OPTIONS]" header.usage in
 
     let update_option option (env, infos) = 
       let info, env = flag_info_of_flag_def env option in

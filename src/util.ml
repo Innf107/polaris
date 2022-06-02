@@ -19,6 +19,12 @@ let split_at_exact ix list =
   in
   go ix [] list
 
+let max z list =
+  List.fold_left (fun r x -> if x > r then x else r) z list
+
+let pad_right count padding str =
+  str ^ String.make count padding
+
 type void
 
 let absurd (_ : void) = raise (Panic "absurd: impossible argument")

@@ -39,7 +39,7 @@ let loc = Loc.from_pos
 
 %nonassoc PIPE
 
-%token DESCRIPTION OPTIONS AS
+%token USAGE DESCRIPTION OPTIONS AS
 
 %start main
 
@@ -151,7 +151,10 @@ list_comp_elem:
 
 
 header:
-  | header_descr? header_options? { { description = $1; options = Option.value ~default:[] $2 } }
+  | header_usage? header_descr? header_options? { { usage = $1; description = $2; options = Option.value ~default:[] $3 } }
+
+header_usage:
+  | USAGE COLON STRING { $3 }
 
 header_descr:
   | DESCRIPTION COLON STRING { $3 }
@@ -166,7 +169,7 @@ options_list:
 
 
 option_def:
-  | STRING+ maybe_arg_count AS IDENT default_clause? { {flag_var = $4; flags = $1; arg_count = $2; default = $5 } }
+  | STRING+ maybe_arg_count AS IDENT default_clause? descr_clause? { {flag_var = $4; flags = $1; arg_count = $2; default = $5; description = $6 } }
 
 maybe_arg_count:
   | LPAREN INT RPAREN { $2 }
@@ -175,6 +178,8 @@ maybe_arg_count:
 default_clause:
   | EQUALS STRING { $2 }
 
+descr_clause:
+  | COLON STRING { $2 }
 
 %%
 

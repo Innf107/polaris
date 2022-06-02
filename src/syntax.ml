@@ -92,10 +92,12 @@ struct
   ; flags: string list
   ; arg_count: int
   ; default: string option
+  ; description: string option
   }
 
   type header = {
-      description: string option
+      usage: string option
+    ; description: string option
     ; options: flag_def list
     }
 

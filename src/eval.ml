@@ -720,6 +720,7 @@ end) = struct
 
     { aliases = flag_def.flags 
     ; arg_count = flag_def.arg_count
+    ; description = Option.value ~default:"" flag_def.description
     ; action = function
       | [] -> flag_ref := BoolV true
       | [str] -> flag_ref := StringV str
@@ -728,14 +729,21 @@ end) = struct
 
   let eval_header (env : eval_env) (header : Renamed.header) : eval_env =
     let description = Option.value ~default:"" header.description in
-    
+    let usage = Option.value ~default: "..." header.usage in
+
     let update_option option (env, infos) = 
       let info, env = flag_info_of_flag_def env option in
       (env, info::infos)
     in
     let env, infos = List.fold_right update_option header.options (env, []) in
     
-    let args = Argparse.run infos description (fun msg -> raise (EvalError.ArgParseError msg)) env.argv in
+    let prog_info = Argparse.{
+      name = List.hd env.argv
+    ; description
+    ; usage
+    } in
+
+    let args = Argparse.run infos prog_info (fun msg -> raise (EvalError.ArgParseError msg)) env.argv in
 
     { env with argv = (List.hd env.argv :: args) }
 end

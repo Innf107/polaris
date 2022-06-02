@@ -1,17 +1,38 @@
 open Util
 
+type program_info = {
+  description: string
+; usage: string
+; name: string
+}
+
 type flag_info = {
   aliases: string list
 ; arg_count: int
 ; action: string list -> unit
+; description: string
 }
 
-(* TODO *)
-let with_usage description flags msg = msg
+let pretty_flags flags =
+  let flag_data = List.map (fun flag -> String.concat ", " flag.aliases, flag.description) flags in
+  let max_flag_width = Util.max 0 (List.map (fun (x, _) -> String.length x) flag_data) in
+  String.concat "\n    " ("    "
+    :: (List.map (fun (flags, descr) -> Util.pad_right max_flag_width ' ' flags ^ " " ^ descr) flag_data)
+  )
 
-let run : flag_info list -> string -> (string -> void) -> string list -> string list =
-  fun flags description fail_fun args ->
-    let fail_fun msg = absurd (fail_fun (with_usage description flags msg)) in
+(* TODO *)
+let with_usage prog_info flags msg = 
+    msg ^ "\n\n"
+  ^ "Usage: " ^ prog_info.name ^ " " ^ prog_info.usage ^ "\n"
+  ^ (if prog_info.description = "" then "" else prog_info.description ^ "\n")
+  ^ "\n"
+  ^ "Options"
+  ^ pretty_flags flags
+  
+
+let run : flag_info list -> program_info -> (string -> void) -> string list -> string list =
+  fun flags prog_info fail_fun args ->
+    let fail_fun msg = absurd (fail_fun (with_usage prog_info flags msg)) in
     (* TODO: intern this into a map *)
     let get_flag flag = 
       match List.find_opt (fun info -> List.exists (fun x -> String.equal x flag) info.aliases) flags with

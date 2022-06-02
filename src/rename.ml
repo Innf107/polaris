@@ -152,6 +152,7 @@ let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.
     ; flag_var
     ; flags = flag_def.flags
     ; default = flag_def.default
+    ; description = flag_def.description
     }, scope
 
 
@@ -165,7 +166,8 @@ let rename_header (scope : RenameScope.t) (header : Parsed.header): Renamed.head
     | [] -> [], scope
     in
     let options, scope = go scope header.options in
-    { description = header.description
+    { usage = header.usage
+    ; description = header.description
     ; options
     }, scope
 

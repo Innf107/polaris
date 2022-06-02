@@ -19,22 +19,33 @@ let run : flag_info list -> string -> (string -> void) -> string list -> string 
       | None -> fail_fun ("Invalid flag: '" ^ flag ^ "'")
     in
     
-    let rec go = function
-    | (arg::args) when String.starts_with ~prefix:"--" arg ->
-      let info = get_flag arg in
-      begin match Util.split_at_exact info.arg_count args with
-      | None -> fail_fun ("Not enough arguments for flag '" ^ arg ^ "'. Expected " ^ Int.to_string info.arg_count ^ " arguments.")
-      | Some(flag_args, remaining) -> 
-        info.action flag_args;
-        go remaining
-      end
+    let rec go = 
+      let process_flag flag args = 
+        let info = get_flag flag in
+        begin match Util.split_at_exact info.arg_count args with
+        | None -> fail_fun ("Not enough arguments for flag '" ^ flag ^ "'. Expected " ^ Int.to_string info.arg_count ^ " arguments.")
+        | Some(flag_args, remaining) -> 
+          info.action flag_args;
+          go remaining
+        end
+      in
+      function
+      | (arg::args) when String.starts_with ~prefix:"--" arg ->
+        process_flag arg args
 
-    | (arg::args) when String.starts_with ~prefix:"-" arg -> 
-      raise (Panic "Short flags NYI")
+      | ("-"::args) -> "-" :: go args
+      | (arg::args) when String.starts_with ~prefix:"-" arg -> 
+        let first_flag = "-" ^ String.sub arg 1 1 in
+        let remaining = "-" ^ String.sub arg 2 (String.length arg - 2) in
 
-    | (arg::args) ->
-      arg :: go args
-    | [] -> []
+        begin match remaining with
+        | "-" -> process_flag first_flag args
+        | _ -> process_flag first_flag (remaining :: args)
+        end
+
+      | (arg::args) ->
+        arg :: go args
+      | [] -> []
     in
     go args
 

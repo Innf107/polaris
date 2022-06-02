@@ -20,7 +20,7 @@ exception ParseError of loc
 module type EvalI = sig
   val eval : string list -> Renamed.expr list -> value
 
-  val eval_headers : eval_env -> Renamed.header list -> eval_env
+  val eval_header : eval_env -> Renamed.header -> eval_env
 
   val eval_seq_state : eval_env -> Renamed.expr list -> value * eval_env
 
@@ -65,9 +65,9 @@ module rec EvalInst : EvalI = Eval.Make(struct
 end)
 and Driver : DriverI = struct
 
-  let parse_and_rename (options : driver_options) (lexbuf : Lexing.lexbuf) (scope : RenameScope.t) : Renamed.header list * Renamed.expr list * RenameScope.t =
+  let parse_and_rename (options : driver_options) (lexbuf : Lexing.lexbuf) (scope : RenameScope.t) : Renamed.header * Renamed.expr list * RenameScope.t =
     Lexing.set_filename lexbuf options.filename;
-    let headers, ast = 
+    let header, ast = 
       try 
         Parser.main Lexer.token lexbuf 
       with 
@@ -83,7 +83,7 @@ and Driver : DriverI = struct
     end
     else ();
 
-    let renamed_headers, new_scope = Rename.rename_headers scope headers in 
+    let renamed_header, new_scope = Rename.rename_header scope header in 
     let renamed, new_scope = Rename.rename_seq_state new_scope ast in
     if options.print_renamed then begin
       print_endline "~~~~~~~~Renamed AST~~~~~~~";
@@ -91,7 +91,7 @@ and Driver : DriverI = struct
       print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~"
     end
     else ();
-    renamed_headers, renamed, new_scope
+    renamed_header, renamed, new_scope
 
 
   let run_env (options : driver_options) (lexbuf : Lexing.lexbuf) (env : eval_env) (scope : RenameScope.t) : value * eval_env * RenameScope.t = 
@@ -100,9 +100,9 @@ and Driver : DriverI = struct
     | BytecodeBackend -> raise (Util.Panic "The bytecode backend does not support incremental evaluation")
     in
 
-    let renamed_headers, renamed, new_scope = parse_and_rename options lexbuf scope in
+    let renamed_header, renamed, new_scope = parse_and_rename options lexbuf scope in
     
-    let env = EvalInst.eval_headers env renamed_headers in
+    let env = EvalInst.eval_header env renamed_header in
     let res, new_env = EvalInst.eval_seq_state env renamed in
     res, new_env, new_scope
 

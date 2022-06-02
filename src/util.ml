@@ -18,3 +18,7 @@ let split_at_exact ix list =
   | n, xs, [] -> None
   in
   go ix [] list
+
+type void
+
+let absurd (_ : void) = raise (Panic "absurd: impossible argument")

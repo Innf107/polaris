@@ -43,11 +43,12 @@ let loc = Loc.from_pos
 
 %start main
 
-%type <header list * expr list> main
+%type <header * expr list> main
+
 
 %%
 main:
-  header* expr_semi_list EOF { ($1, $2) }
+  header expr_semi_list EOF { ($1, $2) }
 
 ;
 
@@ -150,19 +151,29 @@ list_comp_elem:
 
 
 header:
-  | DESCRIPTION COLON STRING SEMI? { Description(loc $startpos $endpos, $3) }
-  | OPTIONS LBRACE options_list RBRACE { Options(loc $startpos $endpos, $3) }
+  | header_descr? header_options? { { description = $1; options = Option.value ~default:[] $2 } }
+
+header_descr:
+  | DESCRIPTION COLON STRING { $3 }
+
+header_options:
+  | OPTIONS LBRACE options_list RBRACE { $3 }
+
 
 options_list:
   | option_def SEMI? options_list { $1 :: $3 }
   | { [] }
 
+
 option_def:
-  | STRING+ maybe_arg_count AS IDENT { {flag_var = $4; flags = $1; arg_count = $2} }
+  | STRING+ maybe_arg_count AS IDENT default_clause? { {flag_var = $4; flags = $1; arg_count = $2; default = $5 } }
 
 maybe_arg_count:
   | LPAREN INT RPAREN { $2 }
   | { 0 }
+
+default_clause:
+  | EQUALS STRING { $2 }
 
 
 %%

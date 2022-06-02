@@ -145,25 +145,30 @@ and rename_seq scope exprs =
     let res, _ = rename_seq_state scope exprs in
     res
 
-let rec rename_headers : RenameScope.t -> Parsed.header list -> Renamed. header list * RenameScope.t =
-    fun scope -> let open RenameScope in function
-    | [] -> [], scope
-    | Description(loc, descr) :: hs -> 
-        let rest, scope = rename_headers scope hs in
-        Description(loc, descr) :: rest, scope
-    | Options(loc, flag_defs) :: hs -> 
-        let rec rename_flag_defs scope = function
-        | [] -> [], scope
-        | Parsed.{ flag_var; flags; arg_count } :: defs ->
-            let flag_var' = fresh_var scope flag_var in
-            let scope = insert_var flag_var flag_var' scope in
-            let rest, scope = rename_flag_defs scope defs in
-            Renamed.{ flag_var = flag_var'; flags; arg_count } :: rest, scope
-        in 
-        let flag_defs', scope = rename_flag_defs scope flag_defs in
-        let rest, scope = rename_headers scope hs in
-        Options (loc, flag_defs') :: rest, scope
+let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.flag_def * RenameScope.t =
+    let flag_var = RenameScope.fresh_var scope flag_def.flag_var in
+    let scope = RenameScope.insert_var flag_def.flag_var flag_var scope in
+    { arg_count = flag_def.arg_count
+    ; flag_var
+    ; flags = flag_def.flags
+    ; default = flag_def.default
+    }, scope
 
-let rename (headers : Parsed.header list) (exprs : Parsed.expr list): Renamed.header list * Renamed.expr list =
-    let headers', env = rename_headers RenameScope.empty headers in 
+
+
+let rename_header (scope : RenameScope.t) (header : Parsed.header): Renamed.header * RenameScope.t =
+    let rec go scope = function
+    | (flag_def::defs) ->
+        let flag_def, scope = rename_option scope flag_def in
+        let defs, scope = go scope defs in
+        flag_def :: defs, scope
+    | [] -> [], scope
+    in
+    let options, scope = go scope header.options in
+    { description = header.description
+    ; options
+    }, scope
+
+let rename (header : Parsed.header) (exprs : Parsed.expr list): Renamed.header * Renamed.expr list =
+    let headers', env = rename_header RenameScope.empty header in 
     headers', rename_seq env exprs    

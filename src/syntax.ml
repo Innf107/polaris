@@ -91,11 +91,13 @@ struct
     flag_var: name
   ; flags: string list
   ; arg_count: int
+  ; default: string option
   }
 
-  type header =
-    | Description of loc * string (* description: ... *)
-    | Options of loc * flag_def list (* options { ... }*)
+  type header = {
+      description: string option
+    ; options: flag_def list
+    }
 
   let rec pretty = function
     | Var (_, x) -> Name.pretty x

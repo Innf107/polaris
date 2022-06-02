@@ -72,6 +72,8 @@ module EvalError = struct
   exception ModuleNotFound of string * string list
 
   exception AwaitNonPromise of value * loc list
+
+  exception ArgParseError of string
 end  
 
 module Value = struct
@@ -125,6 +127,11 @@ end) = struct
     if (List.compare_lengths vars vals != 0) 
     then raise (EvalError.InvalidNumberOfArguments (vars, vals, loc :: env.call_trace))
     else { env with vars = List.fold_right2 (fun x v r -> VarMap.add x (ref v) r) vars vals env.vars }
+
+  let insert_var : name -> value -> eval_env -> eval_env * value ref =
+    fun var value env ->
+      let var_ref = ref value in
+      { env with vars = VarMap.add var var_ref env.vars }, var_ref
 
   (* Tries to convert a number to a value. Throws an error if it can't *)
   let as_num context loc = function
@@ -699,9 +706,38 @@ end) = struct
 
   let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs
 
-  let eval_headers (env : eval_env) (headers : Renamed.header list) =
+  let flag_info_of_flag_def (env : eval_env) (flag_def : Renamed.flag_def): Argparse.flag_info * eval_env =
+    let default_value = 
+      if flag_def.arg_count = 0 then
+        BoolV false
+      else match flag_def.default with
+      | Some(str) -> StringV(str)
+      | None -> NullV
+    in
+
+    let env, flag_ref = insert_var flag_def.flag_var default_value env in
+
+
+    { aliases = flag_def.flags 
+    ; arg_count = flag_def.arg_count
+    ; action = function
+      | [] -> flag_ref := BoolV true
+      | [str] -> flag_ref := StringV str
+      | strs -> flag_ref := ListV (List.map (fun x -> StringV x) strs)
+    }, env
+
+  let eval_header (env : eval_env) (header : Renamed.header) : eval_env =
+    let description = Option.value ~default:"" header.description in
     
-    raise (Panic "eval_headers NYI")
+    let update_option option (env, infos) = 
+      let info, env = flag_info_of_flag_def env option in
+      (env, info::infos)
+    in
+    let env, infos = List.fold_right update_option header.options (env, []) in
+    
+    let args = Argparse.run infos description (fun msg -> raise (EvalError.ArgParseError msg)) env.argv in
+
+    { env with argv = (List.hd env.argv :: args) }
 end
 
 (* Note [left-to-right evaluation]

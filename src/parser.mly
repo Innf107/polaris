@@ -48,7 +48,7 @@ let loc = Loc.from_pos
 
 %%
 main:
-  header expr_semi_list EOF { ($1, $2) }
+  header SEMI* expr_semi_list EOF { ($1, $3) }
 
 ;
 
@@ -123,7 +123,7 @@ expr_comma_list:
   | { [] }
 
 expr_semi_list:
-  | expr SEMI expr_semi_list { $1 :: $3 }
+  | expr SEMI+ expr_semi_list { $1 :: $3 }
   | expr { [$1] }
   | { [] }
 
@@ -164,7 +164,7 @@ header_options:
 
 
 options_list:
-  | option_def SEMI? options_list { $1 :: $3 }
+  | option_def SEMI* options_list { $1 :: $3 }
   | { [] }
 
 

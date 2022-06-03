@@ -1,5 +1,6 @@
 
-exception TODO
+(* Should be used as `raise (TODO __POS__)` *)
+exception TODO of (string * int * int * int)
 exception Panic of string
 
 type ('a, 'b) either =

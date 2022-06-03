@@ -5,12 +5,19 @@ open Parser
 exception LexError of string
 
 
-let next_line lexbuf =
+let next_line (cont : lexbuf -> Parser.token) (lexbuf : lexbuf) : Parser.token =
   let pos = lexbuf.lex_curr_p in
   lexbuf.lex_curr_p <-
     { pos with pos_bol = lexbuf.lex_curr_pos;
                pos_lnum = pos.pos_lnum + 1
-    }
+    };
+  
+  let next_char = Bytes.get lexbuf.lex_buffer lexbuf.lex_curr_pos in
+  
+  if String.contains " \t\n}" next_char then
+    cont lexbuf
+  else
+    SEMI
 }
 
 let digit = ['0'-'9']
@@ -19,8 +26,8 @@ let newline = '\n' | "\r\n"
 
 rule token = parse
 | [ ' ' '\t' ]           { token lexbuf }
-| newline                { next_line lexbuf; token lexbuf }
-| '#' | '#' [^'{'] [^'\n']*? (newline | eof) { next_line lexbuf; token lexbuf } (* TODO: Correctly handle \r\n *)
+| newline                { next_line token lexbuf }
+| '#' | '#' [^'{'] [^'\n']*? (newline | eof) { next_line token lexbuf } (* TODO: Correctly handle \r\n *)
 | '-'? digit+ as lit_string { INT (int_of_string lit_string)}
 | '-'? digit+ '.' digit+ as lit_string { FLOAT (float_of_string lit_string) }
 | '!' '"' ([^'"']+ as cmd)'"' { BANG cmd }

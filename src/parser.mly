@@ -151,7 +151,7 @@ list_comp_elem:
 
 
 header:
-  | header_usage? header_descr? header_options? { { usage = $1; description = $2; options = Option.value ~default:[] $3 } }
+  | header_usage? SEMI* header_descr? SEMI* header_options? { { usage = $1; description = $3; options = Option.value ~default:[] $5 } }
 
 header_usage:
   | USAGE COLON STRING { $3 }

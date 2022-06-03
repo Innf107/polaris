@@ -1,4 +1,4 @@
-open Ast
+open Syntax
 open Util
 
 module VarMap = Map.Make (Name)
@@ -19,7 +19,7 @@ and value =
   (* The closure environment has to be lazy to
      support recursive lets, since the definition of a recursive function has
      to be stored in its own closure, which also stores its on environment, etc.*)
-  | ClosureV of eval_env lazy_t * name list * name_expr
+  | ClosureV of eval_env lazy_t * name list * Renamed.expr
   (* PrimOps should be mostly indistinguishable from regular closures.
      The only exception is pretty printing, where primops are printed as
      "<primative: name>" instead of <closure(args)>
@@ -37,6 +37,8 @@ and value =
   | ListV of value list
   | MapV of (value MapVImpl.t)
   | NullV
+  (* Represents a concurrent thread of execution *)
+  | PromiseV of value Promise.t
 
 module EvalError = struct
   exception DynamicVarNotFound of name * loc list
@@ -52,16 +54,26 @@ module EvalError = struct
     Maybe these could even just be contract failures, if those ever
     become a feature? *)
   exception PrimOpArgumentError of string * value list * string * loc list
+  exception PrimOpError of string * string * loc list
 
   exception InvalidOperatorArgs of string * value list * loc list
 
+  exception NonNumberInRangeBounds of value * value * loc list
+
+  exception NonBoolInListComp of value * loc list
+  exception NonListInListComp of value * loc list
+
   exception InvalidProcessArg of value * loc list
 
-  exception NonProgCallInPipe of NameExpr.expr * loc list
+  exception NonProgCallInPipe of Renamed.expr * loc list
 
   exception RuntimeError of string * loc list
 
   exception ModuleNotFound of string * string list
+
+  exception AwaitNonPromise of value * loc list
+
+  exception ArgParseError of string
 end  
 
 module Value = struct
@@ -69,7 +81,7 @@ module Value = struct
 
   let rec pretty (x : t) : string =
     match x with
-    | StringV s -> s
+    | StringV s -> "\"" ^ s ^ "\""
     | NumV n -> 
       if Float.is_integer n
       then string_of_int (int_of_float n)
@@ -85,12 +97,18 @@ module Value = struct
     | MapV kvs -> 
       let kv_list = List.of_seq (MapVImpl.to_seq kvs) in
       "#{" ^ String.concat ", " (List.map (fun (k, v) -> k ^ ": " ^ pretty v) kv_list) ^ "}"
+    | PromiseV p ->
+      match Promise.peek p with
+      | Finished value -> "<promise: " ^ pretty value ^ ">"
+      | Failed _ex -> "<promise: <<failure>>>" 
+      | Pending -> "<promise: <<pending>>>"
 
   let rec as_args (fail : t -> 'a) (x : t) : string list =
     match x with
-    | StringV _ | NumV _ | BoolV _ -> [pretty x]
+    | StringV v -> [v]
+    | NumV _ | BoolV _ -> [pretty x]
     (* TODO: Should Maps be converted to JSON? *)
-    | ClosureV _ | PrimOpV _ | UnitV | NullV | MapV _ -> fail x
+    | ClosureV _ | PrimOpV _ | UnitV | NullV | MapV _ | PromiseV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
@@ -109,6 +127,11 @@ end) = struct
     if (List.compare_lengths vars vals != 0) 
     then raise (EvalError.InvalidNumberOfArguments (vars, vals, loc :: env.call_trace))
     else { env with vars = List.fold_right2 (fun x v r -> VarMap.add x (ref v) r) vars vals env.vars }
+
+  let insert_var : name -> value -> eval_env -> eval_env * value ref =
+    fun var value env ->
+      let var_ref = ref value in
+      { env with vars = VarMap.add var var_ref env.vars }, var_ref
 
   (* Tries to convert a number to a value. Throws an error if it can't *)
   let as_num context loc = function
@@ -163,27 +186,19 @@ end) = struct
       Unix.close fd;
       close_all fds
 
-  let rec eval_expr (env : eval_env) (expr : name_expr) : value =
-    let open NameExpr in
+  let rec eval_expr (env : eval_env) (expr : Renamed.expr) : value =
+    let open Renamed in
     match expr with
     (* The name index -1 specifies primops *)
     | Var (loc, x) ->
         if x.index == -1 
         then PrimOpV x.name
         else !(lookup_var env loc x)
-    | App (loc, f, args) -> (
-        match eval_expr env f with
-        | ClosureV (clos_env, params, body) ->
-            (* Function arguments are evaluated left to right *)
-            let arg_vals = List.map (eval_expr env) args in
-            let updated_clos_env = insert_vars params arg_vals (Lazy.force clos_env) loc in
-            (* The call trace is extended and carried over to the closure environment *)
-            eval_expr {updated_clos_env with call_trace = loc :: env.call_trace} body
-        | PrimOpV prim_name ->
-            let arg_vals = List.map (eval_expr env) args in
-            eval_primop {env with call_trace = loc :: env.call_trace} prim_name arg_vals loc
-        | x ->
-            raise (EvalError.TryingToApplyNonFunction (x, loc :: env.call_trace)))
+    | App (loc, f, args) ->
+      (* See Note [left-to-right evaluation] *)
+      let f_val = eval_expr env f in
+      let arg_vals = List.map (eval_expr env) args in
+      eval_app env loc f_val arg_vals
     | Lambda (_, params, e) -> ClosureV (lazy env, params, e)
     
     | StringLit (_, s) -> StringV s
@@ -214,7 +229,7 @@ end) = struct
         begin match eval_expr env key_expr with
         | StringV key -> begin match MapVImpl.find_opt key map with
                          | Some value -> value
-                         | None -> raise (EvalError.MapDoesNotContain (map, key, loc :: env.call_trace))
+                         | None -> NullV
                          end
         | value -> raise (EvalError.InvalidKey (value, map, loc :: env.call_trace))
         end
@@ -252,9 +267,11 @@ end) = struct
       let v2 = eval_expr env e2 in
       begin match v1, v2 with
       | ListV xs, ListV ys -> ListV (xs @ ys)
+      | MapV xs, MapV ys -> MapV (MapVImpl.union (fun _ _ y -> Some y) xs ys)
       | StringV s1, StringV s2 -> StringV (s1 ^ s2)
       | StringV s1, NumV _ -> StringV(s1 ^ Value.pretty v2)
-      | _, _ -> raise (EvalError.InvalidOperatorArgs("..", [v1; v2], loc :: env.call_trace))
+      | NumV _, StringV s2 -> StringV(Value.pretty v1 ^ s2)
+      | _, _ -> raise (EvalError.InvalidOperatorArgs("~", [v1; v2], loc :: env.call_trace))
       end 
 
     | Equals (_, e1, e2) -> 
@@ -320,7 +337,23 @@ end) = struct
         | BoolV b -> BoolV (not b)
         | value -> raise (EvalError.NotAValueOfType("bool", value, "In the argument of a 'not' expression", loc :: env.call_trace))
         end
-  
+    
+    | Range(loc, e1, e2) ->
+      let start_val = eval_expr env e1 in
+      let end_val = eval_expr env e2 in
+      begin match start_val, end_val with
+      | NumV start_num, NumV end_num ->
+        let rec build_range acc x = 
+          if x < start_num then
+            acc
+          else
+            build_range (NumV x::acc) (x -. 1.)
+          in
+        ListV (build_range [] end_num) 
+      | _ -> raise (EvalError.NonNumberInRangeBounds(start_val, end_val, loc :: env.call_trace))
+      end
+    | ListComp (loc, result_expr, comp_exprs) ->
+      ListV (eval_list_comp env loc result_expr comp_exprs)
     | If (loc, e1, e2, e3) ->
       let v1 = eval_expr env e1 in
       let context = "In the condition of an if expression" in
@@ -341,10 +374,6 @@ end) = struct
       let x_ref = lookup_var env loc x  in
       x_ref := (eval_expr env e1);
       UnitV
-    | Print (_, expr) ->
-      let value = eval_expr env expr in
-      print_endline (Value.pretty value);
-      UnitV
 
     | ProgCall (loc, prog, args) as expr -> 
       eval_expr env (Pipe (loc, [expr]))
@@ -356,7 +385,7 @@ end) = struct
     | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
       let progs = progs_of_exprs env exprs in
       let in_chan = Pipe.compose_in progs in
-      StringV (In_channel.input_all in_chan)
+      StringV (String.trim (In_channel.input_all in_chan))
 
     | Pipe (loc, (expr :: exprs)) ->
       let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
@@ -366,12 +395,35 @@ end) = struct
       let in_chan = Pipe.compose_in_out progs (fun out_chan ->
           List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
         ) in
-      StringV (In_channel.input_all in_chan)
+      StringV (String.trim (In_channel.input_all in_chan))
+    | Async (loc, expr) ->
+      let promise = Promise.create begin fun _ ->
+        eval_expr env expr
+      end in
+      PromiseV promise
+    | Await (loc, expr) ->
+      match eval_expr env expr with
+      | PromiseV p -> 
+        Promise.await p
+      | value -> raise (EvalError.AwaitNonPromise (value, loc :: env.call_trace))
+
+  and eval_app env loc fun_v arg_vals = 
+    match fun_v with
+    | ClosureV (clos_env, params, body) ->
+        (* Function arguments are evaluated left to right *)
+        let updated_clos_env = insert_vars params arg_vals (Lazy.force clos_env) loc in
+        (* The call trace is extended and carried over to the closure environment *)
+        eval_expr {updated_clos_env with call_trace = loc :: env.call_trace} body
+    
+    | PrimOpV prim_name ->
+        eval_primop {env with call_trace = loc :: env.call_trace} prim_name arg_vals loc
+    | x ->
+        raise (EvalError.TryingToApplyNonFunction (x, loc :: env.call_trace))
 
 
 
   (* This takes a continuation argument in order to stay mutually tail recursive with eval_expr *)
-  and eval_seq_cont : 'r. eval_env -> name_expr list -> (eval_env -> (name_expr, value) either -> 'r) -> 'r =
+  and eval_seq_cont : 'r. eval_env -> Renamed.expr list -> (eval_env -> (Renamed.expr, value) either -> 'r) -> 'r =
     fun env exprs cont ->
     match exprs with
     | [] -> cont env (Right UnitV)
@@ -409,7 +461,7 @@ end) = struct
         let _ = eval_expr env e in
         eval_seq_cont env exprs cont
 
-  and eval_seq (env : eval_env) (exprs : name_expr list) : value = 
+  and eval_seq (env : eval_env) (exprs : Renamed.expr list) : value = 
     eval_seq_cont env exprs 
       (fun env expr_or_val -> 
         match expr_or_val with
@@ -418,16 +470,44 @@ end) = struct
         )
 
   
-  and eval_seq_state (env : eval_env) (exprs : name_expr list) : value * eval_env = 
+  and eval_seq_state (env : eval_env) (exprs : Renamed.expr list) : value * eval_env = 
     eval_seq_cont env exprs 
       (fun env expr_or_val -> 
         match expr_or_val with 
         | Left expr -> (eval_expr env expr, env)
         | Right value -> (value, env))
 
+  (* TODO: This should probably be tail recursive if possible (probably via CPS) *)
+  and eval_list_comp env loc result_expr = function
+    | Renamed.FilterClause expr :: comps -> 
+      begin match eval_expr env expr with
+      | BoolV false -> []
+      | BoolV true -> eval_list_comp env loc result_expr comps
+      | v -> raise (EvalError.NonBoolInListComp (v, loc :: env.call_trace))
+      end
+    | DrawClause (name, expr) :: comps ->
+      begin match eval_expr env expr with
+      | ListV values ->
+        let eval_with_val v =
+          let env' = insert_vars [name] [v] env loc in
+          eval_list_comp env' loc result_expr comps
+        in
+        List.concat_map eval_with_val values
+      | v -> raise (EvalError.NonListInListComp (v, loc :: env.call_trace))
+      end
+    | [] -> 
+      [eval_expr env result_expr]
+
   and eval_primop env op args loc = let open EvalError in
     (* TODO: intern primop names *)
     match op with
+    | "print" ->
+      let pretty_print = function
+      | StringV str -> str
+      | x -> Value.pretty x
+      in
+      print_endline (String.concat " " (List.map pretty_print args));
+      UnitV
     | "head" -> begin match args with
                 | [ListV (head::tail)] -> head
                 | [ListV []] -> raise (PrimOpArgumentError ("head", args, "Empty list", loc :: env.call_trace))
@@ -456,9 +536,9 @@ end) = struct
                   | _ -> raise (PrimOpArgumentError ("require", args, "Expected a single string argument", loc :: env.call_trace))
                   end
     | "lines" -> begin match args with
-                | [arg] -> 
-                  let context = "Trying to apply 'lines'" in
-                  ListV (List.map (fun s -> StringV s) (String.split_on_char '\n' (as_string context (loc :: env.call_trace) arg)))
+                | [StringV ""] -> ListV []
+                | [StringV arg] -> 
+                  ListV (List.map (fun s -> StringV s) (String.split_on_char '\n' arg))
                 | _ -> raise (PrimOpArgumentError ("lines", args, "Expected a single string", loc :: env.call_trace))
                 end
     | "replace" -> begin match args with
@@ -471,23 +551,48 @@ end) = struct
                   | _ -> raise (PrimOpArgumentError ("replace", args, "Expected three strings", loc :: env.call_trace))
                   end
     | "regexpReplace" -> begin match args with
-                  | [needle_v; repl_v; str_v] -> 
-                    let context = "Trying to apply 'regexpReplace'" in
-                    let needle = as_string context (loc :: env.call_trace) needle_v in 
-                    let repl =  as_string context (loc :: env.call_trace) repl_v in
-                    let str = as_string context (loc :: env.call_trace) str_v in
-                    StringV (Str.global_replace (Str.regexp needle) repl str)
+                  | [StringV pattern; StringV repl; StringV str] -> 
+                    StringV (Pcre.replace ~pat:pattern ~templ:repl str)
                   | _ -> raise (PrimOpArgumentError ("regexpReplace", args, "Expected three strings", loc :: env.call_trace))
                   end
     | "regexpMatch" -> begin match args with
                   | [StringV pattern; StringV arg] ->
-                    let found = Str.string_match (Str.regexp pattern) arg 0 in
-                    if found then
-                      (* Why the hell does OCaml use global state for regex? *)
-                      StringV (Str.matched_string arg)
-                    else
-                      NullV
-                  | _ -> raise (PrimOpArgumentError ("regexpMatch", args, "Expected two strings", loc :: env.call_trace))
+                    let regexp = Pcre.regexp pattern in
+                    begin try
+                      let results = Pcre.exec_all ~rex:regexp ~flags:[] arg in
+                      ListV (List.map (fun x -> StringV (Pcre.get_substring x 0)) (Array.to_list results))
+                    with
+                    | Not_found -> ListV []
+                    end
+
+                  | _ -> raise (PrimOpArgumentError ("regexpMatch", args, "Expected (string, string)", loc :: env.call_trace))
+                  end
+    | "regexpTransform" -> begin match args with
+                  | [StringV pattern; transformClos; StringV str_v] ->
+                    begin try
+                      let results = Pcre.exec_all ~pat:pattern str_v in
+                      let rec go pos = function
+                      | (substr::results) ->
+                        let start_pos, end_pos = Pcre.get_substring_ofs substr 0 in
+
+                        let matched = Pcre.get_substring substr 0 in
+
+                        let replacement = match eval_app env loc transformClos [StringV matched] with
+                        | StringV repl -> repl
+                        | value -> raise (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace))
+                        in
+
+                        let start_string = String.sub str_v pos (start_pos - pos) in 
+
+
+                        start_string ^ replacement ^ go end_pos results
+                      | [] -> String.sub str_v pos (String.length str_v - pos)
+                      in
+                      StringV (go 0 (Array.to_list results))
+                    with
+                    | Not_found -> StringV str_v
+                    end
+                  | _ -> raise (PrimOpArgumentError ("regexpTransform", args, "Expected (string, function, string)", loc :: env.call_trace))
                   end
     | "writeFile" -> begin match args with
                   | [path_v; content_v] ->
@@ -546,10 +651,10 @@ end) = struct
                 | _ -> raise (PrimOpArgumentError ("exit", args, "Expected an integer", loc :: env.call_trace))
                 end
     | "toString" -> begin match args with
-                | [NumV arg] -> 
+                | [arg] -> 
                   (* We have to use `Value.pretty` instead of `Float.to_string`, since
                      the latter always appends a trailing dot. *)
-                  StringV (Value.pretty (NumV arg))
+                  StringV (Value.pretty arg)
                 | _ -> raise (PrimOpArgumentError ("toString", args, "Expected a number", loc :: env.call_trace))
                 end            
     | "getArgv" -> begin match args with
@@ -568,8 +673,18 @@ end) = struct
                     MapV (MapVImpl.add key value map)
                   | _ -> raise(PrimOpArgumentError ("insert", args, "Expected a string, a value and a map", loc :: env.call_trace))
                   end
+    | "mapToList" -> begin match args with
+                  | [MapV map] ->
+                    ListV (List.map (fun (k, v) -> ListV [StringV k; v]) (MapVImpl.bindings map))
+                  | _ -> raise(PrimOpArgumentError ("mapToList", args, "Expected a single map", loc :: env.call_trace))
+                  end
     | "fail" -> begin match args with
                 | [StringV msg] -> raise (RuntimeError (msg, loc :: env.call_trace))
+                | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))
+                end
+    | "scriptLocal" -> begin match args with
+                | [StringV path] -> 
+                  StringV (Filename.dirname (List.hd env.argv) ^ "/" ^ path)
                 | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))
                 end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
@@ -580,7 +695,7 @@ end) = struct
       let arg_strings = List.concat_map (fun arg -> Value.as_args fail (eval_expr env arg)) args in
       (progName, arg_strings) :: progs_of_exprs env exprs
     | expr :: exprs -> 
-      raise (EvalError.NonProgCallInPipe (expr, NameExpr.get_loc expr :: env.call_trace))
+      raise (EvalError.NonProgCallInPipe (expr, Renamed.get_loc expr :: env.call_trace))
     | [] -> []
 
   let empty_eval_env (argv: string list): eval_env = {
@@ -589,7 +704,48 @@ end) = struct
     call_trace = []
   }
 
-  let eval (argv : string list) (exprs : name_expr list) : value = eval_seq (empty_eval_env argv) exprs
+  let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs
+
+  let flag_info_of_flag_def (env : eval_env) (flag_def : Renamed.flag_def): Argparse.flag_info * eval_env =
+    let default_value = 
+      if flag_def.arg_count = 0 then
+        BoolV false
+      else match flag_def.default with
+      | Some(str) -> StringV(str)
+      | None -> NullV
+    in
+
+    let env, flag_ref = insert_var flag_def.flag_var default_value env in
+
+
+    { aliases = flag_def.flags 
+    ; arg_count = flag_def.arg_count
+    ; description = Option.value ~default:"" flag_def.description
+    ; action = function
+      | [] -> flag_ref := BoolV true
+      | [str] -> flag_ref := StringV str
+      | strs -> flag_ref := ListV (List.map (fun x -> StringV x) strs)
+    }, env
+
+  let eval_header (env : eval_env) (header : Renamed.header) : eval_env =
+    let description = Option.value ~default:"" header.description in
+    let usage = Option.value ~default: "[OPTIONS]" header.usage in
+
+    let update_option option (env, infos) = 
+      let info, env = flag_info_of_flag_def env option in
+      (env, info::infos)
+    in
+    let env, infos = List.fold_right update_option header.options (env, []) in
+    
+    let prog_info = Argparse.{
+      name = List.hd env.argv
+    ; description
+    ; usage
+    } in
+
+    let args = Argparse.run infos prog_info (fun msg -> raise (EvalError.ArgParseError msg)) env.argv in
+
+    { env with argv = (List.hd env.argv :: args) }
 end
 
 (* Note [left-to-right evaluation]

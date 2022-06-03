@@ -1,11 +1,11 @@
-open Ast
+open Syntax
 open Util
 
 module RenameMap = Map.Make(String)
 
 module RenameError = struct
     exception VarNotFound of string * loc
-    exception LetSeqInNonSeq of StringExpr.expr * loc
+    exception LetSeqInNonSeq of Parsed.expr * loc
 end
 
 module RenameScope = struct
@@ -31,7 +31,7 @@ module RenameScope = struct
 end
 
 
-let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = let open RenameScope in
+let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
     match expr with 
     | Var (loc, var_name) ->
         if Primops.is_primop var_name
@@ -72,6 +72,21 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
     | And(loc, e1, e2)   -> And(loc, rename_expr scope e1, rename_expr scope e2)
     | Not(loc, expr)     -> Not(loc, rename_expr scope expr)
 
+    | Range(loc, start_expr, end_expr) -> Range(loc, rename_expr scope start_expr, rename_expr scope end_expr)
+    | ListComp(loc, result_expr, comp_exprs) ->
+        let rec rename_comp scope renamed_comp_exprs_rev = function
+        | [] -> Renamed.ListComp(loc, rename_expr scope result_expr, List.rev renamed_comp_exprs_rev)
+        | Parsed.FilterClause expr :: comps ->
+            let expr' = rename_expr scope expr in
+            rename_comp scope (FilterClause expr' :: renamed_comp_exprs_rev) comps
+        | Parsed.DrawClause (name, expr) :: comps -> 
+            let expr' = rename_expr scope expr in
+            let name' = fresh_var scope name in
+            let scope' = insert_var name name' scope in
+            rename_comp scope' (DrawClause (name', expr') :: renamed_comp_exprs_rev) comps
+        in
+        rename_comp scope [] comp_exprs
+
     | If(loc, e1, e2, e3) -> If(loc, rename_expr scope e1, rename_expr scope e2, rename_expr scope e3)
 
     | Seq (loc, es) -> Seq (loc, rename_seq scope es)
@@ -94,14 +109,16 @@ let rec rename_expr (scope : RenameScope.t) (expr : string_expr): name_expr = le
         let x' = lookup_var scope loc x in
         Assign (loc, x', rename_expr scope e)
 
-    | Print (loc, e) -> Print (loc, rename_expr scope e)
-
     | ProgCall (loc, p, args) ->
         ProgCall (loc, p, List.map (rename_expr scope) args)
     | Pipe (loc, exprs) ->
         Pipe (loc, List.map (rename_expr scope) exprs)
+    | Async (loc, expr) ->
+        Async (loc, rename_expr scope expr)
+    | Await (loc, expr) ->
+        Await (loc, rename_expr scope expr)
 
-and rename_seq_state (scope : RenameScope.t) (exprs : string_expr list) : name_expr list * RenameScope.t = let open RenameScope in
+and rename_seq_state (scope : RenameScope.t) (exprs : Parsed.expr list) : Renamed.expr list * RenameScope.t = let open RenameScope in
     match exprs with
     | (LetSeq (loc, x, e) :: exprs) -> 
         let x' = fresh_var scope x in
@@ -128,5 +145,32 @@ and rename_seq scope exprs =
     let res, _ = rename_seq_state scope exprs in
     res
 
-let rename (exprs : string_expr list): name_expr list =
-    rename_seq RenameScope.empty exprs    
+let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.flag_def * RenameScope.t =
+    let flag_var = RenameScope.fresh_var scope flag_def.flag_var in
+    let scope = RenameScope.insert_var flag_def.flag_var flag_var scope in
+    { arg_count = flag_def.arg_count
+    ; flag_var
+    ; flags = flag_def.flags
+    ; default = flag_def.default
+    ; description = flag_def.description
+    }, scope
+
+
+
+let rename_header (scope : RenameScope.t) (header : Parsed.header): Renamed.header * RenameScope.t =
+    let rec go scope = function
+    | (flag_def::defs) ->
+        let flag_def, scope = rename_option scope flag_def in
+        let defs, scope = go scope defs in
+        flag_def :: defs, scope
+    | [] -> [], scope
+    in
+    let options, scope = go scope header.options in
+    { usage = header.usage
+    ; description = header.description
+    ; options
+    }, scope
+
+let rename (header : Parsed.header) (exprs : Parsed.expr list): Renamed.header * Renamed.expr list =
+    let headers', env = rename_header RenameScope.empty header in 
+    headers', rename_seq env exprs    

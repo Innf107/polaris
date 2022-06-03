@@ -1,5 +1,5 @@
-open Ast
-open NameExpr
+open Syntax
+open Renamed
 
 open Util
 

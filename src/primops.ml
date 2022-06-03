@@ -1,6 +1,7 @@
 module PrimOpNameSet = Set.Make(String)
 
 let primops = PrimOpNameSet.of_list [
+  "print";
   "head";
   "tail";
   "cons";
@@ -9,6 +10,7 @@ let primops = PrimOpNameSet.of_list [
   "replace";
   "regexpReplace";
   "regexpMatch";
+  "regexpTransform";
   "writeFile";
   "parseInt";
   "parseNum";
@@ -20,7 +22,9 @@ let primops = PrimOpNameSet.of_list [
   "getArgv";
   "getEnv";
   "insert";
+  "mapToList";
   "fail";
+  "scriptLocal";
 ]
 
 let is_primop name = PrimOpNameSet.mem name primops

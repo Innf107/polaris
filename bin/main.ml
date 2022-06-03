@@ -1,5 +1,5 @@
 open Polaris
-open Polaris.Ast
+open Polaris.Syntax
 open Polaris.Eval
 open Polaris.Driver
 
@@ -15,7 +15,7 @@ let warning (message : string) =
   print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 
 let repl_error (message : string) = 
-  print_endline ("\x1b[38;2;255;0;0mERROR\x1b[0m:\n" ^ message);
+  print_endline ("\x1b[38;2;255;0;0m\x02ERROR\x1b[0m\x02:\n" ^ message);
 
 type run_options = {
   print_ast : bool;
@@ -39,7 +39,7 @@ let handle_errors print_fun f =
   | VarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Variable not found: '" ^ x ^ "'")
   | LetSeqInNonSeq (expr, loc) -> print_fun (
         Loc.pretty loc ^ ": Let expression without 'in' found outside a sequence expression.\n"
-      ^ "    Expression: " ^ StringExpr.pretty expr
+      ^ "    Expression: " ^ Parsed.pretty expr
       )
   (* EvalError *)
   | DynamicVarNotFound (x, loc::locs) -> print_fun (
@@ -91,13 +91,26 @@ let handle_errors print_fun f =
                       ^ "    Arguments: " ^ Value.pretty (ListV vals)
                       ^ "\n" ^ pretty_call_trace locs
     )
+  | NonNumberInRangeBounds (start_val, end_val, loc::locs) -> print_fun (
+      Loc.pretty loc ^ ": Non-number in range bounds.\n"
+                     ^ "    Range: [" ^ Value.pretty start_val ^ " .. " ^ Value.pretty end_val ^ "]"
+                     ^ "\n" ^ pretty_call_trace locs
+    )
+  | NonBoolInListComp (value, loc::locs) -> print_fun (
+    Loc.pretty loc ^ ": Non-boolean in list comprehension condition: " ^ Value.pretty value
+                   ^ "\n" ^ pretty_call_trace locs
+  )
+  | NonListInListComp (value, loc::locs) -> print_fun (
+    Loc.pretty loc ^ ": Trying to draw from a non-list in a list comprehension: " ^ Value.pretty value
+                   ^ "\n" ^ pretty_call_trace locs
+  )
   | InvalidProcessArg (value, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Argument cannot be passed to an external process in an !-Expression.\n"
                      ^ "    Argument: " ^ Value.pretty value
                      ^ "\n" ^ pretty_call_trace locs
     )
   | NonProgCallInPipe (expr, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ NameExpr.pretty expr
+      Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ Renamed.pretty expr
       ^ "\n" ^ pretty_call_trace locs
     )
   | RuntimeError (msg, loc::locs) -> print_fun (
@@ -109,6 +122,14 @@ let handle_errors print_fun f =
     ^ "Tried paths:"
     ^ "\n    " ^ String.concat "\n    " triedPaths
   )
+  | AwaitNonPromise (value, loc::locs) -> print_fun (
+    Loc.pretty loc ^ ": Trying to await non-promise: " ^ Value.pretty value
+    ^ "\n" ^ pretty_call_trace locs
+  )
+
+  (* We can safely abort the program, since this can only ever happen when directly
+     running a script *)
+  | ArgParseError msg -> print_endline msg; exit 1
 
 let run_file (options : run_options) (filepath : string) (args : string list) = 
   let _ = match options.backend with
@@ -141,11 +162,12 @@ let run_repl (options : run_options) : unit =
     ; print_renamed = options.print_renamed
     ; backend = options.backend
     } in
+  print_endline "Welcome to Polaris! Press Ctrl+D or type \"exit(0)\" to exit.";
   let rec go env scope =
     try
       handle_errors (fun msg -> repl_error msg; go env scope)
         (fun _ -> 
-          let prompt = "\x1b[1;36mλ>\x1b[0m " in
+          let prompt = "\x1b[38;5;160m\x02λ>\x1b[0m\x02 " in
           match Readline.readline prompt with
           | None -> exit 0
           | Some input -> 
@@ -164,32 +186,54 @@ let run_repl (options : run_options) : unit =
 
   
 
-let usage_message = "usage: polaris [options] [FILE]"
+let usage_message = 
+  "Usage: polaris [options] [file] [program options]
+
+      --backend         Select the interpreter backend. Possible values: eval, bytecode (WIP)
+      --print-ast       Print the parsed abstract syntax tree. 
+                        This is only useful if you are trying to debug the interpreter
+      --print-renamed   Print the renamed syntax tree.
+                        This is only useful if you are trying to debug the interpreter
+  "
+
+let fail_usage : 'a. string -> 'a =
+  fun msg ->
+    print_endline (msg ^ "\n\n" ^ usage_message);
+    exit 1
+
+let parse_args () : run_options * string list =
+  let default_options : run_options = {
+      print_ast = false;
+      print_renamed = false;
+      backend = EvalBackend;
+  } in
+  let rec go options = function
+  | ("--help" :: args) ->
+    print_endline usage_message;
+    exit 0
+  | ("--print-ast" :: args) -> 
+    go ({options with print_ast = true}) args
+  | ("--print-renamed" :: args) -> 
+    go ({options with print_renamed = true}) args
+  | ("--backend" :: "eval" :: args) ->
+    go ({options with backend = EvalBackend}) args
+  | ("--backend" :: "bytecode" :: args) ->
+    go ({options with backend = BytecodeBackend}) args
+  | ("--backend" :: backend :: args) ->
+    fail_usage ("Invalid backend '" ^ backend ^ "'. Possibble values: eval, bytecode (WIP)")
+  | ["--backend"] ->
+    fail_usage ("Missing argument for option '--backend'. Possible values: eval, bytecode (WIP)")
+  | (option :: args) when String.starts_with ~prefix:"-" option ->
+    fail_usage ("Invalid option: '" ^ option ^ "'.")
+  | args -> (options, args) 
+  in
+  go default_options (List.tl (Array.to_list Sys.argv))
 
 
 let () =
-  let args = ref [] in
-  let anon_fun x = args := x :: !args in
 
-  let print_ast = ref false in
-  let print_renamed = ref false in
-  let backend = ref "eval" in
+  let options, args = parse_args () in
 
-  let speclist = [
-    ("--print-ast", Arg.Set print_ast, "Print the parsed syntax tree before renaming");
-    ("--print-renamed", Arg.Set print_renamed, "Print the renamed syntax tree before evaluation");
-    ("--backend", Arg.Set_string backend, "The backend used for evaluation. Possible values: 'eval', 'bytecode'")
-  ] in
-  Arg.parse speclist anon_fun usage_message;
-  
-  let options = {
-      print_ast = !print_ast;
-      print_renamed = !print_renamed;
-      backend = match !backend with
-      | "eval" -> EvalBackend
-      | "bytecode" -> BytecodeBackend
-      | _ -> fatal_error ("Invalid or unsupported backend: '" ^ !backend ^ "'")
-    } in
-  match List.rev !args with
+  match args with
   | [] -> run_repl options
   | (filepath :: args) -> ignore (run_file options filepath args)

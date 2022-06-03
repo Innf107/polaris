@@ -1,4 +1,4 @@
-open Ast
+open Syntax
 
 type op =
   (* locals *)

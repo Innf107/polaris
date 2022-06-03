@@ -22,7 +22,7 @@ module Loc = struct
 
 end
 
-module Expr (Name : sig
+module Make (Name : sig
   type t
 
   val pretty : t -> string
@@ -81,7 +81,7 @@ struct
     | Sub of loc * expr * expr              (* e - e *)
     | Mul of loc * expr * expr              (* e * e *)
     | Div of loc * expr * expr              (* e / e *)
-    | Concat of loc * expr * expr           (* e .. e*)
+    | Concat of loc * expr * expr           (* e ~ e*)
     | Equals of loc * expr * expr           (* e == e *)
     | NotEquals of loc * expr * expr        (* e != e *)
     | LE of loc * expr * expr               (* e <= e *)
@@ -92,6 +92,9 @@ struct
     | Or of loc * expr * expr               (* e || e *)
     | And of loc * expr * expr              (* e && e *)
     | Not of loc * expr                     (* not e *)
+
+    | Range of loc * expr * expr            (* [e .. e] *)
+    | ListComp of loc * expr * list_comp_clause list (* [e | c, .., c] *)
 
     (* Branching *)
     | If of loc * expr * expr * expr        (* if e then e else e*)
@@ -104,9 +107,29 @@ struct
     | LetRec of loc * name * name list * expr * expr  (* let rec f(x, .., x) = e*)
     | Assign of loc * name * expr                     (* x = e *)
     (* Scripting capabilities *)
-    | Print of loc * expr                   (* print(e) (Temporary. 'print' should really just be an intrinsic)*)
-    | ProgCall of loc * string * expr list  (* /p e₁ .. eₙ *)
+    | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
+    (* Async / Await (colorless) *)
+    | Async of loc * expr                   (* async e *)
+    | Await of loc * expr                   (* await e*)
+
+  and list_comp_clause =
+    | DrawClause of name * expr (* x <- e *)
+    | FilterClause of expr            (* e *)
+
+  type flag_def = {
+    flag_var: name
+  ; flags: string list
+  ; arg_count: int
+  ; default: string option
+  ; description: string option
+  }
+
+  type header = {
+      usage: string option
+    ; description: string option
+    ; options: flag_def list
+    }
 
   let rec pretty = function
     | Var (_, x) -> Name.pretty x
@@ -144,6 +167,14 @@ struct
     | And (_, e1, e2)    -> "(" ^ pretty e1 ^ " && " ^ pretty e2 ^ ")"
     | Not (_, e)         -> "(not " ^ pretty e ^ ")"
 
+    | Range(_, e1, e2) -> "[" ^ pretty e1 ^ " .. " ^ pretty e2 ^ "]"
+    | ListComp(_, e, clauses) -> 
+      let pretty_list_comp = function
+      | DrawClause (x, e) -> Name.pretty x ^ " <- " ^ pretty e
+      | FilterClause e -> pretty e
+      in 
+      "[" ^ pretty e ^ " | " ^ String.concat ", " (List.map pretty_list_comp clauses)
+
     | If (_, e1, e2, e3) -> "if " ^ pretty e1 ^ " then " ^ pretty e2 ^ " else " ^ pretty e3
 
     | Seq (_, exprs) -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
@@ -153,10 +184,11 @@ struct
         "let " ^ Name.pretty x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
     | LetRec (_, x, xs, e1, e2) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
     | Assign (_, x, e) -> Name.pretty x ^ " = " ^ pretty e
-    | Print (_, e) -> "print(" ^ pretty e ^ ")"
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
+    | Async (_, expr) -> "async " ^ pretty expr
+    | Await (_, expr) -> "await " ^ pretty expr
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
@@ -167,8 +199,10 @@ struct
     | MapLookup(loc, _, _) | DynLookup(loc, _, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
     | Div(loc, _ , _) | Concat(loc, _, _) | Equals(loc, _, _) | NotEquals(loc, _, _) | LE(loc, _, _) 
     | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _) | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
+    | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
-    | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | Print(loc, _) | ProgCall(loc, _, _) | Pipe(loc, _)
+    | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _)
+    | Async(loc, _) | Await(loc, _)
     -> loc
 end
 
@@ -187,13 +221,10 @@ module Name = struct
   let compare (x : t) (y : t) : int = Int.compare x.index y.index
 end
 
-module StringExpr = Expr (struct
+module Parsed = Make (struct
   type t = string
 
   let pretty (x : t) = x
 end)
 
-module NameExpr = Expr (Name)
-
-type string_expr = StringExpr.expr
-type name_expr = NameExpr.expr
+module Renamed = Make (Name)

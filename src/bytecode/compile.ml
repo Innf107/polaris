@@ -95,7 +95,7 @@ let rec compile_expr (env : compile_env) (expr : expr) : op list =
 
   | LetRec (loc, x, params, body, e) ->
     compile_let_rec env loc x params body (fun new_env -> compile_expr new_env e)
-  | _ -> raise (TODO __POS__)
+  | _ -> todo __POS__
 
 and compile_expr_seq (env : compile_env) (exprs : expr list) : op list =
   match exprs with

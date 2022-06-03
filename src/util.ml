@@ -1,7 +1,9 @@
 
-(* Should be used as `raise (TODO __POS__)` *)
-exception TODO of (string * int * int * int)
+exception TODO of string * int * int * int
 exception Panic of string
+
+(* Should be used as `todo __POS__` *)
+let todo (str, x, y, z) = raise (TODO (str, x, y ,z))
 
 type ('a, 'b) either =
   | Left of 'a

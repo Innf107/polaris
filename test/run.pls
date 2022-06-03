@@ -1,11 +1,17 @@
 #!/usr/bin/env polaris
+options {
+    "--sync" as sync: "Execute tests synchronously instead of in parralel"
+}
+
 let List = require("list.pls");
+
+let for = if sync then List.for else List.forConcurrent;
 
 let files = lines(!find (scriptLocal("categories")) "-name" "*.pls");
 
 let errors = 0;
 
-List.forConcurrent(files, \file -> {
+for(files, \file -> {
     let expectation = !grep "-Po" "(?<=# EXPECT:).+" file;
 
     let result = !polaris file;

@@ -3,13 +3,13 @@ options {
     "--sync" as sync: "Execute tests synchronously instead of in parralel"
 }
 
-let List = require("list.pls");
+let List = require("list.pls")
 
-let for = if sync then List.for else List.forConcurrent;
+let for = if sync then List.for else List.forConcurrent
 
-let files = lines(!find (scriptLocal("categories")) "-name" "*.pls");
+let files = lines(!find (scriptLocal("categories")) "-name" "*.pls")
 
-let errors = 0;
+let errors = 0
 
 for(files, \file -> {
     let expectation = !grep "-Po" "(?<=# EXPECT:).+" file;
@@ -27,7 +27,7 @@ for(files, \file -> {
                   ~ "      ACTUAL: '" ~ result ~ "'\e[0m");
         errors := errors + 1;
     };
-});
+})
 
 if errors == 0 then {
     !echo "-e" "\e[32mAll test passed.\e[0m";

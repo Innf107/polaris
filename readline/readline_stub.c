@@ -5,6 +5,7 @@
 
 #include <caml/alloc.h>
 #include <caml/mlvalues.h>
+#include <caml/threads.h>
 
 char* readline_default_buffer = NULL;
 
@@ -35,7 +36,18 @@ CAMLprim value readline_stub(value prompt) {
 
     rl_getc_function = getc_wrapper;
 
-    char* result_str = readline(String_val(prompt));
+    // We have to copy the string, since we cannot access
+    // any OCaml data while running without the master lock.
+    char* prompt_string = strdup(String_val(prompt));
+
+    // readline blocks, so we release the OCaml master lock.
+    // This means, we *cannot* use any OCaml runtime functions between 
+    // these two calls.
+    caml_release_runtime_system();
+    char* result_str = readline(prompt_string);
+    caml_acquire_runtime_system();
+
+    free(prompt_string);
 
     if (result_str == NULL){
         return Val_none;

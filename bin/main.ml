@@ -18,6 +18,7 @@ let repl_error (message : string) =
   print_endline ("\x1b[38;2;255;0;0m\x02ERROR\x1b[0m\x02:\n" ^ message);
 
 type run_options = {
+  interactive : bool;
   print_ast : bool;
   print_renamed : bool;
   backend : backend;
@@ -131,23 +132,7 @@ let handle_errors print_fun f =
      running a script *)
   | ArgParseError msg -> print_endline msg; exit 1
 
-let run_file (options : run_options) (filepath : string) (args : string list) = 
-  let _ = match options.backend with
-  | EvalBackend -> ()
-  | BytecodeBackend -> warning ("The bytecode backend is experimental and very incomplete. It will probably not work as expected")
-  in
-
-  let driver_options = {
-    filename = filepath
-  ; argv = filepath :: args
-  ; print_ast = options.print_ast
-  ; print_renamed = options.print_renamed
-  ; backend = options.backend
-  } in
-  handle_errors fatal_error (fun _ -> 
-    Driver.run driver_options (Lexing.from_channel (open_in filepath)))
-
-let run_repl (options : run_options) : unit =
+let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;
   let _ = match options.backend with
     | EvalBackend -> ()
@@ -157,7 +142,7 @@ let run_repl (options : run_options) : unit =
       filename = "<interactive>"
       (* argv.(0) is "", to signify that this is a repl process.
          This is in line with what python does. *)
-    ; argv = "" :: List.tl (Array.to_list Sys.argv)
+    ; argv = env.argv
     ; print_ast = options.print_ast
     ; print_renamed = options.print_renamed
     ; backend = options.backend
@@ -182,9 +167,37 @@ let run_repl (options : run_options) : unit =
     | Sys.Break -> 
       go env scope
   in
-  go (EvalInst.empty_eval_env driver_options.argv) Rename.RenameScope.empty
+  go env scope
 
+let run_file (options : run_options) (filepath : string) (args : string list) = 
+  let _ = match options.backend with
+  | EvalBackend -> ()
+  | BytecodeBackend -> warning ("The bytecode backend is experimental and very incomplete. It will probably not work as expected")
+  in
+
+  let driver_options = {
+    filename = filepath
+  ; argv = filepath :: args
+  ; print_ast = options.print_ast
+  ; print_renamed = options.print_renamed
+  ; backend = options.backend
+  } in
+  handle_errors fatal_error (fun _ -> 
+    let _, env, scope = 
+      Driver.run_env 
+        driver_options 
+        (Lexing.from_channel (open_in filepath))
+        (EvalInst.empty_eval_env driver_options.argv)
+        Rename.RenameScope.empty
+    in
+    if options.interactive then
+      run_repl_with scope env options 
+    )
   
+
+let run_repl options = 
+  let argv = "" :: List.tl (Array.to_list Sys.argv) in
+  run_repl_with Rename.RenameScope.empty (EvalInst.empty_eval_env argv) options
 
 let usage_message = 
   "Usage: polaris [options] [file] [program options]
@@ -203,6 +216,7 @@ let fail_usage : 'a. string -> 'a =
 
 let parse_args () : run_options * string list =
   let default_options : run_options = {
+      interactive = false;
       print_ast = false;
       print_renamed = false;
       backend = EvalBackend;
@@ -211,6 +225,8 @@ let parse_args () : run_options * string list =
   | ("--help" :: args) ->
     print_endline usage_message;
     exit 0
+  | (("-i" | "--interactive") :: args) ->
+    go ({options with interactive = true}) args
   | ("--print-ast" :: args) -> 
     go ({options with print_ast = true}) args
   | ("--print-renamed" :: args) -> 

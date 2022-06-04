@@ -433,9 +433,6 @@ end) = struct
       let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e)] env loc) in
       eval_seq_cont (Lazy.force env') exprs cont
     
-    | [ e ] -> 
-      cont env (Left e)
-
     (* Single program calls are just evaluated like pipes *)
     | ProgCall (loc, _, _) as expr :: exprs ->
       eval_seq_cont env (Pipe (loc, [expr]) :: exprs) cont
@@ -456,6 +453,8 @@ end) = struct
         );
       eval_seq_cont env exprs cont
 
+    | [ e ] -> 
+      cont env (Left e)  
     | e :: exprs ->
         (* The result of 'eval_expr e' is purposefully ignored *)
         let _ = eval_expr env e in

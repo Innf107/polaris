@@ -37,13 +37,13 @@ struct
     | String
     | Bool
     | Unit
-    | Null (*TODO: Should null be its own type (with ∀σ. null ≤ σ) or just (∀a. a)?*)
-    (* Unification variables *)
     | Var of name
     (* (Uncurried) Function types *)
     | Fun of ty list * ty
+    (* Unification meta variables. Only used internally *)
+    | Metavar of name * Unique.t
     (* Skolem type constants. Only used internally *)
-    | Skol of name * int
+    | Skol of name * Unique.t
     (* Universally quantified types *)
     | Forall of name list * ty
     (* Unions (ty | ty) *)
@@ -57,8 +57,6 @@ struct
     | Map of ty
     (* Maps with a fixed set of heterogenous fields *)
     | Record of (string * ty) list
-    (* Maps which extend a type variable with a fixed set of heterogenous fields *)
-    | OpenRecord of (string * ty) list * name
 
   type expr =
     (* Lambda calculus *)

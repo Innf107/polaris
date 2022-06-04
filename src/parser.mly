@@ -173,6 +173,7 @@ option_def:
 
 maybe_arg_count:
   | LPAREN INT RPAREN { $2 }
+  | LPAREN STAR RPAREN { -1 }
   | { 0 }
 
 default_clause:

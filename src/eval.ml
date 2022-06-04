@@ -707,10 +707,10 @@ end) = struct
   let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs
 
   let flag_info_of_flag_def (env : eval_env) (flag_def : Renamed.flag_def): Argparse.flag_info * eval_env =
-    let default_value = 
-      if flag_def.arg_count = 0 then
-        BoolV false
-      else match flag_def.default with
+    let default_value = match flag_def.arg_count with
+    | 0 -> BoolV false
+    | -1 -> ListV []
+    | _ -> match flag_def.default with
       | Some(str) -> StringV(str)
       | None -> NullV
     in
@@ -719,11 +719,17 @@ end) = struct
 
 
     { aliases = flag_def.flags 
-    ; arg_count = flag_def.arg_count
+    ; arg_count = if flag_def.arg_count == -1 then 1 else flag_def.arg_count
     ; description = Option.value ~default:"" flag_def.description
     ; action = function
       | [] -> flag_ref := BoolV true
-      | [str] -> flag_ref := StringV str
+      | [str] -> 
+        if flag_def.arg_count == -1 then
+          match !flag_ref with
+          | ListV vals -> flag_ref := ListV (vals @ [StringV str])
+          | _ -> raise (Panic ("Variadic flag with intermediary non-list value: " ^ String.concat ", " flag_def.flags))
+        else 
+          flag_ref := StringV str
       | strs -> flag_ref := ListV (List.map (fun x -> StringV x) strs)
     }, env
 

@@ -1,13 +1,24 @@
 #!/usr/bin/env polaris
 options {
-    "--sync" as sync: "Execute tests synchronously instead of in parralel"
+    "-s" "--sync" as sync: "Execute tests synchronously instead of in parralel"
+    "-e" "--exclude" (*) as exclude: "Exclude category from tests"
 }
 
 let List = require("list.pls")
 
 let for = if sync then List.for else List.forConcurrent
 
-let files = lines(!find (scriptLocal("categories")) "-name" "*.pls")
+
+let categories = lines(!find (scriptLocal("categories")) "-mindepth" 1 "-maxdepth" 1 [["-not", "-name", ex] | ex <- exclude])
+
+if categories == [] then {
+    print("No tests left to run.");
+    exit(0);
+} else {
+
+}
+
+let files = lines(!find categories "-name" "*.pls")
 
 let errors = 0
 

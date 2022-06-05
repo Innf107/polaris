@@ -69,7 +69,7 @@ and Driver : DriverI = struct
     Lexing.set_filename lexbuf options.filename;
     let header, ast = 
       try 
-        Parser.main Lexer.token lexbuf 
+        Parser.main (Lexer.token (Lexer.new_lex_state ())) lexbuf 
       with 
       | Parser.Error -> 
         let start_pos = lexbuf.lex_start_p in

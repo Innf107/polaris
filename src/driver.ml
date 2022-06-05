@@ -11,6 +11,7 @@ type driver_options = {
   argv : string list;
   print_ast : bool;
   print_renamed : bool;
+  print_tokens : bool;
   backend : backend
 }
 
@@ -45,6 +46,7 @@ module rec EvalInst : EvalI = Eval.Make(struct
       argv = [mod_path];
       print_ast = false;
       print_renamed = false;
+      print_tokens = false;
       backend = EvalBackend (* The bytecode backend does not use `Eval` anyway, so this is fine *)
     } in
     let file_path = 
@@ -67,6 +69,18 @@ and Driver : DriverI = struct
 
   let parse_and_rename (options : driver_options) (lexbuf : Lexing.lexbuf) (scope : RenameScope.t) : Renamed.header * Renamed.expr list * RenameScope.t =
     Lexing.set_filename lexbuf options.filename;
+    
+    if options.print_tokens then
+      let lex_state = Lexer.new_lex_state () in
+      let rec go () =
+        match Lexer.token lex_state lexbuf with
+        | Parser.EOF -> exit 0
+        | t -> print_endline (Parserutil.pretty_token t); go ()
+      in
+      go ()
+    else
+      ();
+
     let header, ast = 
       try 
         Parser.main (Lexer.token (Lexer.new_lex_state ())) lexbuf 

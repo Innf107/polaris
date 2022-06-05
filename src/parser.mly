@@ -101,7 +101,7 @@ expr:
 
   | LBRACKET expr DDOT expr RBRACKET                            { Range(loc $startpos $endpos, $2, $4) }
 
-  | IF expr THEN expr ELSE expr                                 { If(loc $startpos $endpos, $2, $4, $6) }                          // if e then e else e
+  | IF expr THEN expr SEMI* ELSE expr                           { If(loc $startpos $endpos, $2, $4, $7) }                          // if e then e else e
   | expr PIPE pipe_list                                         { Pipe(loc $startpos $endpos, $1 :: $3) }
   | ASYNC expr                                                  { Async(loc $startpos $endpos, $2) }
   | AWAIT expr                                                  { Await(loc $startpos $endpos, $2) }

@@ -5,8 +5,10 @@ open Parser
 (* Just after opening a new block (e.g. after '{'), the latest indentation_state
    is initially set to 'Opening'. Now, the first non-whitespace character after this
    Sets the indentation_state, setting it to 'Found <indentation>'
+   
+   'Ignored' is used for map literals, which are also closed with '}', but should not open an indentation block
  *)
-type indentation_state = Opening | Found of int
+type indentation_state = Opening | Found of int | Ignored
 
 type lex_state = {
   mutable indentation_level: indentation_state list
@@ -23,6 +25,9 @@ let buf_indentation lexbuf =
 
 let open_block state lexbuf = 
   state.indentation_level <- Opening :: state.indentation_level
+
+let open_ignored_block state lexbuf = 
+  state.indentation_level <- Ignored :: state.indentation_level
 
 let close_block state lexbuf = 
   match state.indentation_level with
@@ -42,7 +47,8 @@ let try_semi (cont : lex_state -> lexbuf -> Parser.token) (state : lex_state) (l
   | Opening :: lvls ->
     state.indentation_level <- Found (buf_indentation lexbuf) :: lvls;
     cont state lexbuf
-
+  | Ignored :: lvls -> 
+    cont state lexbuf
 }
 
 let digit = ['0'-'9']
@@ -50,13 +56,13 @@ let digit = ['0'-'9']
 let newline = '\n' | "\r\n" 
 
 rule block_indentation state = parse
-| [ ' ' '\t' ]* ('#' | '#' [^'{'] [^'\n']*? (newline | eof))? { try_semi token state lexbuf }
+| [ ' ' '\t' ]* (('#' | '#' [^'{'] [^'\n']*?) (newline | eof))? { try_semi token state lexbuf }
 | newline { new_line lexbuf; block_indentation state lexbuf }
 
 and token state = parse
 | [ ' ' '\t' ]           { token state lexbuf }
 | newline                { new_line lexbuf; block_indentation state lexbuf }
-| '#' | '#' [^'{'] [^'\n']*? (newline | eof) { new_line lexbuf; block_indentation state lexbuf } (* TODO: Correctly handle \r\n *)
+| ('#' | '#' [^'{'] [^'\n']*?) (newline | eof) { new_line lexbuf; block_indentation state lexbuf } (* TODO: Correctly handle \r\n *)
 | '-'? digit+ as lit_string { INT (int_of_string lit_string)}
 | '-'? digit+ '.' digit+ as lit_string { FLOAT (float_of_string lit_string) }
 | '!' '"' ([^'"']+ as cmd)'"' { BANG cmd }
@@ -83,11 +89,11 @@ and token state = parse
 | ':'       { COLON }
 | '('       { LPAREN }
 | ')'       { RPAREN }
-| "#{"      { open_block state lexbuf; HASHLBRACE }
+| "#{"      { open_ignored_block state lexbuf; HASHLBRACE }
 | '{'       { open_block state lexbuf; LBRACE }
 | '}'       { close_block state lexbuf; RBRACE }
-| '['       { open_block state lexbuf; LBRACKET }
-| ']'       { close_block state lexbuf; RBRACKET }
+| '['       { LBRACKET }
+| ']'       { RBRACKET }
 | '+'       { PLUS }
 | '-'       { MINUS }
 | '*'       { STAR }

@@ -8,11 +8,6 @@
   pcre
   threads))
 
-(rule
-  (target lexer.ml)
-  (deps lexer.mll)
-  (action (run ocamllex %{deps} -o %{target})))
-
 (menhir
  (modules parser))
 

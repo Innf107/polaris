@@ -1,6 +1,7 @@
 open Polaris
 open Polaris.Syntax
-open Polaris.Eval
+open Polaris.Eval  (* Required for exceptions *)
+open Polaris.Lexer (* Required for exceptions *)
 open Polaris.Driver
 
 let fatal_error (message : string) = 
@@ -128,7 +129,9 @@ let handle_errors print_fun f =
     Loc.pretty loc ^ ": Trying to await non-promise: " ^ Value.pretty value
     ^ "\n" ^ pretty_call_trace locs
   )
-
+  | LexError (InvalidOperator (loc, name)) -> print_fun (
+    Loc.pretty loc ^ ": Invalid operator: '" ^ name ^ "'"
+  )
   (* We can safely abort the program, since this can only ever happen when directly
      running a script *)
   | ArgParseError msg -> print_endline msg; exit 1

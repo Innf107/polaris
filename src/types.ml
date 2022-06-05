@@ -7,10 +7,12 @@ module VarTypeMap = Map.Make(Name)
 
 type type_error =
   | NotASubtype of loc * ty * ty 
+  | NotEnoughArguments of loc * ty list * ty
 
 exception TypeError of type_error
 
-let type_error err = raise (TypeError err)
+let type_error : 'a. type_error -> 'a =
+  fun err -> raise (TypeError err)
 
 module Subst = struct
   type t = T
@@ -71,7 +73,21 @@ let rec subtype loc ty1 ty2 = let open Subst in match ty1, ty2 with
   (* TODO: Maps *)
   | _ -> type_error (NotASubtype (loc, ty1, ty2))
 
-let app_subtype loc app_tys ty = match app_tys, ty with
+let rec app_subtype loc app_tys ty = let open Subst in match app_tys, ty with
+  | [], ty -> ty, Subst.empty
+  | _, (Forall _ as ty) ->
+    app_subtype loc app_tys (instantiate ty)
+  | app_tys, Fun (arg_tys, res_ty) ->
+    if List.compare_lengths arg_tys app_tys < 0 then
+      type_error (NotEnoughArguments (loc, app_tys, ty))
+    else
+      let remaining = Util.drop (List.length arg_tys) app_tys in
+
+      let arg_subst = Subst.flatten (List.map2 (subtype loc) arg_tys app_tys) in
+
+      let result_ty, result_subst = app_subtype loc remaining res_ty in
+      
+      Fun (app_tys, result_ty), arg_subst <> result_subst
   | _ -> todo __POS__
 
 let rec check : tc_env -> expr -> ty -> Subst.t =

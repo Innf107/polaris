@@ -22,6 +22,11 @@ let split_at_exact ix list =
   in
   go ix [] list
 
+let rec drop count list = match count, list with
+| 0, xs -> xs
+| _, [] -> []
+| n, x::xs -> drop (n - 1) xs
+
 let max z list =
   List.fold_left (fun r x -> if x > r then x else r) z list
 

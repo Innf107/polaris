@@ -27,6 +27,7 @@ type lex_kind =
   | InNumber of string
   | InDecimal of string
   | Defer of token list
+  | LeadingWhitespace
 
 type lex_state = {
   mutable indentation_level: indentation_state list
@@ -34,30 +35,53 @@ type lex_state = {
 }
 
 let new_lex_state () = {
-  indentation_level = [Found 0]
+  indentation_level = [Opening]
 ; lex_kind = Default
 }
 
 
 (* lexbuf manipulation *)
-let next_char (lexbuf : lexbuf) : char option =
+
+let peek_char (lexbuf : lexbuf) : char option = 
   lexbuf.refill_buff lexbuf; (* TODO: Should we really refill every time? *)
   if lexbuf.lex_curr_pos >= lexbuf.lex_buffer_len then
     None
   else
     let char = Bytes.get lexbuf.lex_buffer lexbuf.lex_curr_pos in
+    Some char
 
+
+let next_char (lexbuf : lexbuf) : char option =
+  match peek_char lexbuf with
+  | None -> None
+  | Some(char) ->
     lexbuf.lex_curr_pos <- lexbuf.lex_curr_pos + 1;
+    lexbuf.lex_curr_p <- { 
+      lexbuf.lex_curr_p with pos_cnum = lexbuf.lex_curr_p.pos_cnum + 1
+    };
     if char == '\n' then
       new_line lexbuf
     else
       ();
-    Some(char)
+    Some char
+
 
 let get_loc (lexbuf : lexbuf) : Syntax.loc =
   Syntax.Loc.from_pos (lexbuf.lex_curr_p) (lexbuf.lex_curr_p)
 
+let open_block state = 
+  state.indentation_level <- Opening :: state.indentation_level
+
+let open_ignored_block state =
+  state.indentation_level <- Ignored :: state.indentation_level
+
+let close_block state =
+  match state.indentation_level with
+  | [] | [_] -> raise (Panic "Lexer.close_block: More blocks closed than opened")
+  | _ :: lvls -> state.indentation_level <- lvls
+
 (* character classes *)
+let string_of_char = String.make 1
 
 let is_alpha = function
   | 'a' .. 'z' | 'A' .. 'Z' -> true
@@ -86,14 +110,22 @@ let is_prog_char c = match c with
   | ' ' | '\t' | '\n' | '(' | ')' | '[' | ']' | '{' | '}' -> false
   | _ -> true
 
-let as_paren = function
-  | '(' -> Some LPAREN
-  | ')' -> Some RPAREN 
-  | '[' -> Some LBRACKET
-  | ']' -> Some RBRACKET 
-  | '{' -> Some LBRACE 
-  | '}' -> Some RBRACE
-  | _ -> None
+let is_paren = function
+  | '(' | ')' | '[' | ']' | '{' | '}' -> true
+  | _ -> false
+
+let as_paren state = function
+  | '(' -> LPAREN
+  | ')' -> RPAREN 
+  | '[' -> LBRACKET
+  | ']' -> RBRACKET 
+  | '{' -> 
+    open_block state;
+    LBRACE
+  | '}' -> 
+    close_block state;
+    RBRACE
+  | c -> raise (Panic ("Lexer.as_paren: Invalid paren: '" ^ string_of_char c ^ "'"))
 
 let ident_token = function
 | "let" -> LET
@@ -138,8 +170,6 @@ let op_token lexbuf = function
 | "\\" -> LAMBDA
 | str -> raise (LexError (InvalidOperator (get_loc lexbuf, str)))
 
-let string_of_char = String.make 1
-
 
 let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
   let continue () = token state lexbuf in
@@ -149,7 +179,10 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | Some('#') ->
       state.lex_kind <- LeadingHash;
       continue ()
-    | Some('\n' | ' ') ->
+    | Some('\n') ->
+      state.lex_kind <- LeadingWhitespace;
+      continue ()
+    | Some(' ') ->
       continue ()
     | Some('"') ->
       state.lex_kind <- InString "";
@@ -169,18 +202,19 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | Some(c) when is_op_start c ->
       state.lex_kind <- InOp (string_of_char c);
       continue ()
-    | Some(c) when Option.is_some(as_paren c) ->
-      Option.get (as_paren c)
+    | Some(c) when is_paren c ->
+      as_paren state c
     | None -> Parser.EOF
     | Some(c) -> raise (Panic ("Default: "^ string_of_char c))
     end
   | LeadingHash ->
     begin match next_char lexbuf with
     | Some('{') ->
+      open_ignored_block state;
       state.lex_kind <- Default;
       HASHLBRACE
     | Some('\n') ->
-      state.lex_kind <- Default;
+      state.lex_kind <- LeadingWhitespace;
       continue ()
     | _ ->
       state.lex_kind <- Comment;
@@ -188,8 +222,11 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     end
   | LeadingMinus ->
     begin match next_char lexbuf with
-    | Some(' ' | '\t' | '\n') ->
+    | Some(' ' | '\t') ->
       state.lex_kind <- Default;
+      MINUS
+    | Some('\n') ->
+      state.lex_kind <- LeadingWhitespace;
       MINUS
     | Some(c) when is_op c ->
       state.lex_kind <- InOp ("-" ^ string_of_char c);
@@ -210,11 +247,14 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | Some(c) when is_ident c ->
       state.lex_kind <- InIdent(ident ^ string_of_char c);
       continue ()
-    | Some('\n' | ' ' | '\t') ->
+    | Some(' ' | '\t') ->
       state.lex_kind <- Default;
       ident_token ident
-    | Some(c) when Option.is_some(as_paren c) ->
-      state.lex_kind <- Defer [Option.get (as_paren c)];
+    | Some('\n') ->
+      state.lex_kind <- LeadingWhitespace;
+      ident_token ident
+    | Some(c) when is_paren c ->
+      state.lex_kind <- Defer [as_paren state c];
       ident_token ident
     | Some(c) when is_op_start c ->
       state.lex_kind <- InOp (string_of_char c);
@@ -234,8 +274,11 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | None -> todo __POS__
     end
   | InBang str -> begin match next_char lexbuf with
-    | Some(' ' | '\t' | '\n') ->
+    | Some(' ' | '\t') ->
       state.lex_kind <- Default;
+      BANG str
+    | Some('\n') ->
+      state.lex_kind <- LeadingWhitespace;
       BANG str
     | Some('=') ->
       state.lex_kind <- Default;
@@ -249,14 +292,17 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | Some(c) when is_op c ->
       state.lex_kind <- InOp (str ^ string_of_char c);
       continue ()
-    | Some(' ' | '\t' | '\n') ->
+    | Some(' ' | '\t') ->
       state.lex_kind <- Default;
+      op_token lexbuf str
+    | Some('\n') ->
+      state.lex_kind <- LeadingWhitespace;
       op_token lexbuf str
     | Some(c) when is_ident_start c ->
       state.lex_kind <- InIdent (string_of_char c);
       op_token lexbuf str
-    | Some(c) when Option.is_some (as_paren c) ->
-      state.lex_kind <- Defer [Option.get (as_paren c)];
+    | Some(c) when is_paren c ->
+      state.lex_kind <- Defer [as_paren state c];
       op_token lexbuf str
     | Some(c) when is_digit c ->
       state.lex_kind <- InNumber (string_of_char c);
@@ -273,11 +319,14 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | Some('.') ->
       state.lex_kind <- InDecimal (str ^ ".");
       continue ()
-    | Some(' ' | '\t' | '\n') ->
+    | Some(' ' | '\t') ->
       state.lex_kind <- Default;
       INT (int_of_string str)
-    | Some(c) when Option.is_some(as_paren c) ->
-      state.lex_kind <- Defer [Option.get (as_paren c)];
+    | Some('\n') ->
+      state.lex_kind <- LeadingWhitespace;
+      INT (int_of_string str)
+    | Some(c) when is_paren c ->
+      state.lex_kind <- Defer [as_paren state c];
       INT (int_of_string str)
     | Some('-') ->
       state.lex_kind <- LeadingMinus;
@@ -297,13 +346,36 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | Some(c) when is_digit c ->
       state.lex_kind <- InDecimal (str ^ string_of_char c);
       continue ()
-    | Some(' ' | '\t' | '\n') ->
+    | Some(' ' | '\t') ->
       state.lex_kind <- Default;
       FLOAT (float_of_string str)
-    | Some(c) when Option.is_some(as_paren c) ->
-      state.lex_kind <- Defer [Option.get (as_paren c)];
+    | Some('\n') ->
+      state.lex_kind <- LeadingWhitespace;
+      FLOAT (float_of_string str)
+    | Some(c) when is_paren c ->
+      state.lex_kind <- Defer [as_paren state c];
       FLOAT (float_of_string str)  
     | _ -> todo __POS__
+    end
+  | LeadingWhitespace -> begin match peek_char lexbuf with
+    | Some(' ' | '\n') ->
+      let _ = next_char lexbuf in
+      continue ()
+    | _ ->
+      state.lex_kind <- Default;
+      let indentation = (get_loc lexbuf).start_col - 1 in
+      match state.indentation_level with
+      | (Opening :: lvls) ->
+        state.indentation_level <- Found indentation :: lvls;
+        continue ()
+      | (Found block_indentation :: lvls) ->
+        if indentation <= block_indentation then
+          SEMI
+        else
+          continue ()
+      | (Ignored :: lvls) ->
+        continue ()
+      | [] -> raise (Panic "Lexer: LeadingWhitespace: More blocks closed than opened")
     end
   | Defer [] ->
     state.lex_kind <- Default;

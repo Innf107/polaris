@@ -125,8 +125,8 @@ expr_comma_list:
   | { [] }
 
 expr_semi_list:
-  | expr SEMI+ expr_semi_list { $1 :: $3 }
-  | expr { [$1] }
+  | SEMI* expr SEMI+ expr_semi_list { $2 :: $4 }
+  | SEMI* expr { [$2] }
   | { [] }
 
 map_kv_list:

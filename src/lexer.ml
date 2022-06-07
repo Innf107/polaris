@@ -82,6 +82,22 @@ let close_block state =
   | [] | [_] -> raise (Panic "Lexer.close_block: More blocks closed than opened")
   | _ :: lvls -> state.indentation_level <- lvls
 
+let insert_semi (continue : unit -> token) state lexbuf =
+  let indentation = (get_loc lexbuf).start_col - 1 in
+  match state.indentation_level with
+  | (Opening :: lvls) ->
+    state.indentation_level <- Found indentation :: lvls;
+    continue ()
+  | (Found block_indentation :: lvls) ->
+    if indentation <= block_indentation then
+      SEMI
+    else
+      continue ()
+  | (Ignored :: lvls) ->
+    continue ()
+  | [] -> raise (Panic "Lexer: LeadingWhitespace: More blocks closed than opened")
+
+
 (* character classes *)
 let string_of_char = String.make 1
 
@@ -319,21 +335,19 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | Some(' ' | '\n') ->
       let _ = next_char lexbuf in
       continue ()
+    | Some('#') ->
+      let _ = next_char lexbuf in
+      begin match peek_char lexbuf with
+      | Some('{') ->
+        state.lex_kind <- LeadingHash;
+        insert_semi continue state lexbuf
+      | _ ->
+        state.lex_kind <- LeadingHash;
+        continue ()
+      end
     | _ ->
       state.lex_kind <- Default;
-      let indentation = (get_loc lexbuf).start_col - 1 in
-      match state.indentation_level with
-      | (Opening :: lvls) ->
-        state.indentation_level <- Found indentation :: lvls;
-        continue ()
-      | (Found block_indentation :: lvls) ->
-        if indentation <= block_indentation then
-          SEMI
-        else
-          continue ()
-      | (Ignored :: lvls) ->
-        continue ()
-      | [] -> raise (Panic "Lexer: LeadingWhitespace: More blocks closed than opened")
+      insert_semi continue state lexbuf
     end
   | Defer [] ->
     state.lex_kind <- Default;

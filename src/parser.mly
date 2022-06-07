@@ -150,7 +150,7 @@ list_comp_elem:
   | expr              { FilterClause $1 }
 
 match_list:
-  | pattern ARROW expr SEMI match_list { ($1, $3) :: $5 }
+  | pattern ARROW expr SEMI+ match_list { ($1, $3) :: $5 }
   | pattern ARROW expr { [($1, $3)] }
   | { [] }
 

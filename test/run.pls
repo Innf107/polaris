@@ -2,6 +2,7 @@
 options {
     "-s" "--sync" as sync: "Execute tests synchronously instead of in parralel"
     "-e" "--exclude" (*) as exclude: "Exclude category from tests"
+    "--use-dune" as useDune: "Run test using 'dune exec polaris --' instead of 'polaris"
 }
 
 let List = require("list.pls")
@@ -25,7 +26,11 @@ let errors = 0
 for(files, \file -> {
     let expectation = !grep "-Po" "(?<=# EXPECT:).+" file;
 
-    let result = !polaris file;
+    let result = 
+        if useDune then 
+            !dune "exec" "polaris" "--" file
+        else
+            !polaris file
 
     if result == expectation then {
         # This has to use echo, since polaris does not support string escapes 

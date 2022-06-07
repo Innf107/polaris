@@ -49,7 +49,7 @@ let loc = Loc.from_pos
 
 %%
 main:
-  header SEMI* expr_semi_list EOF { ($1, $3) }
+  SEMI* header SEMI* expr_semi_list EOF { ($2, $4) }
 
 ;
 

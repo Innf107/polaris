@@ -82,8 +82,7 @@ let close_block state =
   | [] | [_] -> raise (Panic "Lexer.close_block: More blocks closed than opened")
   | _ :: lvls -> state.indentation_level <- lvls
 
-let insert_semi (continue : unit -> token) state lexbuf =
-  let indentation = (get_loc lexbuf).start_col - 1 in
+let insert_semi (continue : unit -> token) state indentation =
   match state.indentation_level with
   | (Opening :: lvls) ->
     state.indentation_level <- Found indentation :: lvls;
@@ -343,18 +342,19 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
       let _ = next_char lexbuf in
       continue ()
     | Some('#') ->
+      let indentation = ((get_loc lexbuf).start_col - 1) in
       let _ = next_char lexbuf in
       begin match peek_char lexbuf with
       | Some('{') ->
         state.lex_kind <- LeadingHash;
-        insert_semi continue state lexbuf
+        insert_semi continue state indentation
       | _ ->
         state.lex_kind <- LeadingHash;
         continue ()
       end
     | _ ->
       state.lex_kind <- Default;
-      insert_semi continue state lexbuf
+      insert_semi continue state ((get_loc lexbuf).start_col - 1)
     end
   | Defer [] ->
     state.lex_kind <- Default;

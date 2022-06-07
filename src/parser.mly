@@ -155,6 +155,7 @@ match_list:
   | { [] }
 
 pattern:
+  | pattern PIPE pattern { OrPat(loc $startpos $endpos, $1, $3) }
   | pattern COLON pattern { ConsPat(loc $startpos $endpos, $1, $3) }
   | LBRACKET pattern_comma_list RBRACKET { ListPat(loc $startpos $endpos, $2) }
   | IDENT { VarPat(loc $startpos $endpos, $1) }

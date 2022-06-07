@@ -43,6 +43,10 @@ let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in functio
         (ListPat (loc, pats'), List.fold_right (fun t r x -> t (r x)) pats_trans (fun x -> x))
     | NumPat (loc, f) ->
         (NumPat (loc, f), fun x -> x)
+    | OrPat(loc, p1, p2) ->
+        let p1', p1_trans = rename_pattern scope p1 in
+        let p2', p2_trans = rename_pattern scope p2 in
+        (OrPat(loc, p1', p2'), fun scope -> p2_trans (p1_trans scope))
 
 let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
     match expr with 

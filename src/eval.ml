@@ -205,6 +205,11 @@ end) = struct
         Some(List.fold_right (fun t r env -> t (r env)) transformations (fun x -> x))
     | NumPat(_, f1), NumV f2 when Float.equal f1 f2 ->
         Some (fun x -> x) 
+    | OrPat(_, p1, p2), v ->
+      begin match match_pat p1 v with
+      | Some(t) -> Some(t)
+      | None -> match_pat p2 v
+      end
     | _ -> None
 
   let rec eval_expr (env : eval_env) (expr : Renamed.expr) : value =

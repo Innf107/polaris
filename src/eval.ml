@@ -402,10 +402,13 @@ end) = struct
       end in
       PromiseV promise
     | Await (loc, expr) ->
-      match eval_expr env expr with
+      begin match eval_expr env expr with
       | PromiseV p -> 
         Promise.await p
       | value -> raise (EvalError.AwaitNonPromise (value, loc :: env.call_trace))
+      end
+    | Match (loc, scrut, branches) ->
+      todo __POS__
 
   and eval_app env loc fun_v arg_vals = 
     match fun_v with

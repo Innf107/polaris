@@ -29,6 +29,7 @@ let loc = Loc.from_pos
 %token PIPE
 %token IF THEN ELSE
 %token ASYNC AWAIT
+%token MATCH
 %token EOF
 
 %left OR AND NOT
@@ -105,6 +106,7 @@ expr:
   | expr PIPE pipe_list                                         { Pipe(loc $startpos $endpos, $1 :: $3) }
   | ASYNC expr                                                  { Async(loc $startpos $endpos, $2) }
   | AWAIT expr                                                  { Await(loc $startpos $endpos, $2) }
+  | MATCH expr LBRACE match_list RBRACE                         { Match(loc $startpos $endpos, $2, $4) }
 
 pipe_list:
   | prog_call PIPE pipe_list  { $1 :: $3 }
@@ -147,8 +149,21 @@ list_comp_elem:
   | IDENT LARROW expr { DrawClause ($1, $3) }
   | expr              { FilterClause $1 }
 
+match_list:
+  | pattern ARROW expr SEMI match_list { ($1, $3) :: $5 }
+  | pattern ARROW expr { [($1, $3)] }
+  | { [] }
 
+pattern:
+  | pattern COLON pattern { ConsPat(loc $startpos $endpos, $1, $3) }
+  | LBRACKET pattern_comma_list RBRACKET { ListPat(loc $startpos $endpos, $2) }
+  | IDENT { VarPat(loc $startpos $endpos, $1) }
+  | LPAREN pattern RPAREN { $2 }
 
+pattern_comma_list:
+  | pattern COMMA pattern_comma_list { $1 :: $3 }
+  | pattern { [$1] }
+  | { [] }
 
 header:
   | header_usage? SEMI* header_descr? SEMI* header_options? { { usage = $1; description = $3; options = Option.value ~default:[] $5 } }

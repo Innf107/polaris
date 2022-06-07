@@ -30,6 +30,11 @@ end) =
 struct
   type name = Name.t
 
+  type pattern =
+    | VarPat of loc * name
+    | ConsPat of loc * pattern * pattern
+    | ListPat of loc * pattern list
+
   type expr =
     (* Lambda calculus *)
     | Var of loc * name                     (* x *)
@@ -82,6 +87,8 @@ struct
     (* Async / Await (colorless) *)
     | Async of loc * expr                   (* async e *)
     | Await of loc * expr                   (* await e*)
+    (* Pattern matching *)
+    | Match of loc * expr * (pattern * expr) list
 
   and list_comp_clause =
     | DrawClause of name * expr (* x <- e *)
@@ -100,6 +107,11 @@ struct
     ; description: string option
     ; options: flag_def list
     }
+
+  let rec pretty_pattern = function
+    | VarPat (_, x) -> Name.pretty x
+    | ConsPat (_, x, xs) -> "(" ^ pretty_pattern x ^ ") : (" ^ pretty_pattern xs ^ ")"
+    | ListPat (_, pats) -> "[" ^ String.concat ", " (List.map pretty_pattern pats) ^ "]" 
 
   let rec pretty = function
     | Var (_, x) -> Name.pretty x
@@ -160,6 +172,11 @@ struct
     | Async (_, expr) -> "async " ^ pretty expr
     | Await (_, expr) -> "await " ^ pretty expr
 
+    | Match(_, expr, pats) -> 
+      "match " ^ pretty expr ^ " {"
+      ^ "\n    " ^ String.concat ("\n    ") (List.map (fun (p, e) -> pretty_pattern p ^ " -> " ^ pretty e) pats)
+      ^ "\n}"
+
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
 
@@ -172,7 +189,7 @@ struct
     | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _)
-    | Async(loc, _) | Await(loc, _)
+    | Async(loc, _) | Await(loc, _) | Match(loc, _, _)
     -> loc
 end
 

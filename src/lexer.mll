@@ -47,6 +47,7 @@ rule token = parse
 | "description" { DESCRIPTION }
 | "options" { OPTIONS }
 | "as"      { AS }
+| "match"   { MATCH }
 | "->"      { ARROW }
 | "<-"      { LARROW }
 | ','       { COMMA }

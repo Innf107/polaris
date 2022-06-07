@@ -30,6 +30,17 @@ module RenameScope = struct
         { name = var; index = ix }
 end
 
+let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in function
+    | Parsed.VarPat (loc, var) ->
+        let var' = fresh_var scope var in
+        (Renamed.VarPat (loc, var'), fun scope -> insert_var var var' scope)
+    | ConsPat (loc, x, xs) ->
+        let x', x_trans = rename_pattern scope x in
+        let xs', xs_trans = rename_pattern scope xs in
+        (ConsPat (loc, x', xs'), fun scope -> xs_trans (x_trans scope))
+    | ListPat (loc, pats) ->
+        let pats', pats_trans = List.split (List.map (rename_pattern scope) pats) in
+        (ListPat (loc, pats'), List.fold_right (fun t r x -> t (r x)) pats_trans (fun x -> x))
 
 let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
     match expr with 
@@ -117,6 +128,16 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
         Async (loc, rename_expr scope expr)
     | Await (loc, expr) ->
         Await (loc, rename_expr scope expr)
+    | Match (loc, expr, branches) ->
+        let expr' = rename_expr scope expr in
+        let branches' = List.map (
+            fun (pat, expr) -> 
+                let pat', scope_trans = rename_pattern scope pat in
+                let scope' = scope_trans scope in
+                (pat', rename_expr scope' expr)
+            ) branches 
+        in
+        Match(loc, expr', branches')
 
 and rename_seq_state (scope : RenameScope.t) (exprs : Parsed.expr list) : Renamed.expr list * RenameScope.t = let open RenameScope in
     match exprs with

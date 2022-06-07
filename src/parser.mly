@@ -158,6 +158,8 @@ pattern:
   | pattern COLON pattern { ConsPat(loc $startpos $endpos, $1, $3) }
   | LBRACKET pattern_comma_list RBRACKET { ListPat(loc $startpos $endpos, $2) }
   | IDENT { VarPat(loc $startpos $endpos, $1) }
+  | INT { NumPat (loc $startpos $endpos, float_of_int $1) }
+  | FLOAT { NumPat (loc $startpos $endpos, $1) }
   | LPAREN pattern RPAREN { $2 }
 
 pattern_comma_list:

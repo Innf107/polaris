@@ -203,6 +203,8 @@ end) = struct
       else
         let* transformations = Util.sequence_options (List.map2 match_pat ps vs) in
         Some(List.fold_right (fun t r env -> t (r env)) transformations (fun x -> x))
+    | NumPat(_, f1), NumV f2 when Float.equal f1 f2 ->
+        Some (fun x -> x) 
     | _ -> None
 
   let rec eval_expr (env : eval_env) (expr : Renamed.expr) : value =

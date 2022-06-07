@@ -34,6 +34,7 @@ struct
     | VarPat of loc * name
     | ConsPat of loc * pattern * pattern
     | ListPat of loc * pattern list
+    | NumPat of loc * float
 
   type expr =
     (* Lambda calculus *)
@@ -112,6 +113,7 @@ struct
     | VarPat (_, x) -> Name.pretty x
     | ConsPat (_, x, xs) -> "(" ^ pretty_pattern x ^ ") : (" ^ pretty_pattern xs ^ ")"
     | ListPat (_, pats) -> "[" ^ String.concat ", " (List.map pretty_pattern pats) ^ "]" 
+    | NumPat (_, f) -> Float.to_string f
 
   let rec pretty = function
     | Var (_, x) -> Name.pretty x

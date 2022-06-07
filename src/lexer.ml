@@ -316,8 +316,15 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
       continue ()
     | Some('.') ->
       let _ = next_char lexbuf in
-      state.lex_kind <- InDecimal (str ^ ".");
-      continue ()
+      begin match peek_char lexbuf with
+      | Some('.') ->
+        let _ = next_char lexbuf in
+        state.lex_kind <- Defer [DDOT];
+        INT (int_of_string str)
+      | _ -> 
+        state.lex_kind <- InDecimal (str ^ ".");
+        continue ()
+      end
     | _ ->
       state.lex_kind <- Default;
       INT (int_of_string str)

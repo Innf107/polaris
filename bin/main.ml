@@ -129,6 +129,9 @@ let handle_errors print_fun f =
     Loc.pretty loc ^ ": Trying to await non-promise: " ^ Value.pretty value
     ^ "\n" ^ pretty_call_trace locs
   )
+  | NonExhaustiveMatch (value, loc::locs) -> print_fun (
+    Loc.pretty loc ^ ": Non-exhaustive pattern match does not cover value: " ^ Value.pretty value
+  )
   | LexError (InvalidOperator (loc, name)) -> print_fun (
     Loc.pretty loc ^ ": Invalid operator: '" ^ name ^ "'"
   )

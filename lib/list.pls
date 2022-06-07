@@ -101,6 +101,11 @@ let fst(t) = head(t);
 let snd(t) = head(tail(t));
 
 
+let length(xs) = match xs {
+    [] -> 0
+    (_ : xs) -> length(xs)
+}
+
 #{
     foldr: foldr,
     foldl: foldl,
@@ -123,5 +128,7 @@ let snd(t) = head(tail(t));
 
     fst: fst,
     snd: snd,
+
+    length: length
 }
 

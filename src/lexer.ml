@@ -37,7 +37,7 @@ type lex_state = {
 }
 
 let new_lex_state () = {
-  indentation_level = [Opening]
+  indentation_level = [Found 0]
 ; lex_kind = Default
 }
 

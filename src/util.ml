@@ -31,3 +31,8 @@ let pad_right count padding str =
 type void
 
 let absurd (_ : void) = raise (Panic "absurd: impossible argument")
+
+let rec sequence_options = function
+  | None :: _ -> None
+  | Some(v) :: opts -> Option.map (fun x -> v :: x) (sequence_options opts) 
+  | [] -> Some []

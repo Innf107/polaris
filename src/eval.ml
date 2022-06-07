@@ -74,6 +74,8 @@ module EvalError = struct
   exception AwaitNonPromise of value * loc list
 
   exception ArgParseError of string
+
+  exception NonExhaustiveMatch of value * loc list
 end  
 
 module Value = struct
@@ -185,6 +187,23 @@ end) = struct
     | fd::fds ->
       Unix.close fd;
       close_all fds
+
+  let rec match_pat (pat : Renamed.pattern) (scrut : value) : (eval_env -> eval_env) option =
+    let (let*) = Option.bind in
+    match pat, scrut with
+    | VarPat (_, x), scrut ->
+      Some(fun env -> fst(insert_var x scrut env))
+    | ConsPat(_, p, ps), ListV (v :: vs) ->
+      let* x_trans = match_pat p v in
+      let* xs_trans = match_pat ps (ListV vs) in
+      Some(fun env -> xs_trans (x_trans env)) 
+    | ListPat(_, ps), ListV (vs) -> 
+      if List.compare_lengths ps vs != 0 then
+        None
+      else
+        let* transformations = Util.sequence_options (List.map2 match_pat ps vs) in
+        Some(List.fold_right (fun t r env -> t (r env)) transformations (fun x -> x))
+    | _ -> None
 
   let rec eval_expr (env : eval_env) (expr : Renamed.expr) : value =
     let open Renamed in
@@ -408,7 +427,17 @@ end) = struct
       | value -> raise (EvalError.AwaitNonPromise (value, loc :: env.call_trace))
       end
     | Match (loc, scrut, branches) ->
-      todo __POS__
+      let scrut_val = eval_expr env scrut in
+      let rec go = function
+        | (pat, expr) :: branches -> 
+          begin match match_pat pat scrut_val with
+          | Some env_trans ->
+            eval_expr (env_trans env) expr
+          | None -> go branches
+          end
+        | [] -> raise (EvalError.NonExhaustiveMatch (scrut_val, loc :: env.call_trace))
+      in
+      go branches
 
   and eval_app env loc fun_v arg_vals = 
     match fun_v with

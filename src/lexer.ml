@@ -67,6 +67,13 @@ let next_char (lexbuf : lexbuf) : char option =
       ();
     Some char
 
+let set_state indentation_state state lexbuf =
+  state.lex_kind <- indentation_state;
+  match indentation_state with
+  | InDecimal _ -> ()
+  | _ ->
+    lexbuf.lex_start_p <- lexbuf.lex_curr_p;
+    lexbuf.lex_start_pos <- lexbuf.lex_curr_pos
 
 let get_loc (lexbuf : lexbuf) : Syntax.loc =
   Syntax.Loc.from_pos (lexbuf.lex_curr_p) (lexbuf.lex_curr_p)
@@ -195,30 +202,30 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
   | Default -> 
     begin match next_char lexbuf with
     | Some('#') ->
-      state.lex_kind <- LeadingHash;
+      set_state LeadingHash state lexbuf;
       continue ()
     | Some('\n') ->
-      state.lex_kind <- LeadingWhitespace;
+      set_state LeadingWhitespace state lexbuf;
       continue ()
     | Some(' ') ->
       continue ()
     | Some('"') ->
-      state.lex_kind <- InString "";
+      set_state (InString "") state lexbuf;
       continue ()
     | Some('!') ->
-      state.lex_kind <- InBang "";
+      set_state (InBang "") state lexbuf;
       continue ()
     | Some('-') ->
-      state.lex_kind <- LeadingMinus;
+      set_state LeadingMinus state lexbuf;
       continue ()
     | Some(c) when is_digit c ->
-      state.lex_kind <- InNumber (string_of_char c);
+      set_state (InNumber (string_of_char c)) state lexbuf;
       continue ()
     | Some(c) when is_ident_start c ->
-      state.lex_kind <- InIdent (string_of_char c);
+      set_state (InIdent (string_of_char c)) state lexbuf;
       continue ()
     | Some(c) when is_op_start c ->
-      state.lex_kind <- InOp (string_of_char c);
+      set_state (InOp (string_of_char c)) state lexbuf;
       continue ()
     | Some(c) when is_paren c ->
       as_paren state c
@@ -229,35 +236,35 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     begin match next_char lexbuf with
     | Some('{') ->
       open_ignored_block state;
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       HASHLBRACE
     | Some('\n') ->
-      state.lex_kind <- LeadingWhitespace;
+      set_state (LeadingWhitespace) state lexbuf;
       continue ()
     | None ->
       Parser.EOF
     | _ ->
-      state.lex_kind <- Comment;
+      set_state (Comment) state lexbuf;
       continue ()
     end
   | LeadingMinus ->
     begin match peek_char lexbuf with
     | Some(c) when is_op c ->
-      state.lex_kind <- InOp ("-");
+      set_state (InOp ("-")) state lexbuf;
       continue ()
     | Some(c) when is_digit c ->
-      state.lex_kind <- InNumber ("-");
+      set_state (InNumber ("-")) state lexbuf;
       continue ()
     | Some(c) ->
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       MINUS
     | None ->
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       MINUS
     end
   | Comment -> begin match next_char lexbuf with
     | Some('\n') ->
-      state.lex_kind <- LeadingWhitespace;
+      set_state (LeadingWhitespace) state lexbuf;
       continue ()
     | Some(_) -> 
       continue ()
@@ -267,21 +274,21 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
   | InIdent(ident) -> begin match peek_char lexbuf with
     | Some(c) when is_ident c ->
       let _ = next_char lexbuf in
-      state.lex_kind <- InIdent(ident ^ string_of_char c);
+      set_state (InIdent(ident ^ string_of_char c)) state lexbuf;
       continue ()
     | Some(_) ->
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       ident_token ident
     | None -> 
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       ident_token ident
     end
   | InString str -> begin match next_char lexbuf with
     | Some('"') ->
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       STRING str
     | Some(c) ->
-      state.lex_kind <- InString (str ^ string_of_char c);
+      set_state (InString (str ^ string_of_char c)) state lexbuf;
       continue ()
     | None ->
       raise (LexError UnterminatedString)
@@ -289,52 +296,52 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
   | InBang str -> begin match peek_char lexbuf with
     | Some('=') ->
       let _ = next_char lexbuf in
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       BANGEQUALS
     | Some(c) when is_prog_char c ->
       let _ = next_char lexbuf in
-      state.lex_kind <- InBang (str ^ string_of_char c);
+      set_state (InBang (str ^ string_of_char c)) state lexbuf;
       continue ()
     | _ ->
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       BANG str
     end
   | InOp str -> begin match peek_char lexbuf with
     | Some(c) when is_op c ->
       let _ = next_char lexbuf in
-      state.lex_kind <- InOp (str ^ string_of_char c);
+      set_state (InOp (str ^ string_of_char c)) state lexbuf;
       continue ()
     | _ ->
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       op_token lexbuf str
     end
   | InNumber str -> begin match peek_char lexbuf with
     | Some(c) when is_digit c ->
       let _ = next_char lexbuf in
-      state.lex_kind <- InNumber (str ^ string_of_char c);
+      set_state (InNumber (str ^ string_of_char c)) state lexbuf;
       continue ()
     | Some('.') ->
       let _ = next_char lexbuf in
       begin match peek_char lexbuf with
       | Some('.') ->
         let _ = next_char lexbuf in
-        state.lex_kind <- Defer [DDOT];
+        set_state (Defer [DDOT]) state lexbuf;
         INT (int_of_string str)
       | _ -> 
-        state.lex_kind <- InDecimal (str ^ ".");
+        set_state (InDecimal (str ^ ".")) state lexbuf;
         continue ()
       end
     | _ ->
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       INT (int_of_string str)
     end
   | InDecimal str -> begin match peek_char lexbuf with
     | Some(c) when is_digit c ->
       let _ = next_char lexbuf in
-      state.lex_kind <- InDecimal (str ^ string_of_char c);
+      set_state (InDecimal (str ^ string_of_char c)) state lexbuf;
       continue ()
     | _ ->
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       FLOAT (float_of_string str)  
     end
   | LeadingWhitespace -> begin match peek_char lexbuf with
@@ -346,20 +353,20 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
       let _ = next_char lexbuf in
       begin match peek_char lexbuf with
       | Some('{') ->
-        state.lex_kind <- LeadingHash;
+        set_state (LeadingHash) state lexbuf;
         insert_semi continue state indentation
       | _ ->
-        state.lex_kind <- LeadingHash;
+        set_state (LeadingHash) state lexbuf;
         continue ()
       end
     | _ ->
-      state.lex_kind <- Default;
+      set_state (Default) state lexbuf;
       insert_semi continue state ((get_loc lexbuf).start_col - 1)
     end
   | Defer [] ->
-    state.lex_kind <- Default;
+    set_state (Default) state lexbuf;
     continue ()
   | Defer (tok :: toks) ->
-    state.lex_kind <- Defer toks;
+    set_state (Defer toks) state lexbuf;
     tok
 

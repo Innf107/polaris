@@ -27,8 +27,10 @@ type run_options = {
 }
 
 let pretty_call_trace (locs : loc list) =
-  "Call trace:"
-  ^ "\n    " ^ String.concat "\n    " (List.map Loc.pretty locs)
+  match locs with
+  | [] -> ""
+  | _ -> "Call trace:"
+       ^ "\n    " ^ String.concat "\n    " (List.map Loc.pretty locs)
 
 let handle_errors print_fun f = 
   let open Rename.RenameError in 

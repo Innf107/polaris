@@ -76,6 +76,8 @@ module EvalError = struct
   exception ArgParseError of string
 
   exception NonExhaustiveMatch of value * loc list
+
+  exception EnsureFailed of string * loc list
 end  
 
 module Value = struct
@@ -724,6 +726,19 @@ end) = struct
                 | [StringV path] -> 
                   StringV (Filename.dirname (List.hd env.argv) ^ "/" ^ path)
                 | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))
+                end
+    | "commandExists" -> begin match args with
+                | [StringV path] ->
+                  BoolV (Util.command_exists path)
+                | _ -> raise (PrimOpArgumentError("commandExists", args, "Expected a string", loc :: env.call_trace))
+                end
+    | "ensure" -> begin match args with
+                | [StringV path] ->
+                  if Util.command_exists path then
+                    UnitV
+                  else
+                    raise (EnsureFailed (path, loc::env.call_trace))
+                | _ -> raise (PrimOpArgumentError("ensure", args, "Expected a string", loc :: env.call_trace))
                 end
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 

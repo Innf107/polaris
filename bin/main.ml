@@ -139,6 +139,11 @@ let handle_errors print_fun f =
      running a script *)
   | ArgParseError msg -> print_endline msg; exit 1
 
+  | EnsureFailed (path, loc :: locs) -> print_fun (
+    Loc.pretty loc ^ ": Required command not installed: '" ^ path ^  "'"
+    ^ "\n" ^ pretty_call_trace locs
+  )
+
 let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;
   let _ = match options.backend with

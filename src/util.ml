@@ -36,3 +36,20 @@ let rec sequence_options = function
   | None :: _ -> None
   | Some(v) :: opts -> Option.map (fun x -> v :: x) (sequence_options opts) 
   | [] -> Some []
+
+let quiet_command cmd args =
+  match Unix.fork () with
+  | 0 ->
+    let devnull = Unix.openfile "/dev/null" [] 0 in
+    Unix.dup2 devnull Unix.stdin;
+    Unix.dup2 devnull Unix.stdout;
+    Unix.dup2 devnull Unix.stderr;
+    Unix.execvp cmd (Array.of_list (cmd :: args))
+  | pid ->
+    let _, status = Unix.waitpid [] pid in
+    status
+
+let command_exists path = 
+  match quiet_command "which" [path] with
+  | Unix.WEXITED 0 -> true
+  | _ -> false

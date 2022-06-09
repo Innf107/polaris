@@ -274,3 +274,5 @@ let () =
   match args with
   | [] -> run_repl options
   | (filepath :: args) -> ignore (run_file options filepath args)
+  ;
+  Promise.await_remaining ()

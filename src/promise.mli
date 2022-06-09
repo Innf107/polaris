@@ -10,3 +10,5 @@ val create : (unit -> 'a) -> 'a t
 val peek : 'a t -> 'a result
 
 val await : 'a t -> 'a
+
+val await_remaining : unit -> unit

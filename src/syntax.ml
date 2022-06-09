@@ -77,10 +77,10 @@ struct
     | If of loc * expr * expr * expr        (* if e then e else e*)
     (* Sequencing *)
     | Seq of loc * expr list                      (* { e₁ ; .. ; eₙ } *)
-    | LetSeq of loc * name * expr                 (* let x = e (Only valid inside `Seq` expressions) *)
+    | LetSeq of loc * pattern * expr              (* let p = e (Only valid inside `Seq` expressions) *)
     | LetRecSeq of loc * name * name list * expr  (* let rec f(x, .., x) = e*)
     (* Mutable local definitions *)
-    | Let of loc * name * expr * expr                 (* let x = e1 in e2 (valid everywhere) *)
+    | Let of loc * pattern * expr * expr              (* let p = e1 in e2 (valid everywhere) *)
     | LetRec of loc * name * name list * expr * expr  (* let rec f(x, .., x) = e*)
     | Assign of loc * name * expr                     (* x = e *)
     (* Scripting capabilities *)
@@ -164,10 +164,10 @@ struct
     | If (_, e1, e2, e3) -> "if " ^ pretty e1 ^ " then " ^ pretty e2 ^ " else " ^ pretty e3
 
     | Seq (_, exprs) -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
-    | LetSeq (_, x, e) -> "let " ^ Name.pretty x ^ " = " ^ pretty e
+    | LetSeq (_, x, e) -> "let " ^ pretty_pattern x ^ " = " ^ pretty e
     | LetRecSeq (_, x, xs, e) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e
     | Let (_, x, e1, e2) ->
-        "let " ^ Name.pretty x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
+        "let " ^ pretty_pattern x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
     | LetRec (_, x, xs, e1, e2) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
     | Assign (_, x, e) -> Name.pretty x ^ " = " ^ pretty e
     | ProgCall (_, prog, args) ->

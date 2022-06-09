@@ -89,13 +89,15 @@ let for(xs, f) = match xs {
 let forConcurrent(xs, f) = {
     let promises = [(async f(x)) | x <- xs]
     for(promises, \p -> await p)
-};
+}
 
 
 let length(xs) = match xs {
     [] -> 0
     (_ : xs) -> length(xs)
 }
+
+let reverse(xs) = foldl(\(xs, x) -> cons(x, xs), [], xs)
 
 let partition(pred, xs) = {
     let go(passed, failed, xs) = match xs {
@@ -141,6 +143,8 @@ let sort(xs) = match xs {
     snd: snd,
 
     length: length,
+
+    reverse: reverse,
 
     partition: partition,
     sort: sort,

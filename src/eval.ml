@@ -393,8 +393,13 @@ end) = struct
     | Seq (_, exprs) -> eval_seq env exprs
     | LetSeq _ | LetRecSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
-    | Let (loc, x, e1, e2) ->
-      eval_expr (insert_vars [x] [eval_expr env e1] env loc) e2
+    | Let (loc, pat, e1, e2) ->
+      let scrut = eval_expr env e1 in
+      begin match match_pat pat scrut with
+      | Some (env_trans) -> eval_expr (env_trans env) e2
+      | None -> raise (EvalError.NonExhaustiveMatch (scrut, loc :: env.call_trace))
+      end
+      (* eval_expr (insert_vars [x] [eval_expr env e1] env loc) e2 *)
     | LetRec (loc, f, params, e1, e2) ->
       let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e1)] env loc) in
       eval_expr (Lazy.force env') e2
@@ -468,8 +473,12 @@ end) = struct
     fun env exprs cont ->
     match exprs with
     | [] -> cont env (Right UnitV)
-    | LetSeq (loc, x, e) :: exprs -> 
-      eval_seq_cont (insert_vars [x] [(eval_expr env e)] env loc) exprs cont
+    | LetSeq (loc, pat, e) :: exprs -> 
+      let scrut = eval_expr env e in
+      begin match match_pat pat scrut with
+      | Some env_trans -> eval_seq_cont (env_trans env) exprs cont
+      | None -> raise (EvalError.NonExhaustiveMatch (scrut, loc :: env.call_trace))
+      end
     | LetRecSeq (loc, f, params, e) :: exprs ->
       let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e)] env loc) in
       eval_seq_cont (Lazy.force env') exprs cont

@@ -23,7 +23,6 @@ type run_options = {
   print_ast : bool;
   print_renamed : bool;
   print_tokens : bool;
-  backend : backend;
 }
 
 let pretty_call_trace (locs : loc list) =
@@ -148,10 +147,6 @@ let handle_errors print_fun f =
 
 let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;
-  let _ = match options.backend with
-    | EvalBackend -> ()
-    | BytecodeBackend -> fatal_error "The bytecode backend does not support interactive evaluation"
-  in
   let driver_options = {
       filename = "<interactive>"
       (* argv.(0) is "", to signify that this is a repl process.
@@ -160,7 +155,6 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
     ; print_ast = options.print_ast
     ; print_renamed = options.print_renamed
     ; print_tokens = options.print_tokens
-    ; backend = options.backend
     } in
   print_endline "Welcome to Polaris! Press Ctrl+D or type \"exit(0)\" to exit.";
   let rec go env scope =
@@ -185,18 +179,12 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
   go env scope
 
 let run_file (options : run_options) (filepath : string) (args : string list) = 
-  let _ = match options.backend with
-  | EvalBackend -> ()
-  | BytecodeBackend -> warning ("The bytecode backend is experimental and very incomplete. It will probably not work as expected")
-  in
-
   let driver_options = {
     filename = filepath
   ; argv = filepath :: args
   ; print_ast = options.print_ast
   ; print_renamed = options.print_renamed
   ; print_tokens = options.print_tokens
-  ; backend = options.backend
   } in
   handle_errors fatal_error (fun _ -> 
     let _, env, scope = 
@@ -238,7 +226,6 @@ let parse_args () : run_options * string list =
       print_ast = false;
       print_renamed = false;
       print_tokens = false;
-      backend = EvalBackend;
   } in
   let rec go options = function
   | ("--help" :: args) ->
@@ -252,14 +239,6 @@ let parse_args () : run_options * string list =
     go ({options with print_renamed = true}) args
   | ("--print-tokens" :: args) ->
     go ({options with print_tokens = true}) args
-  | ("--backend" :: "eval" :: args) ->
-    go ({options with backend = EvalBackend}) args
-  | ("--backend" :: "bytecode" :: args) ->
-    go ({options with backend = BytecodeBackend}) args
-  | ("--backend" :: backend :: args) ->
-    fail_usage ("Invalid backend '" ^ backend ^ "'. Possibble values: eval, bytecode (WIP)")
-  | ["--backend"] ->
-    fail_usage ("Missing argument for option '--backend'. Possible values: eval, bytecode (WIP)")
   | (option :: args) when String.starts_with ~prefix:"-" option ->
     fail_usage ("Invalid option: '" ^ option ^ "'.")
   | args -> (options, args) 

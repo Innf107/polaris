@@ -2,17 +2,12 @@ open Syntax
 open Rename
 open Eval
 
-type backend =
-    EvalBackend
-  | BytecodeBackend
-
 type driver_options = {
   filename : string;
   argv : string list;
   print_ast : bool;
   print_renamed : bool;
   print_tokens : bool;
-  backend : backend
 }
 
 exception ParseError of loc
@@ -47,7 +42,6 @@ module rec EvalInst : EvalI = Eval.Make(struct
       print_ast = false;
       print_renamed = false;
       print_tokens = false;
-      backend = EvalBackend (* The bytecode backend does not use `Eval` anyway, so this is fine *)
     } in
     let file_path = 
       if Filename.is_relative mod_path then  
@@ -109,11 +103,6 @@ and Driver : DriverI = struct
 
 
   let run_env (options : driver_options) (lexbuf : Lexing.lexbuf) (env : eval_env) (scope : RenameScope.t) : value * eval_env * RenameScope.t = 
-    let _ = match options.backend with
-    | EvalBackend -> ()
-    | BytecodeBackend -> raise (Util.Panic "The bytecode backend does not support incremental evaluation")
-    in
-
     let renamed_header, renamed, new_scope = parse_and_rename options lexbuf scope in
     
     let env = EvalInst.eval_header env renamed_header in
@@ -121,21 +110,10 @@ and Driver : DriverI = struct
     res, new_env, new_scope
 
   let run_eval (options : driver_options) (lexbuf : Lexing.lexbuf) : value =
-    let _ = match options.backend with
-    | EvalBackend -> ()
-    | BytecodeBackend -> raise (Util.Panic "The bytecode backend does not support value evaluation")
-    in
     let res, _, _ = run_env options lexbuf (EvalInst.empty_eval_env options.argv) RenameScope.empty in
     res
 
   let run (options : driver_options) (lexbuf : Lexing.lexbuf) : unit =
-    match options.backend with
-    | EvalBackend ->   
-      let _ = run_eval options lexbuf in
-      ()
-    | BytecodeBackend ->
-      let renamed_headers, renamed, _ = parse_and_rename options lexbuf RenameScope.empty in
-      let bytecode = Compile.compile renamed in
-      print_endline (Bytecode.pretty bytecode)
-    
+    let _ = run_eval options lexbuf in 
+    ()
 end

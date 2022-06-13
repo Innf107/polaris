@@ -2,7 +2,7 @@
 options {
     "-s" "--sync" as sync: "Execute tests synchronously instead of in parralel"
     "-e" "--exclude" (*) as exclude: "Exclude category from tests"
-    "--use-dune" as useDune: "Run test using 'dune exec polaris --' instead of 'polaris"
+    "--use-dune" as useDune: "Run test using 'dune exec polaris --' instead of 'polaris'"
 }
 
 let List = require("list.pls")

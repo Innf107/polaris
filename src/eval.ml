@@ -173,23 +173,6 @@ end) = struct
     (* Comparisons of different values are always false *)
     | _, _ -> false
 
-  let read_untyped_from_fd (fd : Unix.file_descr) : value =
-    let open Unix in
-    let chan = in_channel_of_descr fd in
-
-    let result = In_channel.input_all chan in
-
-    if String.length result > 0 && result.[String.length result - 1] == '\n' then 
-      StringV (String.sub result 0 (String.length result - 1))
-    else 
-      StringV result
-
-  let rec close_all = function
-    | [] -> ()
-    | fd::fds ->
-      Unix.close fd;
-      close_all fds
-
   let rec match_pat (pat : Renamed.pattern) (scrut : value) : (eval_env -> eval_env) option =
     let (let*) = Option.bind in
     match pat, scrut with

@@ -36,6 +36,15 @@ let zipWith(f, xs, ys) = match [xs, ys] {
 # O(min(n, m))
 let zip(xs, ys) = zipWith(\(x, y) -> [x, y], xs, ys);
 
+# O(n)
+let indexed(xs) = {
+    let go(ix, xs) = match xs {
+        [] -> []
+        (x : xs) -> [[x, ix]] ~ go(ix + 1, xs)
+    }
+    go(0, xs)
+}
+
 # Returns the first item `x` in the list, such that `pred(x) = true`
 # or `null`, if no such item exists.
 # O(n), tail recursive
@@ -128,6 +137,7 @@ let sort(xs) = match xs {
 
     zip: zip,
     zipWith: zipWith,
+    indexed: indexed,
 
     find: find,
     lookupWith: lookupWith,

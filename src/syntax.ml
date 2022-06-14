@@ -41,7 +41,7 @@ struct
     (* Lambda calculus *)
     | Var of loc * name                     (* x *)
     | App of loc * expr * expr list         (* e (e₁, .., eₙ) *)
-    | Lambda of loc * name list * expr      (* \(x₁, .., xₙ) -> e*)
+    | Lambda of loc * pattern list * expr      (* \(p₁, .., pₙ) -> e*)
     (* Literals *)
     | StringLit of loc * string             (* "str" *)
     | NumLit of loc * float                 (* f *)
@@ -78,10 +78,10 @@ struct
     (* Sequencing *)
     | Seq of loc * expr list                      (* { e₁ ; .. ; eₙ } *)
     | LetSeq of loc * pattern * expr              (* let p = e (Only valid inside `Seq` expressions) *)
-    | LetRecSeq of loc * name * name list * expr  (* let rec f(x, .., x) = e*)
+    | LetRecSeq of loc * name * pattern list * expr  (* let rec f(p, .., p) = e*)
     (* Mutable local definitions *)
     | Let of loc * pattern * expr * expr              (* let p = e1 in e2 (valid everywhere) *)
-    | LetRec of loc * name * name list * expr * expr  (* let rec f(x, .., x) = e*)
+    | LetRec of loc * name * pattern list * expr * expr  (* let rec f(p, .., p) = e*)
     | Assign of loc * name * expr                     (* x = e *)
     (* Scripting capabilities *)
     | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
@@ -93,7 +93,7 @@ struct
     | Match of loc * expr * (pattern * expr) list
 
   and list_comp_clause =
-    | DrawClause of name * expr (* x <- e *)
+    | DrawClause of pattern * expr (* p <- e *)
     | FilterClause of expr            (* e *)
 
   type flag_def = {
@@ -123,7 +123,7 @@ struct
         pretty f ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")"
     | Lambda (_, params, e) ->
         "\\("
-        ^ String.concat ", " (List.map Name.pretty params)
+        ^ String.concat ", " (List.map pretty_pattern params)
         ^ ") -> " ^ pretty e
     | StringLit (_,l) -> "\"" ^ l ^ "\""
     | NumLit (_, f) -> string_of_float f
@@ -156,7 +156,7 @@ struct
     | Range(_, e1, e2) -> "[" ^ pretty e1 ^ " .. " ^ pretty e2 ^ "]"
     | ListComp(_, e, clauses) -> 
       let pretty_list_comp = function
-      | DrawClause (x, e) -> Name.pretty x ^ " <- " ^ pretty e
+      | DrawClause (x, e) -> pretty_pattern x ^ " <- " ^ pretty e
       | FilterClause e -> pretty e
       in 
       "[" ^ pretty e ^ " | " ^ String.concat ", " (List.map pretty_list_comp clauses)
@@ -165,10 +165,10 @@ struct
 
     | Seq (_, exprs) -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
     | LetSeq (_, x, e) -> "let " ^ pretty_pattern x ^ " = " ^ pretty e
-    | LetRecSeq (_, x, xs, e) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e
+    | LetRecSeq (_, x, xs, e) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e
     | Let (_, x, e1, e2) ->
         "let " ^ pretty_pattern x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
-    | LetRec (_, x, xs, e1, e2) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map Name.pretty xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
+    | LetRec (_, x, xs, e1, e2) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
     | Assign (_, x, e) -> Name.pretty x ^ " = " ^ pretty e
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)

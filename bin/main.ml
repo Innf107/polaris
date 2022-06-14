@@ -81,7 +81,7 @@ let handle_errors print_fun f =
   | InvalidNumberOfArguments (params, vals, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Invalid number of arguments in function call.\n"
                      ^ "Expected " ^ Int.to_string (List.length params) ^ " arguments, but received " ^ Int.to_string (List.length vals) ^ ".\n"
-                     ^ "    Expected: (" ^ String.concat ", " (List.map Name.original_name params) ^ ")\n"
+                     ^ "    Expected: (" ^ String.concat ", " (List.map Renamed.pretty_pattern params) ^ ")\n"
                      ^ "      Actual: (" ^ String.concat ", " (List.map Value.pretty vals) ^ ")"
                      ^ "\n" ^ pretty_call_trace locs
       )

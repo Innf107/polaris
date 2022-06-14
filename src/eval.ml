@@ -19,7 +19,7 @@ and value =
   (* The closure environment has to be lazy to
      support recursive lets, since the definition of a recursive function has
      to be stored in its own closure, which also stores its on environment, etc.*)
-  | ClosureV of eval_env lazy_t * name list * Renamed.expr
+  | ClosureV of eval_env lazy_t * Renamed.pattern list * Renamed.expr
   (* PrimOps should be mostly indistinguishable from regular closures.
      The only exception is pretty printing, where primops are printed as
      "<primative: name>" instead of <closure(args)>
@@ -48,7 +48,7 @@ module EvalError = struct
   exception TryingToLookupDynamicInNonMap of value * loc list
   exception InvalidKey of value * value MapVImpl.t * loc list
   exception MapDoesNotContain of value MapVImpl.t * string * loc list
-  exception InvalidNumberOfArguments of name list * value list * loc list
+  exception InvalidNumberOfArguments of Renamed.pattern list * value list * loc list
   (* TODO: Once exceptions are implemented, prim op argument errors should
     just be polaris exceptions. 
     Maybe these could even just be contract failures, if those ever
@@ -91,7 +91,7 @@ module Value = struct
       then string_of_int (int_of_float n)
       else string_of_float n
     | ClosureV (_, params, _) ->
-        "<closure(" ^ String.concat ", " (List.map Name.pretty params) ^ ")>"
+        "<closure(" ^ String.concat ", " (List.map Syntax.Renamed.pretty_pattern params) ^ ")>"
     | PrimOpV name ->
         "<primative: " ^ name ^ ">"
     | UnitV -> "()"
@@ -126,11 +126,6 @@ end) = struct
       VarMap.find var env.vars
     with
       Not_found -> raise (EvalError.DynamicVarNotFound (var, loc :: env.call_trace))
-
-  let insert_vars (vars : name list) (vals : value list) (env : eval_env) (loc : loc) : eval_env =
-    if (List.compare_lengths vars vals != 0) 
-    then raise (EvalError.InvalidNumberOfArguments (vars, vals, loc :: env.call_trace))
-    else { env with vars = List.fold_right2 (fun x v r -> VarMap.add x (ref v) r) vars vals env.vars }
 
   let insert_var : name -> value -> eval_env -> eval_env * value ref =
     fun var value env ->
@@ -173,29 +168,42 @@ end) = struct
     (* Comparisons of different values are always false *)
     | _, _ -> false
 
-  let rec match_pat (pat : Renamed.pattern) (scrut : value) : (eval_env -> eval_env) option =
+  let rec match_pat_opt (pat : Renamed.pattern) (scrut : value) : (eval_env -> eval_env) option =
     let (let*) = Option.bind in
     match pat, scrut with
     | VarPat (_, x), scrut ->
       Some(fun env -> fst(insert_var x scrut env))
     | ConsPat(_, p, ps), ListV (v :: vs) ->
-      let* x_trans = match_pat p v in
-      let* xs_trans = match_pat ps (ListV vs) in
+      let* x_trans = match_pat_opt p v in
+      let* xs_trans = match_pat_opt ps (ListV vs) in
       Some(fun env -> xs_trans (x_trans env)) 
     | ListPat(_, ps), ListV (vs) -> 
       if List.compare_lengths ps vs != 0 then
         None
       else
-        let* transformations = Util.sequence_options (List.map2 match_pat ps vs) in
+        let* transformations = Util.sequence_options (List.map2 match_pat_opt ps vs) in
         Some(List.fold_right (fun t r env -> t (r env)) transformations (fun x -> x))
     | NumPat(_, f1), NumV f2 when Float.equal f1 f2 ->
         Some (fun x -> x) 
     | OrPat(_, p1, p2), v ->
-      begin match match_pat p1 v with
+      begin match match_pat_opt p1 v with
       | Some(t) -> Some(t)
-      | None -> match_pat p2 v
+      | None -> match_pat_opt p2 v
       end
     | _ -> None
+
+  let match_pat pat scrut locs =
+    match match_pat_opt pat scrut with
+    | None -> raise (EvalError.NonExhaustiveMatch (scrut, locs))
+    | Some trans -> trans
+
+  let rec match_params patterns arg_vals locs = match patterns, arg_vals with
+  | [], [] -> fun x -> x
+  | ([] as pats), (_ as args) | (_ as pats), ([] as args) -> raise (EvalError.InvalidNumberOfArguments (pats, args, locs))
+  | pat :: pats, arg :: args -> 
+    let trans = match_pat pat arg locs in
+    fun s -> match_params pats args locs (trans s)
+
 
   let rec eval_expr (env : eval_env) (expr : Renamed.expr) : value =
     let open Renamed in
@@ -210,7 +218,7 @@ end) = struct
       let f_val = eval_expr env f in
       let arg_vals = List.map (eval_expr env) args in
       eval_app env loc f_val arg_vals
-    | Lambda (_, params, e) -> ClosureV (lazy env, params, e)
+    | Lambda (_, patterns, e) -> ClosureV (lazy env, patterns, e)
     
     | StringLit (_, s) -> StringV s
     | NumLit (_, f)    -> NumV f
@@ -378,13 +386,11 @@ end) = struct
 
     | Let (loc, pat, e1, e2) ->
       let scrut = eval_expr env e1 in
-      begin match match_pat pat scrut with
-      | Some (env_trans) -> eval_expr (env_trans env) e2
-      | None -> raise (EvalError.NonExhaustiveMatch (scrut, loc :: env.call_trace))
-      end
-      (* eval_expr (insert_vars [x] [eval_expr env e1] env loc) e2 *)
+      let env_trans =match_pat pat scrut (loc :: env.call_trace) in
+      eval_expr (env_trans env) e2
+
     | LetRec (loc, f, params, e1, e2) ->
-      let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e1)] env loc) in
+      let rec env' = lazy (fst (insert_var f (ClosureV (env', params, e1)) env)) in
       eval_expr (Lazy.force env') e2
     | Assign (loc, x, e1) ->
       let x_ref = lookup_var env loc x  in
@@ -427,7 +433,7 @@ end) = struct
       let scrut_val = eval_expr env scrut in
       let rec go = function
         | (pat, expr) :: branches -> 
-          begin match match_pat pat scrut_val with
+          begin match match_pat_opt pat scrut_val with
           | Some env_trans ->
             eval_expr (env_trans env) expr
           | None -> go branches
@@ -440,7 +446,9 @@ end) = struct
     match fun_v with
     | ClosureV (clos_env, params, body) ->
         (* Function arguments are evaluated left to right *)
-        let updated_clos_env = insert_vars params arg_vals (Lazy.force clos_env) loc in
+        let env_trans = match_params params arg_vals (loc :: env.call_trace) in
+
+        let updated_clos_env = env_trans (Lazy.force clos_env) in
         (* The call trace is extended and carried over to the closure environment *)
         eval_expr {updated_clos_env with call_trace = loc :: env.call_trace} body
     
@@ -458,12 +466,11 @@ end) = struct
     | [] -> cont env (Right UnitV)
     | LetSeq (loc, pat, e) :: exprs -> 
       let scrut = eval_expr env e in
-      begin match match_pat pat scrut with
-      | Some env_trans -> eval_seq_cont (env_trans env) exprs cont
-      | None -> raise (EvalError.NonExhaustiveMatch (scrut, loc :: env.call_trace))
-      end
+      let env_trans = match_pat pat scrut (loc :: env.call_trace) in
+      eval_seq_cont (env_trans env) exprs cont
+
     | LetRecSeq (loc, f, params, e) :: exprs ->
-      let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e)] env loc) in
+      let rec env' = lazy (fst (insert_var f (ClosureV (env', params, e)) env)) in
       eval_seq_cont (Lazy.force env') exprs cont
     
     (* Single program calls are just evaluated like pipes *)
@@ -517,12 +524,14 @@ end) = struct
       | BoolV true -> eval_list_comp env loc result_expr comps
       | v -> raise (EvalError.NonBoolInListComp (v, loc :: env.call_trace))
       end
-    | DrawClause (name, expr) :: comps ->
+    | DrawClause (pattern, expr) :: comps ->
       begin match eval_expr env expr with
       | ListV values ->
         let eval_with_val v =
-          let env' = insert_vars [name] [v] env loc in
-          eval_list_comp env' loc result_expr comps
+          match match_pat_opt pattern v with
+          | None -> []
+          | Some env_trans -> 
+            eval_list_comp (env_trans env) loc result_expr comps
         in
         List.concat_map eval_with_val values
       | v -> raise (EvalError.NonListInListComp (v, loc :: env.call_trace))

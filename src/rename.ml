@@ -48,6 +48,12 @@ let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in functio
         let p2', p2_trans = rename_pattern scope p2 in
         (OrPat(loc, p1', p2'), fun scope -> p2_trans (p1_trans scope))
 
+let rename_patterns scope pats =
+    List. fold_right (fun pat (pats', trans) -> begin
+        let pat', pat_trans = rename_pattern scope pat in
+        (pat' :: pats', fun s -> pat_trans (trans s))
+    end) pats ([], fun x -> x)
+
 let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
     match expr with 
     | Var (loc, var_name) ->
@@ -57,9 +63,8 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
     | App (loc, f, args) -> App (loc, rename_expr scope f, List.map (rename_expr scope) args)
     
     | Lambda (loc, xs, e) ->
-        let xs' = List.map (fresh_var scope) xs in
-        let scope' = List.fold_right2 insert_var xs xs' scope in
-        Lambda (loc, xs', rename_expr scope' e)
+        let xs', scope_trans = rename_patterns scope xs in
+        Lambda (loc, xs', rename_expr (scope_trans scope) e)
 
     | StringLit (loc, s) -> StringLit (loc, s)
     | NumLit (loc, n) -> NumLit (loc, n)
@@ -96,11 +101,12 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
         | Parsed.FilterClause expr :: comps ->
             let expr' = rename_expr scope expr in
             rename_comp scope (FilterClause expr' :: renamed_comp_exprs_rev) comps
-        | Parsed.DrawClause (name, expr) :: comps -> 
+        | Parsed.DrawClause (pattern, expr) :: comps -> 
+            (* The expression is renamed with the previous scope, since
+               draw clauses cannot be recursive *)
             let expr' = rename_expr scope expr in
-            let name' = fresh_var scope name in
-            let scope' = insert_var name name' scope in
-            rename_comp scope' (DrawClause (name', expr') :: renamed_comp_exprs_rev) comps
+            let pattern', scope_trans = rename_pattern scope pattern in
+            rename_comp (scope_trans scope) (DrawClause (pattern', expr') :: renamed_comp_exprs_rev) comps
         in
         rename_comp scope [] comp_exprs
 
@@ -114,13 +120,13 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
         let p', scope_trans = rename_pattern scope p in
         (* regular lets are non-recursive, so e1 is *not* evaluated in the new scope *)
         Let (loc, p', rename_expr scope e1, rename_expr (scope_trans scope) e2)
-    | LetRec (loc, x, params, e1, e2) ->
+    | LetRec (loc, x, patterns, e1, e2) ->
         let x' = fresh_var scope x in
-        let params' = List.map (fresh_var scope) params in
+        let patterns', scope_trans = rename_patterns scope patterns in
         let scope' = insert_var x x' scope in
-        let inner_scope = List.fold_right2 insert_var params params' scope' in
+        let inner_scope = scope_trans scope' in
         (* let rec's *are* recursive *)
-        LetRec(loc, x', params', rename_expr inner_scope e1, rename_expr scope' e2)
+        LetRec(loc, x', patterns', rename_expr inner_scope e1, rename_expr scope' e2)
     | Assign (loc, x, e) ->
         let x' = lookup_var scope loc x in
         Assign (loc, x', rename_expr scope e)
@@ -152,15 +158,15 @@ and rename_seq_state (scope : RenameScope.t) (exprs : Parsed.expr list) : Rename
         let e' = rename_expr scope e in
         let exprs', res_scope = rename_seq_state (scope_trans scope) exprs in
         (LetSeq (loc, p', e') :: exprs', res_scope)
-    | LetRecSeq (loc, x, params, e) :: exprs -> 
+    | LetRecSeq (loc, x, patterns, e) :: exprs -> 
         let x' = fresh_var scope x in
-        let params' = List.map (fresh_var scope) params in
+        let patterns', scope_trans = rename_patterns scope patterns in
         let scope' = insert_var x x' scope in
-        let inner_scope = List.fold_right2 insert_var params params' scope' in
+        let inner_scope = scope_trans scope' in
         (* let rec's *are* recursive! *)
         let e' = rename_expr inner_scope e in
         let exprs', res_scope = rename_seq_state scope' exprs in
-        (LetRecSeq(loc, x', params', e') :: exprs', res_scope)
+        (LetRecSeq(loc, x', patterns', e') :: exprs', res_scope)
     | (e :: exprs) -> 
         let e' = rename_expr scope e in
         let exprs', res_state = rename_seq_state scope exprs in

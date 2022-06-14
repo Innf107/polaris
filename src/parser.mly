@@ -66,21 +66,21 @@ expr:
 
   (* The first element has to be a draw clause to differentiate 
   between list comprehensions and pipes *)
-  | LBRACKET expr PIPE IDENT LARROW expr list_comp_list RBRACKET       { ListComp (loc $startpos $endpos, $2, DrawClause ($4, $6) :: $7) } // [ e | x <- e, ... ]
+  | LBRACKET expr PIPE pattern LARROW expr list_comp_list                { ListComp (loc $startpos $endpos, $2, DrawClause ($4, $6) :: $7) } // [ e | x <- e, ... ]
   (* We need a special case for async/await expressions in list comprehensions*)
-  | LBRACKET ASYNC expr PIPE IDENT LARROW expr list_comp_list RBRACKET { ListComp (loc $startpos $endpos, Async(loc $startpos $endpos, $3), DrawClause ($5, $7) :: $8)} // [ async e | x <- e, ... ]
-  | LBRACKET AWAIT expr PIPE IDENT LARROW expr list_comp_list RBRACKET { ListComp (loc $startpos $endpos, Await(loc $startpos $endpos, $3), DrawClause ($5, $7) :: $8)} // [ async e | x <- e, ... ]
+  | LBRACKET ASYNC expr PIPE pattern LARROW expr list_comp_list          { ListComp (loc $startpos $endpos, Async(loc $startpos $endpos, $3), DrawClause ($5, $7) :: $8)} // [ async e | x <- e, ... ]
+  | LBRACKET AWAIT expr PIPE pattern LARROW expr list_comp_list          { ListComp (loc $startpos $endpos, Await(loc $startpos $endpos, $3), DrawClause ($5, $7) :: $8)} // [ async e | x <- e, ... ]
 
   | HASHLBRACE map_kv_list RBRACE                               { MapLit (loc $startpos $endpos, $2) }                             // #{ x: e, .., x: e }
   | expr DOT IDENT                                              { MapLookup (loc $startpos $endpos, $1, $3) }                      // e.x
   | expr LBRACKET expr RBRACKET                                 { DynLookup (loc $startpos $endpos, $1, $3) }                      // e[e]
   | LPAREN expr RPAREN                                          { $2 }                                                             // ( e )
-  | LAMBDA IDENT ARROW expr                                     { Lambda(loc $startpos $endpos, [$2], $4) }                        // \x -> e
-  | LAMBDA LPAREN ident_list RPAREN ARROW expr                  { Lambda(loc $startpos $endpos, $3, $6) }                          // \(x, .., x) -> e
+  | LAMBDA pattern ARROW expr                                   { Lambda(loc $startpos $endpos, [$2], $4) }                        // \x -> e
+  | LAMBDA LPAREN param_list RPAREN ARROW expr                  { Lambda(loc $startpos $endpos, $3, $6) }                          // \(x, .., x) -> e
   | LET pattern EQUALS expr IN expr                             { Let (loc $startpos $endpos, $2, $4, $6) }                        // let x = e in e
   | LET pattern EQUALS expr                                     { LetSeq (loc $startpos $endpos, $2, $4) }                         // let x = e
-  | LET IDENT LPAREN ident_list RPAREN EQUALS expr              { LetRecSeq (loc $startpos $endpos, $2, $4, $7) }                  // let rec f(x, .., x) = e
-  | LET IDENT LPAREN ident_list RPAREN EQUALS expr IN expr      { LetRec (loc $startpos $endpos, $2, $4, $7, $9) }                 // let rec f(x, .., x) = e in e
+  | LET IDENT LPAREN param_list RPAREN EQUALS expr              { LetRecSeq (loc $startpos $endpos, $2, $4, $7) }                  // let rec f(x, .., x) = e
+  | LET IDENT LPAREN param_list RPAREN EQUALS expr IN expr      { LetRec (loc $startpos $endpos, $2, $4, $7, $9) }                 // let rec f(x, .., x) = e in e
   | LBRACE expr_semi_list RBRACE                                { Seq(loc $startpos $endpos, $2) }                                 // {e; ..; e}
   | expr LPAREN expr_comma_list RPAREN                          { App(loc $startpos $endpos, $1, $3) }                             // e(e, .., e)
   | IDENT COLONEQUALS expr                                      { Assign(loc $startpos $endpos, $1, $3)}                           // x = e
@@ -134,20 +134,23 @@ map_kv_list:
   | IDENT COLON expr { [($1, $3)] }
   | { [] }
 
-ident_list:
-  | IDENT COMMA ident_list { $1 :: $3 }
-  | IDENT { [$1] }
+param_list:
+  | pattern COMMA param_list { $1 :: $3 }
+  | pattern { [$1] }
   | { [] }
 
 list_comp_list:
-  | COMMA list_comp_elem list_comp_list  { $2 :: $3 }
-  (* trailing comma *)
-  | COMMA { [] }
-  | { [] }
+  | COMMA list_comp_list_inner { $2 }
+  | RBRACKET { [] }
 
-list_comp_elem:
-  | IDENT LARROW expr { DrawClause ($1, $3) }
-  | expr              { FilterClause $1 }
+list_comp_list_inner:  
+  | pattern LARROW expr RBRACKET { [ DrawClause ($1, $3) ] }
+  | expr RBRACKET                { [ FilterClause $1 ] }
+
+  | pattern LARROW expr COMMA list_comp_list_inner { DrawClause ($1, $3) :: $5}
+  | expr COMMA list_comp_list_inner { FilterClause $1 :: $3 }
+  (* trailing comma *)
+  | RBRACKET { [] }
 
 match_list:
   | pattern ARROW expr SEMI+ match_list { ($1, $3) :: $5 }
@@ -155,13 +158,13 @@ match_list:
   | { [] }
 
 pattern:
-  | pattern PIPE pattern { OrPat(loc $startpos $endpos, $1, $3) }
-  | pattern COLON pattern { ConsPat(loc $startpos $endpos, $1, $3) }
-  | LBRACKET pattern_comma_list RBRACKET { ListPat(loc $startpos $endpos, $2) }
-  | IDENT { VarPat(loc $startpos $endpos, $1) }
-  | INT { NumPat (loc $startpos $endpos, float_of_int $1) }
-  | FLOAT { NumPat (loc $startpos $endpos, $1) }
-  | LPAREN pattern RPAREN { $2 }
+  | pattern PIPE pattern                  { OrPat(loc $startpos $endpos, $1, $3) }
+  | pattern COLON pattern                 { ConsPat(loc $startpos $endpos, $1, $3) }
+  | LBRACKET pattern_comma_list RBRACKET  { ListPat(loc $startpos $endpos, $2) }
+  | IDENT                                 { VarPat(loc $startpos $endpos, $1) }
+  | INT                                   { NumPat (loc $startpos $endpos, float_of_int $1) }
+  | FLOAT                                 { NumPat (loc $startpos $endpos, $1) }
+  | LPAREN pattern RPAREN                 { $2 }
 
 pattern_comma_list:
   | pattern COMMA pattern_comma_list { $1 :: $3 }

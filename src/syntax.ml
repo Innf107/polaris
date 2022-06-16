@@ -1,10 +1,5 @@
-type loc = {
-  file : string;
-  start_line : int;
-  start_col : int;
-  end_line : int;
-  end_col : int
-}
+type loc = Athena.loc
+
 module Loc = struct
   let pretty (loc : loc) =
     Printf.sprintf "%s:%d:%d-%d:%d" loc.file loc.start_line loc.start_col loc.end_line loc.end_col

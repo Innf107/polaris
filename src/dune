@@ -1,15 +1,12 @@
 (library
  (name polaris)
  (libraries
-  readline 
-  menhirLib
+  readline
+  athena
   unix
   str
   pcre
   threads))
-
-(menhir
- (modules parser))
 
 (env
   (dev

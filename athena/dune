@@ -1,0 +1,9 @@
+(library
+ (name athena)
+)
+
+(env
+  (dev
+    (flags 
+      (:standard -warn-error -A -w -27)
+    )))

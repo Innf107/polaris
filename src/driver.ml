@@ -10,7 +10,7 @@ type driver_options = {
   print_tokens : bool;
 }
 
-exception ParseError of loc
+exception ParseError of loc * string
 
 
 module type EvalI = sig
@@ -68,21 +68,29 @@ and Driver : DriverI = struct
       let lex_state = Lexer.new_lex_state () in
       let rec go () =
         match Lexer.token lex_state lexbuf with
-        | Parser.EOF -> exit 0
-        | t -> print_endline (Parserutil.pretty_token t); go ()
+        | Parser.Token.EOF -> exit 0
+        | t -> print_endline (Parser.Token.pretty t); go ()
       in
       go ()
     else
       ();
 
     let header, ast = 
-      try 
-        Parser.main (Lexer.token (Lexer.new_lex_state ())) lexbuf 
+      let lex_state = Lexer.new_lex_state () in
+      let stream = Athena.Stream.of_iter begin fun () -> 
+        match Lexer.token lex_state lexbuf with 
+        | Parser.Token.EOF -> None 
+        | x -> Some(x)
+        end
+      in
+      match
+        Parser.main stream 
       with 
-      | Parser.Error -> 
+      | Ok res -> res
+      | Error(err) -> 
         let start_pos = lexbuf.lex_start_p in
         let end_pos = lexbuf.lex_curr_p in 
-        raise (ParseError (Loc.from_pos start_pos end_pos)) 
+        raise (ParseError (Loc.from_pos start_pos end_pos, Parser.pretty_error err)) 
     in
     if options.print_ast then begin
       print_endline "~~~~~~~~Parsed AST~~~~~~~~";

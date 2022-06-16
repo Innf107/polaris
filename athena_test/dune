@@ -1,0 +1,12 @@
+(executable
+ (public_name athena_test)
+ (name athena_test)
+ (libraries 
+    athena
+  ))
+
+(env
+  (dev
+    (flags 
+      (:standard -warn-error -A -w -27)
+    )))    

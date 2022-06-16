@@ -37,7 +37,7 @@ let handle_errors print_fun f =
   try 
     f ()
   with 
-  | ParseError loc -> print_fun ("Parse Error at " ^ Loc.pretty loc)
+  | ParseError (loc, msg) -> print_fun ("Parse Error at " ^ Loc.pretty loc ^ ": " ^ msg)
   | Sys_error msg -> print_fun ("System error: " ^ msg)
   (* RenameError *)
   | VarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Variable not found: '" ^ x ^ "'")

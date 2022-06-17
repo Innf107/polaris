@@ -22,7 +22,9 @@ end) : sig
                     | ParseErrorOn of string * Token.t
                     | UnexpectedToken of Token.t
 
-    type 'a parser
+    type 'a parser_impl
+
+    type 'a parser = Token.t Stream.t -> 'a parser_impl
 
     val parse : 'a parser -> Token.t Stream.t -> ('a, parse_error) result
 

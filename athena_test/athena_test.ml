@@ -32,38 +32,38 @@ let pretty_parse_error = function
 
 let var = (fun x -> Var x) <$> any
 
-let rec mul_term = lazy begin
+let rec mul_term stream = begin
   (fun x y -> Mul(x, y))
   <$> var
   <*  token "*"
-  <*> Lazy.force term
-end
+  <*> term
+end stream
 
-and term = lazy begin
-      Lazy.force mul_term
+and term stream = begin
+      mul_term
   <|> var
-end
+end stream
 
-and add_expr = lazy begin
+and add_expr stream = begin
   (fun x y -> Add(x, y)) 
-  <$> Lazy.force term
+  <$> term
   <*  token "+"
-  <*> Lazy.force expr
-end
+  <*> expr
+end stream
 
-and sub_expr = lazy begin 
+and sub_expr stream = begin 
   (fun x y -> Sub(x, y)) 
-  <$> Lazy.force term
+  <$> term
   <*  token "-"
-  <*> Lazy.force expr
-end
+  <*> expr
+end stream
   
 
-and expr = lazy begin
-      Lazy.force add_expr
-  <|> Lazy.force sub_expr
-  <|> Lazy.force term
-end
+and expr stream  = begin
+      add_expr
+  <|> sub_expr
+  <|> term
+end stream
 
 let should_be name actual expected pretty = 
   if actual = expected then
@@ -85,7 +85,7 @@ let should_be_ok name actual_res expected pretty pretty_error =
 
 
 let should_parse name input expected = 
-  should_be_ok name (parse (Lazy.force expr) (lex_string input)) expected pretty_expr pretty_parse_error
+  should_be_ok name (parse expr (lex_string input)) expected pretty_expr pretty_parse_error
 
 
 let id x = x
@@ -99,6 +99,6 @@ let () =
   should_be_ok "var" (parse var (lex_string "x")) (Var "x") pretty_expr pretty_parse_error;
   should_be_ok "var var" (parse (var *> var) (lex_string "x y")) (Var "y") pretty_expr pretty_parse_error;
   should_be_ok "many" (parse (many var) (lex_string "x y")) [Var "x"; Var "y"] (fun x -> String.concat ", " (List.map pretty_expr x)) pretty_parse_error;
-  should_be_ok "term" (parse (Lazy.force term) (lex_string "x * y")) (Mul (Var "x", Var "y")) pretty_expr pretty_parse_error;
+  should_be_ok "term" (parse term (lex_string "x * y")) (Mul (Var "x", Var "y")) pretty_expr pretty_parse_error;
 
   should_parse "nested operators" "1 + 2 * 3 + 4" (Add (Var "1", Add (Mul (Var "2", Var "3"), Var "4")));

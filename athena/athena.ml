@@ -20,12 +20,11 @@ end) = struct
                    | ParseErrorOn of string * Token.t
                    | UnexpectedToken of Token.t
 
-  type 'a parser = {
-    run : Token.t Stream.t -> ('a * Token.t Stream.t, parse_error) result
-  }
+  type 'a parser_impl = ('a * Token.t Stream.t, parse_error) result
+  type 'a parser = Token.t Stream.t -> 'a parser_impl
 
   let parse parser stream =
-    match parser.run stream with
+    match parser stream with
     | Error err -> Error err
     | Ok(x, stream') ->
       match Stream.next stream' with
@@ -33,25 +32,24 @@ end) = struct
       | _ -> Error (RemainingTokens stream')
     
 
-  let map f parser = {
-        run = fun stream -> match parser.run stream with
+  let map f parser = 
+        fun stream -> match parser stream with
           | Error err -> Error err
           | Ok (res, str') -> Ok(f res, str') 
-      }
+      
+  let pure x =
+    fun stream -> Ok (x, stream)
+  
 
-  let pure x = {
-    run = fun stream -> Ok (x, stream)
-  }
-
-  let (<*>) f_parser arg_parser = {
-      run = fun stream -> 
-        match f_parser.run stream with
+  let (<*>) f_parser arg_parser =
+      fun stream -> 
+        match f_parser stream with
         | Error err -> Error err
         | Ok (f, stream) -> 
-          match arg_parser.run stream with
+          match arg_parser stream with
           | Error err -> Error err
           | Ok(arg, stream) -> Ok(f arg, stream)
-  }
+
 
   let (<$>) = map
 
@@ -66,46 +64,46 @@ end) = struct
     <*> parser1 
     <*> parser2
 
-  let bind parser cont = {
-    run = fun stream ->
-      match parser.run stream with
+  let bind parser cont =
+    fun stream ->
+      match parser stream with
       | Error err -> Error err
-      | Ok (res, str') -> (cont res).run str'
-  }
+      | Ok (res, str') -> cont res str'
+
 
   let (>>=) = bind
 
   let (let*) = bind
 
-  let (<|>) left right = {
-    run = fun stream ->
-      match left.run stream with
+  let (<|>) left right =
+    fun stream ->
+      match left stream with
       | Ok res -> Ok res
-      | Error _ -> right.run stream (* TODO: Include the error somehow *)
-  }
+      | Error _ -> right stream (* TODO: Include the error somehow *)
 
-  let fail msg = {
-    run = fun _ -> Error (ParseError msg)
-  }
 
-  let fail_error err = {
-    run = fun _ -> Error err
-  }
+  let fail msg =
+    fun _ -> Error (ParseError msg)
+  
 
-  let (<?>) p msg = {
-    run = fun stream -> match p.run stream with
+  let fail_error err =
+    fun _ -> Error err
+  
+
+  let (<?>) p msg = 
+    fun stream -> match p stream with
       | Ok res -> Ok res
       | Error (ParseErrorOn (_, t) | UnexpectedToken t) -> Error (ParseErrorOn (msg, t))
       | Error _ -> Error (ParseError msg)
-  }
+  
   let (<??>) msg p = p <?> msg
 
-  let any = {
-    run = fun stream ->
+  let any =
+    fun stream ->
       match Stream.next stream with
       | None -> Error UnexpectedEOF
       | Some (tok, stream') -> Ok(tok, stream')
-  }
+  
 
   let satisfy f =
     any >>= fun tok ->
@@ -127,9 +125,9 @@ end) = struct
 
   (* This stack overflow, since it has to evaluate 'many parser', to even construct the parser *)
   let rec many parser =
-    begin
+    (fun stream -> begin
       List.cons <$> parser <*> many parser
-    end
+    end stream)
     <|> pure []
 
   let some parser = 

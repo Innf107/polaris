@@ -53,3 +53,6 @@ let command_exists path =
   match quiet_command "which" [path] with
   | Unix.WEXITED 0 -> true
   | _ -> false
+
+let take n list =
+  List.of_seq (Seq.take n (List.to_seq list))

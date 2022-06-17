@@ -134,7 +134,7 @@ let (and*) = AthenaInst.prod
 
 
 let pretty_error = function
-  | RemainingTokens toks -> "Unexpected remaining tokens. Expected end of file"
+  | RemainingTokens toks -> "Unexpected remaining tokens. Expected end of file.\nNext 10 tokens: " ^ String.concat (" ") (List.map (Token.pretty) (Util.take 10 (Stream.collect toks)))
   | UnexpectedEOF -> "Unexpected end of file"
   | ParseError msg -> msg
   | ParseErrorOn (msg, tok) -> "Unexpected '" ^ Token.pretty tok ^ "': " ^ msg
@@ -182,6 +182,22 @@ let header = (fun u d opts -> { usage = u; description = d; options = Option.val
   <*  many (token SEMI)
   <*> optional header_options                               (* options *)
 
+let rec pattern stream = begin
+  chainl1 pattern1 (let* t = token PIPE in pure (fun p1 p2 -> OrPat(Token.get_loc t, p1, p2)))
+end stream
+
+and pattern1 stream = begin
+  chainl1 pattern_leaf (let* t = token COLON in pure (fun p1 p2 -> ConsPat(Token.get_loc t, p1, p2)))
+end stream
+
+and pattern_leaf stream = begin
+      ((fun loc ps -> ListPat(loc, ps)) <$$> token LBRACKET *> sep_by_trailing (token COMMA) pattern <* token RBRACKET)
+  <|> ((fun loc x -> VarPat(loc, x)) <$$> ident)
+  <|> ((fun loc x -> NumPat(loc, float_of_int x)) <$$> int)
+  <|> ((fun loc x -> NumPat(loc, x)) <$$> float)
+  <|> (token LPAREN *> pattern <* token RPAREN)
+end stream
+
 let rec expr stream = begin
   let op = 
       (let* t = token OR in pure (fun e1 e2 -> Or(Token.get_loc t, e1, e2)))
@@ -220,22 +236,27 @@ and expr3 stream = begin
 end stream
 
 and expr_leaf stream = begin
-      ((fun loc x -> StringLit (loc, x)) <$$> string)                                                                       (* "str" *)
+      ((fun loc x -> StringLit (loc, x))           <$$> string)                                                             (* "str" *)
   <|> ((fun loc x -> NumLit (loc, float_of_int x)) <$$> int)                                                                (* n *)
-  <|> ((fun loc x -> NumLit (loc, x)) <$$> float)                                                                           (* f *)
-  <|> ((fun loc _ -> UnitLit loc) <$$> token LPAREN *> token RPAREN)                                                        (* () *)
-  <|> ((fun loc _ -> BoolLit (loc, true)) <$$> token TRUE)                                                                  (* true *)
-  <|> ((fun loc _ -> BoolLit (loc, false)) <$$> token FALSE)                                                                (* false *)
-  <|> ((fun loc _ -> NullLit loc) <$$> token NULL)                                                                          (* null *)
-  <|> ((fun loc x -> Var(loc, x)) <$$> ident)                                                                               (* x *)
-  <|> ((fun loc es -> ListLit (loc, es)) <$$> (token LBRACKET *> sep_by_trailing (token COMMA) expr_leaf <* token RBRACKET))     (* [ e, .., e ] *)
+  <|> ((fun loc x -> NumLit (loc, x))              <$$> float)                                                              (* f *)
+  <|> ((fun loc _ -> UnitLit loc)                  <$$> token LPAREN *> token RPAREN)                                       (* () *)
+  <|> ((fun loc _ -> BoolLit (loc, true))          <$$> token TRUE)                                                         (* true *)
+  <|> ((fun loc _ -> BoolLit (loc, false))         <$$> token FALSE)                                                        (* false *)
+  <|> ((fun loc _ -> NullLit loc)                  <$$> token NULL)                                                         (* null *)
+  <|> ((fun loc x -> Var(loc, x))                  <$$> ident)                                                              (* x *)
+  <|> ((fun loc es -> ListLit (loc, es)) <$$> (token LBRACKET *> sep_by_trailing (token COMMA) expr_leaf <* token RBRACKET))(* [ e, .., e ] *)
   (* TODO: No list comprehensions for now *)
 
   <|> ((fun loc _ -> todo __POS__)                                                                                          (* { x : e, .., x : e } *)
     <$$> token HASHLBRACE 
       *> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident <* token COLON <*> expr_leaf)
      <*  token RBRACE)
-  <|> (token NOT *> ((fun l e -> Not(l, e)) <$$> expr_leaf))
+  (* TODO: Map lookup *)
+  (* TODO: dyn lookup*)
+  <|> (token LPAREN *> expr <* token RPAREN)                                                                                (* ( e ) *)
+  <|> ((fun loc p e -> Lambda(loc, [p], e)) <$$> token LAMBDA *> pattern <* token ARROW <*> expr)                           (* \p -> e *)
+  <|> ((fun loc ps e -> Lambda(loc, ps, e)) <$$> token LAMBDA *> token LPAREN *> sep_by_trailing (token COMMA) pattern <* token RPAREN <* token ARROW <*> expr) (* \(p, .., p) -> e *)
+  <|> (token NOT *> ((fun l e -> Not(l, e))       <$$> expr_leaf))                                                          (* not e *)
   end stream
 
 let entry = (fun h exprs -> (h, exprs) )

@@ -36,6 +36,7 @@ end) : sig
     val ( *>) : 'a parser -> 'b parser -> 'b parser
     val (<* ) : 'a parser -> 'b parser -> 'a parser
     val (<$>) : ('a -> 'b) -> 'a parser -> 'b parser
+    val (<$$>) : (loc -> 'a -> 'b) -> 'a parser -> 'b parser
 
     val prod : 'a parser -> 'b parser -> ('a * 'b) parser
 
@@ -70,4 +71,8 @@ end) : sig
     val sep_by_trailing : 'a parser -> 'b parser -> 'b list parser
 
     val optional : 'a parser -> 'a option parser
+
+    val chainl : 'a parser -> ('a -> 'a -> 'a) parser -> 'a -> 'a parser
+
+    val chainl1 : 'a parser -> ('a -> 'a -> 'a) parser -> 'a parser
 end

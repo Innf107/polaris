@@ -116,10 +116,22 @@ module Token = struct
   let to_string = pretty
 
   let equal : t -> t -> bool = (=)
+
+  let get_loc _ = {
+    file = "TODO"
+  ; start_line = 0
+  ; start_col = 0
+  ; end_line = 0
+  ; end_col = 0
+  }
 end
 
 module AthenaInst = Athena.Make(Token)
 open AthenaInst
+
+let (let*) = AthenaInst.bind
+let (and*) = AthenaInst.prod
+
 
 let pretty_error = function
   | RemainingTokens toks -> "Unexpected remaining tokens. Expected end of file"
@@ -128,6 +140,11 @@ let pretty_error = function
   | ParseErrorOn (msg, tok) -> "Unexpected '" ^ Token.pretty tok ^ "': " ^ msg
   | UnexpectedToken tok -> "Unexpected '" ^ Token.pretty tok ^ "'"
 
+let ident = token_of begin function
+  | Token.IDENT id -> Some(id)
+  | _ -> None
+  end
+
 let string = token_of begin function
   | Token.STRING str -> Some(str)
   | _ -> None
@@ -135,6 +152,11 @@ let string = token_of begin function
 
 let int = token_of begin function
 | Token.INT i -> Some(i)
+| _ -> None
+end
+
+let float = token_of begin function
+| Token.FLOAT i -> Some(i)
 | _ -> None
 end
 
@@ -158,9 +180,63 @@ let header = (fun u d opts -> { usage = u; description = d; options = Option.val
   <*  many (token SEMI)
   <*> optional (token DESCRIPTION *> token COLON *> string) (* description *)
   <*  many (token SEMI)
-  <*> optional header_options
+  <*> optional header_options                               (* options *)
 
-let expr = todo __POS__
+let rec expr stream = begin
+  let op = 
+      (let* t = token OR in pure (fun e1 e2 -> Or(Token.get_loc t, e1, e2)))
+  <|> (let* t = token AND in pure (fun e1 e2 -> And(Token.get_loc t, e1, e2))) 
+  in
+  chainl1 expr1 op
+end stream
+
+and expr1 stream = begin
+  let op = 
+      (let* t = token BANGEQUALS in pure (fun e1 e2 -> NotEquals(Token.get_loc t, e1, e2)))
+  <|> (let* t = token DOUBLEEQUALS in pure (fun e1 e2 -> Equals(Token.get_loc t, e1, e2))) 
+  <|> (let* t = token LT in pure (fun e1 e2 -> LT(Token.get_loc t, e1, e2))) 
+  <|> (let* t = token GT in pure (fun e1 e2 -> GT(Token.get_loc t, e1, e2)))
+  <|> (let* t = token LE in pure (fun e1 e2 -> LE(Token.get_loc t, e1, e2))) 
+  <|> (let* t = token GE in pure (fun e1 e2 -> GE(Token.get_loc t, e1, e2))) 
+  in
+  chainl1 expr2 op
+end stream
+  
+and expr2 stream = begin
+  let op = 
+      (let* t = token PLUS in pure (fun e1 e2 -> Add(Token.get_loc t, e1, e2)))
+  <|> (let* t = token MINUS in pure (fun e1 e2 -> Sub(Token.get_loc t, e1, e2))) 
+  <|> (let* t = token TILDE in pure (fun e1 e2 -> Concat(Token.get_loc t, e1, e2))) 
+  in
+  chainl1 expr3 op
+end stream
+
+and expr3 stream = begin
+  let op = 
+      (let* t = token STAR in pure (fun e1 e2 -> Mul(Token.get_loc t, e1, e2)))
+  <|> (let* t = token SLASH in pure (fun e1 e2 -> Div(Token.get_loc t, e1, e2))) 
+  in
+  chainl1 expr_leaf op
+end stream
+
+and expr_leaf stream = begin
+      ((fun loc x -> StringLit (loc, x)) <$$> string)                                                                       (* "str" *)
+  <|> ((fun loc x -> NumLit (loc, float_of_int x)) <$$> int)                                                                (* n *)
+  <|> ((fun loc x -> NumLit (loc, x)) <$$> float)                                                                           (* f *)
+  <|> ((fun loc _ -> UnitLit loc) <$$> token LPAREN *> token RPAREN)                                                        (* () *)
+  <|> ((fun loc _ -> BoolLit (loc, true)) <$$> token TRUE)                                                                  (* true *)
+  <|> ((fun loc _ -> BoolLit (loc, false)) <$$> token FALSE)                                                                (* false *)
+  <|> ((fun loc _ -> NullLit loc) <$$> token NULL)                                                                          (* null *)
+  <|> ((fun loc x -> Var(loc, x)) <$$> ident)                                                                               (* x *)
+  <|> ((fun loc es -> ListLit (loc, es)) <$$> (token LBRACKET *> sep_by_trailing (token COMMA) expr_leaf <* token RBRACKET))     (* [ e, .., e ] *)
+  (* TODO: No list comprehensions for now *)
+
+  <|> ((fun loc _ -> todo __POS__)                                                                                          (* { x : e, .., x : e } *)
+    <$$> token HASHLBRACE 
+      *> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident <* token COLON <*> expr_leaf)
+     <*  token RBRACE)
+  <|> (token NOT *> ((fun l e -> Not(l, e)) <$$> expr_leaf))
+  end stream
 
 let entry = (fun h exprs -> (h, exprs) )
   <$> many (token SEMI)

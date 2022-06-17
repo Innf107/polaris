@@ -53,6 +53,8 @@ end) = struct
 
   let (<$>) = map
 
+  let (<$$>) f = map (f {file="TODO"; start_col=0; start_line=0; end_col=0; end_line=0})
+
   let ( *>) parser1 parser2 =
     (fun x y -> y) <$> parser1 <*> parser2
 
@@ -60,8 +62,8 @@ end) = struct
     (fun x y -> x) <$> parser1 <*> parser2
 
   let prod parser1 parser2 = 
-    pure (fun x y -> (x, y)) 
-    <*> parser1 
+    (fun x y -> (x, y)) 
+    <$> parser1 
     <*> parser2
 
   let bind parser cont =
@@ -139,11 +141,11 @@ end) = struct
     begin
       let* x = parser in
       
-      begin 
+      (fun stream -> begin 
         sep *>
         let* xs = sep_by_trailing sep parser in
         pure (x :: xs)
-      end
+      end stream)
       <|> pure [x]
     end
     <|> pure []
@@ -151,4 +153,20 @@ end) = struct
   let optional parser =
     (fun x -> Some x) <$> parser
     <|> pure None
+
+  let chainl1 parser op_parser =
+    let (let*) = bind in
+    let* x = parser in
+    let rec rest x =
+      (fun stream -> begin 
+        let* f = op_parser in
+        let* y = parser in
+        rest (f x y)
+      end stream) <|> pure x
+    in
+    rest x
+
+  let chainl parser op_parser def =
+    chainl1 parser op_parser
+    <|> pure def  
 end

@@ -65,6 +65,12 @@ and expr stream  = begin
   <|> term
 end stream
 
+let monadic stream = begin
+  let* x = expr in
+  let* y = expr in
+  pure (Add(x, y))
+end stream
+
 let should_be name actual expected pretty = 
   if actual = expected then
     print_endline ("\x1b[32m" ^ name ^  ": passed\x1b[0m")
@@ -100,5 +106,7 @@ let () =
   should_be_ok "var var" (parse (var *> var) (lex_string "x y")) (Var "y") pretty_expr pretty_parse_error;
   should_be_ok "many" (parse (many var) (lex_string "x y")) [Var "x"; Var "y"] (fun x -> String.concat ", " (List.map pretty_expr x)) pretty_parse_error;
   should_be_ok "term" (parse term (lex_string "x * y")) (Mul (Var "x", Var "y")) pretty_expr pretty_parse_error;
+  should_be_ok "monadic" (parse monadic (lex_string "1 + 2 3 + 4")) (Add (Add (Var "1", Var "2"), Add (Var "3", Var "4"))) pretty_expr pretty_parse_error;
+  should_be_ok "chainl1" (parse (chainl1 expr (token "++" *> pure (fun x y -> Add(x, y)))) (lex_string "1 ++ 2 ++ 3 ++ 4")) (Add (Add(Add(Var "1", Var "2"), Var "3"), Var "4")) pretty_expr pretty_parse_error;
 
   should_parse "nested operators" "1 + 2 * 3 + 4" (Add (Var "1", Add (Mul (Var "2", Var "3"), Var "4")));

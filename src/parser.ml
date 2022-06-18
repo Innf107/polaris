@@ -171,14 +171,19 @@ let argcount =
   <|> (token LPAREN *> token STAR *> token RPAREN *> pure (-1))
   <|> pure 0
 
-let option_def = (fun d args -> todo __POS__)
+let option_def = (fun flags arg_count flag_var default description -> {flags; flag_var; arg_count; default; description})
   <$> some string
-  <*> optional argcount
+  <*> argcount
+  <*  token AS
+  <*> ident
+  <*> optional (token EQUALS *> string)
+  <*> optional (token COLON *> string)
 
 let header_options = 
       token OPTIONS
    *> token LBRACE
    *> sep_by_trailing (some (token SEMI)) option_def
+  <*  token RBRACE 
 
 let header = (fun u d opts -> { usage = u; description = d; options = Option.value ~default:[] opts })
   <$> optional (token USAGE *> token COLON *> string)       (* usage *)

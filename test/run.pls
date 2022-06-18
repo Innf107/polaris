@@ -23,6 +23,13 @@ let files = lines(!find categories "-name" "*.pls")
 
 let errors = 0
 
+# Build polaris synchronously first, since dune does not properly support concurrent builds.
+# We have to use 'exec' with '--help', since dune cannot build executables
+if useDune then
+    !dune "exec" "--" "polaris" "--help"
+else
+    ()
+
 for(files, \file -> {
     let expectation = !grep "-Po" "(?<=# EXPECT:).+" file;
 

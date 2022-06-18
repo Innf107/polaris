@@ -75,4 +75,6 @@ end) : sig
     val chainl : 'a parser -> ('a -> 'a -> 'a) parser -> 'a -> 'a parser
 
     val chainl1 : 'a parser -> ('a -> 'a -> 'a) parser -> 'a parser
+
+    val left_assoc : 'a parser -> ('a -> 'a) parser -> 'a parser
 end

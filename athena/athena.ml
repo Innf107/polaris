@@ -168,5 +168,17 @@ end) = struct
 
   let chainl parser op_parser def =
     chainl1 parser op_parser
-    <|> pure def  
+    <|> pure def
+
+  let left_assoc parser op_parser =
+    let (let*) = bind in
+    let* x = parser in
+    let rec rest x = 
+      (fun stream -> begin
+        let* f = op_parser in
+        rest (f x) 
+      end stream)
+      <|> pure x
+    in 
+    rest x
 end

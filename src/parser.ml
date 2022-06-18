@@ -134,7 +134,7 @@ let (and*) = AthenaInst.prod
 
 
 let pretty_error = function
-  | RemainingTokens toks -> "Unexpected remaining tokens. Expected end of file.\nNext 10 tokens: " ^ String.concat (" ") (List.map (Token.pretty) (Util.take 10 (Stream.collect toks)))
+  | RemainingTokens toks -> "Unexpected remaining tokens.\nNext 10 tokens: " ^ String.concat (" ") (List.map (Token.pretty) (Util.take 10 (Stream.collect toks)))
   | UnexpectedEOF -> "Unexpected end of file"
   | ParseError msg -> msg
   | ParseErrorOn (msg, tok) -> "Unexpected '" ^ Token.pretty tok ^ "': " ^ msg
@@ -149,6 +149,11 @@ let string = token_of begin function
   | Token.STRING str -> Some(str)
   | _ -> None
   end
+
+let bang = token_of begin function
+| Token.BANG str -> Some(str)
+| _ -> None
+end
 
 let int = token_of begin function
 | Token.INT i -> Some(i)
@@ -166,14 +171,14 @@ let argcount =
   <|> (token LPAREN *> token STAR *> token RPAREN *> pure (-1))
   <|> pure 0
 
-let option_def = (fun _ -> todo __POS__)
+let option_def = (fun d args -> todo __POS__)
   <$> some string
   <*> optional argcount
 
 let header_options = 
       token OPTIONS
    *> token LBRACE
-   *> sep_by_trailing (token SEMI) option_def
+   *> sep_by_trailing (some (token SEMI)) option_def
 
 let header = (fun u d opts -> { usage = u; description = d; options = Option.value ~default:[] opts })
   <$> optional (token USAGE *> token COLON *> string)       (* usage *)
@@ -183,19 +188,19 @@ let header = (fun u d opts -> { usage = u; description = d; options = Option.val
   <*> optional header_options                               (* options *)
 
 let rec pattern stream = begin
-  chainl1 pattern1 (let* t = token PIPE in pure (fun p1 p2 -> OrPat(Token.get_loc t, p1, p2)))
+  chainl1 pattern1 (let* t = token PIPE in pure (fun p1 p2 -> OrPat(Token.get_loc t, p1, p2)))                          (* p | p *)
 end stream
 
 and pattern1 stream = begin
-  chainl1 pattern_leaf (let* t = token COLON in pure (fun p1 p2 -> ConsPat(Token.get_loc t, p1, p2)))
+  chainl1 pattern_leaf (let* t = token COLON in pure (fun p1 p2 -> ConsPat(Token.get_loc t, p1, p2)))                   (* p : p *)
 end stream
 
 and pattern_leaf stream = begin
-      ((fun loc ps -> ListPat(loc, ps)) <$$> token LBRACKET *> sep_by_trailing (token COMMA) pattern <* token RBRACKET)
-  <|> ((fun loc x -> VarPat(loc, x)) <$$> ident)
-  <|> ((fun loc x -> NumPat(loc, float_of_int x)) <$$> int)
-  <|> ((fun loc x -> NumPat(loc, x)) <$$> float)
-  <|> (token LPAREN *> pattern <* token RPAREN)
+      ((fun loc ps -> ListPat(loc, ps)) <$$> token LBRACKET *> sep_by_trailing (token COMMA) pattern <* token RBRACKET) (* [p, .., p] *)
+  <|> ((fun loc x -> VarPat(loc, x)) <$$> ident)                                                                        (* x *)
+  <|> ((fun loc x -> NumPat(loc, float_of_int x)) <$$> int)                                                             (* n *)
+  <|> ((fun loc x -> NumPat(loc, x)) <$$> float)                                                                        (* f *)
+  <|> (token LPAREN *> pattern <* token RPAREN)                                                                         (* ( p ) *)
 end stream
 
 let rec expr stream = begin
@@ -232,7 +237,16 @@ and expr3 stream = begin
       (let* t = token STAR in pure (fun e1 e2 -> Mul(Token.get_loc t, e1, e2)))
   <|> (let* t = token SLASH in pure (fun e1 e2 -> Div(Token.get_loc t, e1, e2))) 
   in
-  chainl1 expr_leaf op
+  chainl1 expr4 op
+end stream
+
+and expr4 stream = begin
+  let ops =
+      (let* t = token DOT in let* x = ident in pure (fun e -> MapLookup(Token.get_loc t, e, x)))
+  <|> (let* t = token LBRACKET in let* e2 = expr in let* _ = token RBRACKET in pure (fun e -> DynLookup(Token.get_loc t, e, e2)))
+  <|> (let* t = token LPAREN in let* es = sep_by_trailing (token COMMA) expr in let* _ = token RPAREN in pure (fun e -> App(Token.get_loc t, e, es)))
+  in
+  left_assoc expr_leaf ops
 end stream
 
 and expr_leaf stream = begin
@@ -245,25 +259,65 @@ and expr_leaf stream = begin
   <|> ((fun loc _ -> NullLit loc)                  <$$> token NULL)                                                         (* null *)
   <|> ((fun loc x -> Var(loc, x))                  <$$> ident)                                                              (* x *)
   <|> ((fun loc es -> ListLit (loc, es)) <$$> (token LBRACKET *> sep_by_trailing (token COMMA) expr_leaf <* token RBRACKET))(* [ e, .., e ] *)
-  (* TODO: No list comprehensions for now *)
-
+  <|> ((fun loc e p draw_expr clauses -> ListComp(loc, e, DrawClause(p, draw_expr) :: clauses))                             (* [ e | p <- e, .. ] *)
+    <$$> token LBRACKET 
+     *> expr 
+    <*  token PIPE 
+    <*> pattern 
+    <*  token LARROW 
+    <*> expr
+    <*> list_comp_clauses
+     <* token RBRACKET)
   <|> ((fun loc _ -> todo __POS__)                                                                                          (* { x : e, .., x : e } *)
     <$$> token HASHLBRACE 
       *> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident <* token COLON <*> expr_leaf)
      <*  token RBRACE)
-  (* TODO: Map lookup *)
-  (* TODO: dyn lookup*)
   <|> (token LPAREN *> expr <* token RPAREN)                                                                                (* ( e ) *)
   <|> ((fun loc p e -> Lambda(loc, [p], e)) <$$> token LAMBDA *> pattern <* token ARROW <*> expr)                           (* \p -> e *)
   <|> ((fun loc ps e -> Lambda(loc, ps, e)) <$$> token LAMBDA *> token LPAREN *> sep_by_trailing (token COMMA) pattern <* token RPAREN <* token ARROW <*> expr) (* \(p, .., p) -> e *)
-  <|> (token NOT *> ((fun l e -> Not(l, e))       <$$> expr_leaf))                                                          (* not e *)
+  <|> ((fun loc p e1 e2 -> Let(loc, p, e1, e2)) <$$> token LET *> pattern <* token EQUALS <*> expr <* token IN <*> expr)    (* let x = e in e *)
+  <|> ((fun loc p e1 -> LetSeq(loc, p, e1))     <$$> token LET *> pattern <* token EQUALS <*> expr)                         (* let x = e *)
+  <|> ((fun loc f ps e1 e2 -> LetRec(loc, f, ps, e1, e2)) 
+    <$$> token LET *> ident 
+      <* token LPAREN <*> sep_by_trailing (token COMMA) pattern <* token RPAREN 
+      <* token EQUALS <*> expr <* token IN <*> expr)                                                                        (* let f(p, .., p) = e in e *)
+      <|> ((fun loc f ps e1 -> LetRecSeq(loc, f, ps, e1)) 
+    <$$> token LET *> ident 
+      <* token LPAREN <*> sep_by_trailing (token COMMA) pattern <* token RPAREN 
+      <* token EQUALS <*> expr)                                                                                             (* let f(p, .., p) = e *)
+  <|> (let* t = token LBRACE in let* es = sep_by_trailing (some (token SEMI)) expr in let* _ = token RBRACE in pure (Seq(Token.get_loc t, es))) (* { e ; .. ; e } *)
+  <|> ((fun loc x e -> Assign(loc, x, e)) <$$> ident <* token COLONEQUALS <*> expr)                                         (* x := e *)
+  <|> ((fun loc x es -> ProgCall(loc, x, es)) <$$> bang <*> many expr)                                                      (* !x e .. e *)
+  <|> (token NOT *> ((fun l e -> Not(l, e)) <$$> expr_leaf))                                                                (* not e *)
+  <|> ((fun loc min max -> Range(loc, min, max)) <$$> token LBRACKET *> expr <* token DDOT <*> expr <* token RBRACKET)      (* [ e .. e ] *)
+  <|> ((fun loc c th el -> If(loc, c, th, el)) <$$> token IF *> expr <* token THEN <*> expr <* token ELSE <*> expr)         (* if e then e else e *)
+  (* TODO: Pipes *)
+  <|> ((fun loc e -> Async(loc, e)) <$$> token ASYNC *> expr)                                                               (* async e *)
+  <|> ((fun loc e -> Await(loc, e)) <$$> token AWAIT *> expr)                                                               (* await e *)
+  <|> ((fun loc e branches -> Match(loc, e, branches)) 
+    <$$> token MATCH 
+      *> expr 
+     <*  token LBRACE 
+     <*> sep_by_trailing (some (token SEMI))
+        ((fun x y -> (x, y)) <$> pattern <* token ARROW <*> expr)
+     <*  token RBRACE)
   end stream
+
+and list_comp_clauses stream = begin
+  let list_comp_clause = 
+        ((fun p e -> DrawClause(p, e)) <$> pattern <* token LARROW <*> expr)
+    <|> ((fun e -> FilterClause e) <$> expr)
+  in
+
+  (token COMMA *> sep_by_trailing (token COMMA) list_comp_clause)
+  <|> pure []
+end stream
 
 let entry = (fun h exprs -> (h, exprs) )
   <$> many (token SEMI)
    *> header
   <*  many (token SEMI)
-  <*> sep_by_trailing (token SEMI) expr
+  <*> sep_by_trailing (some (token SEMI)) expr
 
 
 let main : Token.t Athena.Stream.t -> (header * expr list, AthenaInst.parse_error) result = 

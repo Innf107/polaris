@@ -246,7 +246,8 @@ and expr4 stream = begin
   <|> (let* t = token LBRACKET in let* e2 = expr in let* _ = token RBRACKET in pure (fun e -> DynLookup(Token.get_loc t, e, e2)))
   <|> (let* t = token LPAREN in let* es = sep_by_trailing (token COMMA) expr in let* _ = token RPAREN in pure (fun e -> App(Token.get_loc t, e, es)))
   in
-  left_assoc expr_leaf ops
+      ((fun loc x e -> Assign(loc, x, e)) <$$> ident <* token COLONEQUALS <*> expr)                                         (* x := e *)
+  <|> left_assoc expr_leaf ops
 end stream
 
 and expr_leaf stream = begin
@@ -258,7 +259,7 @@ and expr_leaf stream = begin
   <|> ((fun loc _ -> BoolLit (loc, false))         <$$> token FALSE)                                                        (* false *)
   <|> ((fun loc _ -> NullLit loc)                  <$$> token NULL)                                                         (* null *)
   <|> ((fun loc x -> Var(loc, x))                  <$$> ident)                                                              (* x *)
-  <|> ((fun loc es -> ListLit (loc, es)) <$$> (token LBRACKET *> sep_by_trailing (token COMMA) expr_leaf <* token RBRACKET))(* [ e, .., e ] *)
+  <|> ((fun loc es -> ListLit (loc, es)) <$$> (token LBRACKET *> sep_by_trailing (token COMMA) expr <* token RBRACKET))(* [ e, .., e ] *)
   <|> ((fun loc e p draw_expr clauses -> ListComp(loc, e, DrawClause(p, draw_expr) :: clauses))                             (* [ e | p <- e, .. ] *)
     <$$> token LBRACKET 
      *> expr 
@@ -268,9 +269,9 @@ and expr_leaf stream = begin
     <*> expr
     <*> list_comp_clauses
      <* token RBRACKET)
-  <|> ((fun loc _ -> todo __POS__)                                                                                          (* { x : e, .., x : e } *)
+  <|> ((fun loc entries -> MapLit(loc, entries))                                                                            (* { x : e, .., x : e } *)
     <$$> token HASHLBRACE 
-      *> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident <* token COLON <*> expr_leaf)
+      *> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident <* token COLON <*> expr)
      <*  token RBRACE)
   <|> (token LPAREN *> expr <* token RPAREN)                                                                                (* ( e ) *)
   <|> ((fun loc p e -> Lambda(loc, [p], e)) <$$> token LAMBDA *> pattern <* token ARROW <*> expr)                           (* \p -> e *)
@@ -286,7 +287,6 @@ and expr_leaf stream = begin
       <* token LPAREN <*> sep_by_trailing (token COMMA) pattern <* token RPAREN 
       <* token EQUALS <*> expr)                                                                                             (* let f(p, .., p) = e *)
   <|> (let* t = token LBRACE in let* es = sep_by_trailing (some (token SEMI)) expr in let* _ = token RBRACE in pure (Seq(Token.get_loc t, es))) (* { e ; .. ; e } *)
-  <|> ((fun loc x e -> Assign(loc, x, e)) <$$> ident <* token COLONEQUALS <*> expr)                                         (* x := e *)
   <|> ((fun loc x es -> ProgCall(loc, x, es)) <$$> bang <*> many expr)                                                      (* !x e .. e *)
   <|> (token NOT *> ((fun l e -> Not(l, e)) <$$> expr_leaf))                                                                (* not e *)
   <|> ((fun loc min max -> Range(loc, min, max)) <$$> token LBRACKET *> expr <* token DDOT <*> expr <* token RBRACKET)      (* [ e .. e ] *)

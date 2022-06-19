@@ -3,7 +3,9 @@
 
  (foreign_stubs
   (language c)
-  (names readline_stub)
+  (names 
+   readline_stub
+   bestline)
  )
- (flags :standard -cclib -lreadline)
+ (flags :standard -cclib)
 )

@@ -1,11 +1,11 @@
 #include <stdio.h>
-#include <readline/readline.h>
-#include <readline/history.h>
-#include <readline/rlstdc.h>
+#include <string.h>
 
 #include <caml/alloc.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
+
+#include "bestline.h"
 
 char* readline_default_buffer = NULL;
 
@@ -32,9 +32,6 @@ int getc_wrapper(FILE* file){
 }
 
 CAMLprim value readline_stub(value prompt) {
-    using_history();
-
-    rl_getc_function = getc_wrapper;
 
     // We have to copy the string, since we cannot access
     // any OCaml data while running without the master lock.
@@ -44,7 +41,7 @@ CAMLprim value readline_stub(value prompt) {
     // This means, we *cannot* use any OCaml runtime functions between 
     // these two calls.
     caml_release_runtime_system();
-    char* result_str = readline(prompt_string);
+    char* result_str = bestline(prompt_string);
     caml_acquire_runtime_system();
 
     free(prompt_string);
@@ -52,9 +49,9 @@ CAMLprim value readline_stub(value prompt) {
     if (result_str == NULL){
         return Val_none;
     } else {
-        add_history(result_str);
+        bestlineHistoryAdd(result_str);
         value result = caml_copy_string(result_str);
-        free(result_str);
+        bestlineFree(result_str);
         return caml_alloc_some(result);
     }
 }

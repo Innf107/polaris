@@ -213,7 +213,12 @@ let rec expr stream = begin
       (let* t = token OR in pure (fun e1 e2 -> Or(Token.get_loc t, e1, e2)))
   <|> (let* t = token AND in pure (fun e1 e2 -> And(Token.get_loc t, e1, e2))) 
   in
-  chainl1 expr1 op
+    ((fun loc e pl -> Pipe(loc, e :: pl)) <$$> expr1 <* token PIPE <*> pipe_list)
+  <|> chainl1 expr1 op
+end stream
+
+and pipe_list stream = begin
+  sep_by (token PIPE) ((fun loc x es -> ProgCall(loc, x, es)) <$$> ident <*> many expr_leaf)
 end stream
 
 and expr1 stream = begin
@@ -298,8 +303,7 @@ and expr_leaf stream = begin
   <|> ((fun loc c th el -> If(loc, c, th, el)) 
     <$$> token IF *> expr <* many (token SEMI) 
      <* token THEN <*> expr <* many (token SEMI) 
-     <* token ELSE <*> expr)         (* if e then e else e *)
-  (* TODO: Pipes *)
+     <* token ELSE <*> expr)                                                                                                (* if e then e else e *)
   <|> ((fun loc e -> Async(loc, e)) <$$> token ASYNC *> expr)                                                               (* async e *)
   <|> ((fun loc e -> Await(loc, e)) <$$> token AWAIT *> expr)                                                               (* await e *)
   <|> ((fun loc e branches -> Match(loc, e, branches)) 

@@ -137,6 +137,20 @@ end) = struct
     let* rest = many parser in
     pure (x :: rest)
 
+  let rec sep_by1 sep parser =
+    begin
+      let* x = parser in
+      (fun stream -> begin
+        sep *> 
+        let* xs = sep_by1 sep parser in
+        pure (x :: xs)
+      end stream) <|> pure [x]
+    end
+
+  let sep_by sep parser = 
+    sep_by1 sep parser
+    <|> pure []
+
   let rec sep_by_trailing sep parser =
     begin
       let* x = parser in

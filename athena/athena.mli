@@ -68,6 +68,7 @@ end) : sig
     (** matches one or more *)
     val some : 'a parser -> 'a list parser
 
+    val sep_by : 'a parser -> 'b parser -> 'b list parser
     val sep_by_trailing : 'a parser -> 'b parser -> 'b list parser
 
     val optional : 'a parser -> 'a option parser

@@ -162,7 +162,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
       handle_errors (fun msg -> repl_error msg; go env scope)
         (fun _ -> 
           let prompt = "\001\x1b[38;5;160m\002λ>\001\x1b[0m\002 " in
-          match Readline.readline prompt with
+          match Bestline.bestline prompt with
           | None -> exit 0
           | Some input -> 
             let result, new_env, new_scope = Driver.run_env driver_options (Lexing.from_string input) env scope in

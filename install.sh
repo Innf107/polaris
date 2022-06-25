@@ -15,12 +15,17 @@ opam install dune
 
 echo "Installing menhir"
 opam install menhir
+
+echo "Installing bestline"
+opam pin add bestline ssh://git@github.com/Innf107/ocaml-bestline
+
 echo "Installing other dependencies"
 opam install . --deps-only
 
 echo "Building project with dune"
 dune build
 dune install
+
 
 echo "Handing control to the polairs build script"
 dune exec polaris -- install.pls $@

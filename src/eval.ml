@@ -659,18 +659,10 @@ end) = struct
                     | [StringV prompt] -> prompt
                     | _ -> raise (PrimOpArgumentError ("readLine", args, "Expected no arguments or a single string", loc :: env.call_trace))
                     in
-                    begin match Readline.readline prompt with
+                    begin match Bestline.bestline prompt with
                     | Some input -> StringV input
                     | None -> NullV
                     end
-    | "readLineDefault" -> begin match args with
-                  | [StringV prompt; StringV default] ->
-                    begin match Readline.readline_default prompt default with
-                    | Some input -> StringV input
-                    | None -> NullV
-                    end
-                  | _ -> raise (PrimOpArgumentError ("readLineDefault", args, "Expected 2 strings", loc :: env.call_trace))
-                  end
     | "chdir" ->  begin match args with
                   | [StringV path_str] -> 
                     Sys.chdir path_str;

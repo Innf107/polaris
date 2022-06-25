@@ -3,7 +3,7 @@
  (name main)
  (libraries 
     polaris
-    readline
+    bestline
   ))
 
 (env

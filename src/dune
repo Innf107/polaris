@@ -4,8 +4,7 @@
   athena
   bestline 
   unix
-  str
-  pcre
+  re
   threads))
 
 (env

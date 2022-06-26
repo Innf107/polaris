@@ -583,25 +583,22 @@ end) = struct
                 | _ -> raise (PrimOpArgumentError ("lines", args, "Expected a single string", loc :: env.call_trace))
                 end
     | "replace" -> begin match args with
-                  | [needle_v; repl_v; str_v] -> 
-                    let context = "Trying to apply 'replace'" in
-                    let needle = as_string context (loc :: env.call_trace) needle_v in 
-                    let repl =  as_string context (loc :: env.call_trace) repl_v in
-                    let str = as_string context (loc :: env.call_trace) str_v in
-                    StringV (Str.global_replace (Str.regexp_string needle) repl str)
+                  | [StringV needle; StringV repl; StringV str_v] -> 
+                    StringV (Re.replace_string (Re.compile (Re.str needle)) ~by:repl str_v)
                   | _ -> raise (PrimOpArgumentError ("replace", args, "Expected three strings", loc :: env.call_trace))
                   end
     | "regexpReplace" -> begin match args with
                   | [StringV pattern; StringV repl; StringV str] -> 
-                    StringV (Pcre.replace ~pat:pattern ~templ:repl str)
+                    let regexp = Re.Pcre.regexp pattern in
+                    StringV (Re.replace_string regexp ~by:repl str)
                   | _ -> raise (PrimOpArgumentError ("regexpReplace", args, "Expected three strings", loc :: env.call_trace))
                   end
     | "regexpMatch" -> begin match args with
                   | [StringV pattern; StringV arg] ->
-                    let regexp = Pcre.regexp pattern in
+                    let regexp = Re.Pcre.regexp pattern in
                     begin try
-                      let results = Pcre.exec_all ~rex:regexp ~flags:[] arg in
-                      ListV (List.map (fun x -> StringV (Pcre.get_substring x 0)) (Array.to_list results))
+                      let results = Re.matches regexp arg in
+                      ListV (List.map (fun x -> StringV (x)) results)
                     with
                     | Not_found -> ListV []
                     end
@@ -610,29 +607,15 @@ end) = struct
                   end
     | "regexpTransform" -> begin match args with
                   | [StringV pattern; transformClos; StringV str_v] ->
-                    begin try
-                      let results = Pcre.exec_all ~pat:pattern str_v in
-                      let rec go pos = function
-                      | (substr::results) ->
-                        let start_pos, end_pos = Pcre.get_substring_ofs substr 0 in
+                      let regexp = Re.Pcre.regexp pattern in
 
-                        let matched = Pcre.get_substring substr 0 in
-
-                        let replacement = match eval_app env loc transformClos [StringV matched] with
+                      let transform group = 
+                        match eval_app env loc transformClos [StringV (Re.Group.get group 0)] with
                         | StringV repl -> repl
                         | value -> raise (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace))
-                        in
-
-                        let start_string = String.sub str_v pos (start_pos - pos) in 
-
-
-                        start_string ^ replacement ^ go end_pos results
-                      | [] -> String.sub str_v pos (String.length str_v - pos)
                       in
-                      StringV (go 0 (Array.to_list results))
-                    with
-                    | Not_found -> StringV str_v
-                    end
+
+                      StringV (Re.replace regexp ~f:transform str_v)
                   | _ -> raise (PrimOpArgumentError ("regexpTransform", args, "Expected (string, function, string)", loc :: env.call_trace))
                   end
     | "writeFile" -> begin match args with

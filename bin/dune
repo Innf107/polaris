@@ -4,10 +4,13 @@
  (libraries 
     polaris
     bestline
-  ))
+  )
+  (link_flags :standard -cclib -static)  
+)
 
 (env
   (dev
     (flags 
       (:standard -warn-error -A -w -27)
-    )))    
+    )))
+    

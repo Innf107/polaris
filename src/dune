@@ -4,8 +4,7 @@
   bestline 
   menhirLib
   unix
-  str
-  pcre
+  re
   threads))
 
 (menhir

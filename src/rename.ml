@@ -171,15 +171,27 @@ and rename_seq scope exprs =
     res
 
 let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.flag_def * RenameScope.t =
-    let flag_var = RenameScope.fresh_var scope flag_def.flag_var in
-    let scope = RenameScope.insert_var flag_def.flag_var flag_var scope in
-    { arg_count = flag_def.arg_count
+    let flag_var, scope = match flag_def.flag_var with
+        | Some old_flag_var -> 
+            let flag_var = RenameScope.fresh_var scope old_flag_var in
+            let scope = RenameScope.insert_var old_flag_var flag_var scope in
+            Some flag_var, scope
+        | None -> None, scope
+    in
+    let args, scope = match flag_def.args with
+        | Varargs -> Renamed.Varargs, scope
+        | Switch -> Renamed.Switch, scope
+        | Named args ->
+            let args' = List.map (RenameScope.fresh_var scope) args in
+            let scope = List.fold_right2 RenameScope.insert_var args args' scope in
+            Named args', scope
+    in        
+    { args
     ; flag_var
     ; flags = flag_def.flags
     ; default = flag_def.default
     ; description = flag_def.description
     }, scope
-
 
 
 let rename_header (scope : RenameScope.t) (header : Parsed.header): Renamed.header * RenameScope.t =

@@ -573,6 +573,13 @@ end) = struct
                   ListV (List.map (fun s -> StringV s) (String.split_on_char '\n' arg))
                 | _ -> raise (PrimOpArgumentError ("lines", args, "Expected a single string", loc :: env.call_trace))
                 end
+    | "split" -> begin match args with
+                | [_; StringV ""] -> ListV []
+                | [StringV sep_str; StringV arg] when String.length sep_str = 1 ->
+                  let sep = String.get sep_str 0 in
+                  ListV (List.map (fun s -> StringV s) (String.split_on_char sep arg))
+                | _ -> raise (PrimOpArgumentError ("split", args, "Expected (char, string)", loc :: env.call_trace))
+                end
     | "replace" -> begin match args with
                   | [StringV needle; StringV repl; StringV str_v] -> 
                     StringV (Re.replace_string (Re.compile (Re.str needle)) ~by:repl str_v)

@@ -161,7 +161,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
     try
       handle_errors (fun msg -> repl_error msg; go env scope)
         (fun _ -> 
-          let prompt = "\001\x1b[38;5;160m\002λ>\001\x1b[0m\002 " in
+          let prompt = "\x1b[38;5;160mλ>\x1b[0m " in
           match Bestline.bestline prompt with
           | None -> exit 0
           | Some input -> 

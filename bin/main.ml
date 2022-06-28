@@ -163,7 +163,8 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
         (fun _ -> 
           let prompt = "\x1b[38;5;160mλ>\x1b[0m " in
           match Bestline.bestline prompt with
-          | None -> exit 0
+          | None -> 
+            exit 0
           | Some input -> 
             let result, new_env, new_scope = Driver.run_env driver_options (Lexing.from_string input) env scope in
 
@@ -174,6 +175,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
             go new_env new_scope)
     with
     | Sys.Break -> 
+      print_newline ();
       go env scope
   in
   go env scope

@@ -166,6 +166,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
           | None -> 
             exit 0
           | Some input -> 
+            let _ = Bestline.history_add input in
             let result, new_env, new_scope = Driver.run_env driver_options (Lexing.from_string input) env scope in
 
             begin match result with

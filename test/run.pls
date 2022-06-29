@@ -32,12 +32,13 @@ else
 
 for(files, \file -> {
     let expectation = !grep "-Po" "(?<=# EXPECT:).+" file;
+    let args = split("|", !grep "-Po" "(?<=# ARGS:).+" file);
 
     let result = 
         if useDune then 
-            !dune "exec" "polaris" "--" file
+            !dune "exec" "polaris" "--" file args
         else
-            !polaris file
+            !polaris file args
 
     if result == expectation then {
         # This has to use echo, since polaris does not support string escapes 

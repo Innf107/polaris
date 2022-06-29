@@ -165,17 +165,15 @@ let float = token_of begin function
 | _ -> None
 end
 
-(* TODO: named arguments *)
-let argcount =
-      (token LPAREN *> int <* token RPAREN)
-  <|> (token LPAREN *> token STAR *> token RPAREN *> pure (-1))
-  <|> pure 0
+let args =
+      ((fun args -> Named args) <$> (token LPAREN *> sep_by_trailing (token COMMA) ident <* token RPAREN))
+  <|> (token LPAREN *> token STAR *> token RPAREN *> pure Varargs)
+  <|> pure Switch
 
-let option_def = (fun flags arg_count flag_var default description -> {flags; flag_var; arg_count; default; description})
+let option_def = (fun flags args flag_var default description -> {flags; flag_var; args; default; description})
   <$> some string
-  <*> argcount
-  <*  token AS
-  <*> ident
+  <*> args
+  <*> optional (token AS *> ident)
   <*> optional (token EQUALS *> string)
   <*> optional (token COLON *> string)
 

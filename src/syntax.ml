@@ -15,6 +15,7 @@ module Loc = struct
     ; end_col    = end_pos.pos_cnum - end_pos.pos_bol + 1
     }
 
+  let internal : loc = { file = "<internal>"; start_line = 0; end_line = 0; start_col = 0; end_col = 0 }
 end
 
 module Make (Name : sig
@@ -91,10 +92,15 @@ struct
     | DrawClause of pattern * expr (* p <- e *)
     | FilterClause of expr            (* e *)
 
+  type flag_args =
+    | Varargs
+    | Switch
+    | Named of name list
+
   type flag_def = {
-    flag_var: name
+    flag_var: name option
   ; flags: string list
-  ; arg_count: int
+  ; args: flag_args
   ; default: string option
   ; description: string option
   }

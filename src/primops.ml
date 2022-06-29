@@ -7,6 +7,7 @@ let primops = PrimOpNameSet.of_list [
   "cons";
   "require";
   "lines";
+  "split";
   "replace";
   "regexpReplace";
   "regexpMatch";

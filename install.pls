@@ -1,7 +1,7 @@
 #!/usr/bin/env polaris
 
 options {
-    "--bin-install-location" (1) as installLocation = "/usr/bin/polaris"
+    "--bin-install-location" (_) as installLocation = "/usr/bin/polaris"
     "--no-sudo" as noSudo
 }
 

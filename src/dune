@@ -1,8 +1,8 @@
 (library
  (name polaris)
  (libraries
-  readline
   athena
+  bestline 
   unix
   str
   pcre

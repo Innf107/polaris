@@ -206,20 +206,24 @@ and pattern_leaf stream = begin
   <|> (token LPAREN *> pattern <* token RPAREN)                                                                         (* ( p ) *)
 end stream
 
-let rec expr stream = begin
+let rec expr stream = begin 
+  ((fun loc e pl -> Pipe(loc, e :: pl)) <$$> expr1 <* token PIPE <*> pipe_list)
+  <|> expr1
+end stream
+
+and expr1 stream = begin
   let op = 
       (let* t = token OR in pure (fun e1 e2 -> Or(Token.get_loc t, e1, e2)))
   <|> (let* t = token AND in pure (fun e1 e2 -> And(Token.get_loc t, e1, e2))) 
   in
-    ((fun loc e pl -> Pipe(loc, e :: pl)) <$$> expr1 <* token PIPE <*> pipe_list)
-  <|> chainl1 expr1 op
+  chainl1 expr2 op
 end stream
 
 and pipe_list stream = begin
   sep_by (token PIPE) ((fun loc x es -> ProgCall(loc, x, es)) <$$> ident <*> many expr_leaf)
 end stream
 
-and expr1 stream = begin
+and expr2 stream = begin
   let op = 
       (let* t = token BANGEQUALS in pure (fun e1 e2 -> NotEquals(Token.get_loc t, e1, e2)))
   <|> (let* t = token DOUBLEEQUALS in pure (fun e1 e2 -> Equals(Token.get_loc t, e1, e2))) 
@@ -228,27 +232,27 @@ and expr1 stream = begin
   <|> (let* t = token LE in pure (fun e1 e2 -> LE(Token.get_loc t, e1, e2))) 
   <|> (let* t = token GE in pure (fun e1 e2 -> GE(Token.get_loc t, e1, e2))) 
   in
-  chainl1 expr2 op
+  chainl1 expr3 op
 end stream
   
-and expr2 stream = begin
+and expr3 stream = begin
   let op = 
       (let* t = token PLUS in pure (fun e1 e2 -> Add(Token.get_loc t, e1, e2)))
   <|> (let* t = token MINUS in pure (fun e1 e2 -> Sub(Token.get_loc t, e1, e2))) 
   <|> (let* t = token TILDE in pure (fun e1 e2 -> Concat(Token.get_loc t, e1, e2))) 
   in
-  chainl1 expr3 op
-end stream
-
-and expr3 stream = begin
-  let op = 
-      (let* t = token STAR in pure (fun e1 e2 -> Mul(Token.get_loc t, e1, e2)))
-  <|> (let* t = token SLASH in pure (fun e1 e2 -> Div(Token.get_loc t, e1, e2))) 
-  in
   chainl1 expr4 op
 end stream
 
 and expr4 stream = begin
+  let op = 
+      (let* t = token STAR in pure (fun e1 e2 -> Mul(Token.get_loc t, e1, e2)))
+  <|> (let* t = token SLASH in pure (fun e1 e2 -> Div(Token.get_loc t, e1, e2))) 
+  in
+  chainl1 expr5 op
+end stream
+
+and expr5 stream = begin
   let ops =
       (let* t = token DOT in let* x = ident in pure (fun e -> MapLookup(Token.get_loc t, e, x)))
   <|> (let* t = token LBRACKET in let* e2 = expr in let* _ = token RBRACKET in pure (fun e -> DynLookup(Token.get_loc t, e, e2)))
@@ -267,16 +271,16 @@ and expr_leaf stream = begin
   <|> ((fun loc _ -> BoolLit (loc, false))         <$$> token FALSE)                                                        (* false *)
   <|> ((fun loc _ -> NullLit loc)                  <$$> token NULL)                                                         (* null *)
   <|> ((fun loc x -> Var(loc, x))                  <$$> ident)                                                              (* x *)
-  <|> ((fun loc es -> ListLit (loc, es)) <$$> (token LBRACKET *> sep_by_trailing (token COMMA) expr <* token RBRACKET))(* [ e, .., e ] *)
   <|> ((fun loc e p draw_expr clauses -> ListComp(loc, e, DrawClause(p, draw_expr) :: clauses))                             (* [ e | p <- e, .. ] *)
     <$$> token LBRACKET 
-     *> expr 
-    <*  token PIPE 
+     *> expr1
+    <*  token PIPE
     <*> pattern 
     <*  token LARROW 
     <*> expr
     <*> list_comp_clauses
      <* token RBRACKET)
+  <|> ((fun loc es -> ListLit (loc, es)) <$$> (token LBRACKET *> sep_by_trailing (token COMMA) expr <* token RBRACKET))(* [ e, .., e ] *)
   <|> ((fun loc entries -> MapLit(loc, entries))                                                                            (* { x : e, .., x : e } *)
     <$$> token HASHLBRACE 
       *> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident <* token COLON <*> expr)

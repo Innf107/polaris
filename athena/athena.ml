@@ -4,7 +4,16 @@ type loc = {
     start_col : int;
     end_line : int;
     end_col : int
-}  
+}
+
+let merge_loc loc1 loc2 =
+  if loc1.file = loc2.file then
+    { loc1 with 
+      end_line = loc2.end_line
+    ; end_col = loc2.end_col
+    }
+  else
+    raise (Failure "Athena.merge_loc: Trying to merge locations from different files")
 
 module Stream = Stream
 

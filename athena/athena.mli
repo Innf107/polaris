@@ -7,6 +7,8 @@ type loc = {
     end_col : int
 }  
 
+val merge_loc : loc -> loc -> loc
+
 module Stream = Stream
 
 module Make(Token : sig

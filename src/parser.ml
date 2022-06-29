@@ -306,8 +306,8 @@ and expr_leaf stream = begin
     <$$> token IF *> expr <* many (token SEMI) 
      <* token THEN <*> expr <* many (token SEMI) 
      <* token ELSE <*> expr)                                                                                                (* if e then e else e *)
-  <|> ((fun loc e -> Async(loc, e)) <$$> token ASYNC *> expr)                                                               (* async e *)
-  <|> ((fun loc e -> Await(loc, e)) <$$> token AWAIT *> expr)                                                               (* await e *)
+  <|> ((fun loc e -> Async(loc, e)) <$$> token ASYNC *> expr1)                                                               (* async e *)
+  <|> ((fun loc e -> Await(loc, e)) <$$> token AWAIT *> expr1)                                                               (* await e *)
   <|> ((fun loc e branches -> Match(loc, e, branches)) 
     <$$> token MATCH 
       *> expr 

@@ -810,7 +810,7 @@ end) = struct
     ; usage
     } in
 
-    let args = Argparse.run infos prog_info (fun msg -> raise (EvalError.ArgParseError msg)) env.argv in
+    let args = Argparse.run infos prog_info (fun msg -> raise (EvalError.ArgParseError msg)) (List.tl env.argv) in
 
     { env with argv = (List.hd env.argv :: args) }
 end

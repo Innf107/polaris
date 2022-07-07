@@ -1,38 +1,29 @@
-type loc = {    
-    file : string;
-    start_line : int;
-    start_col : int;
-    end_line : int;
-    end_col : int
-}
-
-let merge_loc loc1 loc2 =
-  if loc1.file = loc2.file then
-    { loc1 with 
-      end_line = loc2.end_line
-    ; end_col = loc2.end_col
-    }
-  else
-    raise (Failure "Athena.merge_loc: Trying to merge locations from different files")
+open Loc
+type loc = Loc.t
 
 module Stream = Stream
+module Loc = Loc
+
+include Loc
 
 module Make(Token : sig
   type t
+
   val to_string : t -> string
 
   val equal : t -> t -> bool
 end) = struct
-  type parse_error = RemainingTokens of Token.t Stream.t
+  type parse_error = RemainingTokens of (Token.t * loc) Stream.t
                    | UnexpectedEOF
                    | ParseError of string
-                   | ParseErrorOn of string * Token.t
-                   | UnexpectedToken of Token.t
+                   | ParseErrorOn of string * Token.t * loc
+                   | UnexpectedToken of Token.t * loc
 
-  type 'a parser_impl = ('a * Token.t Stream.t, parse_error) result
-  type 'a parser = Token.t Stream.t -> 'a parser_impl
+  type 'a parser_impl = ('a * (Token.t * loc) Stream.t, parse_error) result
+  type parser_arg = (Token.t * loc) Stream.t
+  type 'a parser = parser_arg -> 'a parser_impl
 
-  let parse parser stream =
+  let parse (parser : 'a parser) stream =
     match parser stream with
     | Error err -> Error err
     | Ok(x, stream') ->
@@ -104,7 +95,7 @@ end) = struct
   let (<?>) p msg = 
     fun stream -> match p stream with
       | Ok res -> Ok res
-      | Error (ParseErrorOn (_, t) | UnexpectedToken t) -> Error (ParseErrorOn (msg, t))
+      | Error (ParseErrorOn (_, t, loc) | UnexpectedToken (t, loc)) -> Error (ParseErrorOn (msg, t, loc))
       | Error _ -> Error (ParseError msg)
   
   let (<??>) msg p = p <?> msg
@@ -116,23 +107,27 @@ end) = struct
       | Some (tok, stream') -> Ok(tok, stream')
   
 
-  let satisfy f =
-    any >>= fun tok ->
-      if f tok then
-        pure tok
+  let satisfy_loc (f : loc -> Token.t -> bool) : (Token.t * loc) parser =
+    any >>= fun (tok, loc) ->
+      if f loc tok then
+        pure (tok, loc)
       else
-        fail_error (UnexpectedToken tok)
+        fail_error (UnexpectedToken (tok, loc))
+    
+
+  let satisfy f =
+    (fun (_, loc) -> loc) <$> satisfy_loc (fun _ t -> f t)
 
   let token t = 
     satisfy (Token.equal t) <?> "token: Expected '" ^ Token.to_string t ^ "'"
 
-  let token_of f =
-    (fun t -> Option.get (f t)) <$> satisfy (fun t -> Option.is_some (f t))
+  let token_of (f : loc -> Token.t -> 'a option) : 'a parser =
+    (fun (t, loc) -> Option.get (f loc t)) <$> satisfy_loc (fun loc t -> Option.is_some (f loc t))
 
-  let one_of toks =
+  let one_of (toks : Token.t list) : (Token.t * loc) parser =
     "token: Expected one of " ^ String.concat ", " (List.map (fun tok -> "\"" ^ Token.to_string tok ^ "\"") toks)
     <??>
-    satisfy (fun x -> List.mem x toks) 
+    satisfy_loc (fun _ x -> List.mem x toks) 
 
   (* This stack overflow, since it has to evaluate 'many parser', to even construct the parser *)
   let rec many parser =

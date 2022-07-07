@@ -1,34 +1,29 @@
-
-type loc = {    
-    file : string;
-    start_line : int;
-    start_col : int;
-    end_line : int;
-    end_col : int
-}  
-
-val merge_loc : loc -> loc -> loc
+type loc = Loc.t
 
 module Stream = Stream
+module Loc = Loc
+
+include module type of Loc
 
 module Make(Token : sig
     type t
+
     val to_string : t -> string
 
     val equal : t -> t -> bool
 end) : sig
 
-    type parse_error = RemainingTokens of Token.t Stream.t
+    type parse_error = RemainingTokens of (Token.t * loc) Stream.t
                     | UnexpectedEOF
                     | ParseError of string
-                    | ParseErrorOn of string * Token.t
-                    | UnexpectedToken of Token.t
+                    | ParseErrorOn of string * Token.t * loc
+                    | UnexpectedToken of Token.t * loc
 
     type 'a parser_impl
+    type parser_arg
+    type 'a parser = parser_arg -> 'a parser_impl
 
-    type 'a parser = Token.t Stream.t -> 'a parser_impl
-
-    val parse : 'a parser -> Token.t Stream.t -> ('a, parse_error) result
+    val parse : 'a parser -> (Token.t * loc) Stream.t -> ('a, parse_error) result
 
     val map : ('a -> 'b) -> 'a parser -> 'b parser
 
@@ -38,7 +33,6 @@ end) : sig
     val ( *>) : 'a parser -> 'b parser -> 'b parser
     val (<* ) : 'a parser -> 'b parser -> 'a parser
     val (<$>) : ('a -> 'b) -> 'a parser -> 'b parser
-    val (<$$>) : (loc -> 'a -> 'b) -> 'a parser -> 'b parser
 
     val prod : 'a parser -> 'b parser -> ('a * 'b) parser
 
@@ -54,15 +48,16 @@ end) : sig
     val (<?>) : 'a parser -> string -> 'a parser
     val (<??>) : string -> 'a parser -> 'a parser
 
-    val any : Token.t parser
+    val any : (Token.t * loc) parser
 
-    val satisfy : (Token.t -> bool) -> Token.t parser
+    val satisfy_loc : (loc -> Token.t -> bool) -> (Token.t * loc) parser
+    val satisfy : (Token.t -> bool) -> loc parser
 
-    val token : Token.t -> Token.t parser
+    val token : Token.t -> loc parser
 
-    val token_of : (Token.t -> 'a option) -> 'a parser
+    val token_of : (loc -> Token.t -> 'a option) -> 'a parser
 
-    val one_of : Token.t list -> Token.t parser
+    val one_of : Token.t list -> (Token.t * loc) parser
 
     (** matches zero or more *)
     val many : 'a parser -> 'a list parser

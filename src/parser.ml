@@ -134,48 +134,52 @@ let (and*) = AthenaInst.prod
 
 
 let pretty_error = function
-  | RemainingTokens toks -> "Unexpected remaining tokens.\nNext 10 tokens: " ^ String.concat (" ") (List.map (Token.pretty) (Util.take 10 (Stream.collect toks)))
+  | RemainingTokens toks -> "Unexpected remaining tokens.\nNext 10 tokens: " ^ String.concat ("\n") (List.map (fun (t, loc) -> Loc.pretty loc ^ ": " ^ Token.pretty t) (Util.take 10 (Stream.collect toks)))
   | UnexpectedEOF -> "Unexpected end of file"
   | ParseError msg -> msg
-  | ParseErrorOn (msg, tok) -> "Unexpected '" ^ Token.pretty tok ^ "': " ^ msg
-  | UnexpectedToken tok -> "Unexpected '" ^ Token.pretty tok ^ "'"
+  | ParseErrorOn (msg, tok, loc) -> Loc.pretty loc ^ ": Unexpected '" ^ Token.pretty tok ^ "': " ^ msg
+  | UnexpectedToken (tok, loc) -> Loc.pretty loc ^ ": Unexpected '" ^ Token.pretty tok ^ "'"
 
-let ident = token_of begin function
-  | Token.IDENT id -> Some(id)
+let ident = token_of begin fun loc -> function
+  | Token.IDENT id -> Some(id, loc)
   | _ -> None
   end
 
-let string = token_of begin function
-  | Token.STRING str -> Some(str)
+let ident_ = fst <$> ident 
+
+let string = token_of begin fun loc -> function
+  | Token.STRING str -> Some(str, loc)
   | _ -> None
   end
+let string_ = fst <$> string
 
-let bang = token_of begin function
-| Token.BANG str -> Some(str)
+let bang = token_of begin fun loc -> function
+| Token.BANG str -> Some(str, loc)
 | _ -> None
 end
 
-let int = token_of begin function
-| Token.INT i -> Some(i)
+let int = token_of begin fun loc -> function
+| Token.INT i -> Some(i, loc)
 | _ -> None
 end
 
-let float = token_of begin function
-| Token.FLOAT i -> Some(i)
+let float = token_of begin fun loc -> function
+| Token.FLOAT i -> Some(i, loc)
 | _ -> None
 end
 
 let args =
-      ((fun args -> Named args) <$> (token LPAREN *> sep_by_trailing (token COMMA) ident <* token RPAREN))
+      ((fun args -> Named args) <$> (token LPAREN *> sep_by_trailing (token COMMA) ident_ <* token RPAREN))
   <|> (token LPAREN *> token STAR *> token RPAREN *> pure Varargs)
   <|> pure Switch
 
-let option_def = (fun flags args flag_var default description -> {flags; flag_var; args; default; description})
-  <$> some string
+let option_def = 
+  (fun flags args flag_var default description -> { flags; flag_var; args; default; description })
+  <$> some string_
   <*> args
-  <*> optional (token AS *> ident)
-  <*> optional (token EQUALS *> string)
-  <*> optional (token COLON *> string)
+  <*> optional (token AS *> ident_)
+  <*> optional (token EQUALS *> string_)
+  <*> optional (token COLON *> string_)
 
 let header_options = 
       token OPTIONS
@@ -184,9 +188,9 @@ let header_options =
   <*  token RBRACE 
 
 let header = (fun u d opts -> { usage = u; description = d; options = Option.value ~default:[] opts })
-  <$> optional (token USAGE *> token COLON *> string)       (* usage *)
+  <$> optional (token USAGE *> token COLON *> string_)       (* usage *)
   <*  many (token SEMI)
-  <*> optional (token DESCRIPTION *> token COLON *> string) (* description *)
+  <*> optional (token DESCRIPTION *> token COLON *> string_) (* description *)
   <*  many (token SEMI)
   <*> optional header_options                               (* options *)
 
@@ -199,15 +203,17 @@ and pattern1 stream = begin
 end stream
 
 and pattern_leaf stream = begin
-      ((fun loc ps -> ListPat(loc, ps)) <$$> token LBRACKET *> sep_by_trailing (token COMMA) pattern <* token RBRACKET) (* [p, .., p] *)
-  <|> ((fun loc x -> VarPat(loc, x)) <$$> ident)                                                                        (* x *)
-  <|> ((fun loc x -> NumPat(loc, float_of_int x)) <$$> int)                                                             (* n *)
-  <|> ((fun loc x -> NumPat(loc, x)) <$$> float)                                                                        (* f *)
+      ((fun ls ps le -> ListPat(Loc.merge ls le, ps)) 
+        <$> token LBRACKET <*> sep_by_trailing (token COMMA) pattern <*> token RBRACKET)                                (* [p, .., p] *)
+  <|> ((fun (x, loc) -> VarPat(loc, x)) <$> ident)                                                                      (* x *)
+  <|> ((fun (x, loc) -> NumPat(loc, float_of_int x)) <$> int)                                                           (* n *)
+  <|> ((fun (x, loc) -> NumPat(loc, x)) <$> float)                                                                      (* f *)
   <|> (token LPAREN *> pattern <* token RPAREN)                                                                         (* ( p ) *)
 end stream
 
 let rec expr stream = begin 
-  ((fun loc e pl -> Pipe(loc, e :: pl)) <$$> expr1 <* token PIPE <*> pipe_list)
+  ((fun e loc pl -> Pipe(merge (get_loc e) (Option.value ~default:loc (Option.map get_loc (Util.last pl))), e :: pl)) 
+    <$> expr1 <*> token PIPE <*> pipe_list)
   <|> expr1
 end stream
 
@@ -220,7 +226,8 @@ and expr1 stream = begin
 end stream
 
 and pipe_list stream = begin
-  sep_by (token PIPE) ((fun loc x es -> ProgCall(loc, x, es)) <$$> ident <*> many expr_leaf)
+  sep_by (token PIPE) ((fun (x, loc) es -> ProgCall(Loc.merge loc (Option.value ~default:loc (Option.map get_loc (Util.last es))), x, es)) 
+    <$> ident <*> many expr_leaf)
 end stream
 
 and expr2 stream = begin
@@ -253,68 +260,71 @@ and expr4 stream = begin
 end stream
 
 and expr5 stream = begin
-  let ops =
-      (let* t = token DOT in let* x = ident in pure (fun e -> MapLookup(Token.get_loc t, e, x)))
-  <|> (let* t = token LBRACKET in let* e2 = expr in let* _ = token RBRACKET in pure (fun e -> DynLookup(Token.get_loc t, e, e2)))
-  <|> (let* t = token LPAREN in let* es = sep_by_trailing (token COMMA) expr in let* _ = token RPAREN in pure (fun e -> App(Token.get_loc t, e, es)))
+  let ops : (expr -> expr) parser =
+      (let* ls = token DOT in let* (x, le) = ident in pure (fun e -> MapLookup(Loc.merge ls le, e, x)))
+  <|> (let* ls = token LBRACKET in let* e2 = expr in let* le = token RBRACKET in pure (fun e -> DynLookup(Loc.merge ls le, e, e2)))
+  <|> (let* ls = token LPAREN in let* es = sep_by_trailing (token COMMA) expr in let* le = token RPAREN in pure (fun e -> App(Loc.merge ls le, e, es)))
   in
-      ((fun loc x e -> Assign(loc, x, e)) <$$> ident <* token COLONEQUALS <*> expr)                                         (* x := e *)
+      ((fun (x, loc) e -> Assign(loc, x, e)) <$> ident <* token COLONEQUALS <*> expr)                                         (* x := e *)
   <|> left_assoc expr_leaf ops
 end stream
 
 and expr_leaf stream = begin
-      ((fun loc x -> StringLit (loc, x))           <$$> string)                                                             (* "str" *)
-  <|> ((fun loc x -> NumLit (loc, float_of_int x)) <$$> int)                                                                (* n *)
-  <|> ((fun loc x -> NumLit (loc, x))              <$$> float)                                                              (* f *)
-  <|> ((fun loc _ -> UnitLit loc)                  <$$> token LPAREN *> token RPAREN)                                       (* () *)
-  <|> ((fun loc _ -> BoolLit (loc, true))          <$$> token TRUE)                                                         (* true *)
-  <|> ((fun loc _ -> BoolLit (loc, false))         <$$> token FALSE)                                                        (* false *)
-  <|> ((fun loc _ -> NullLit loc)                  <$$> token NULL)                                                         (* null *)
-  <|> ((fun loc x -> Var(loc, x))                  <$$> ident)                                                              (* x *)
-  <|> ((fun loc e p draw_expr clauses -> ListComp(loc, e, DrawClause(p, draw_expr) :: clauses))                             (* [ e | p <- e, .. ] *)
-    <$$> token LBRACKET 
-     *> expr1
+      ((fun (x, loc) -> StringLit (loc, x))           <$> string)                                                             (* "str" *)
+  <|> ((fun (x, loc) -> NumLit (loc, float_of_int x)) <$> int)                                                                (* n *)
+  <|> ((fun (x, loc) -> NumLit (loc, x))              <$> float)                                                              (* f *)
+  <|> ((fun ls le -> UnitLit (Loc.merge ls le))       <$> token LPAREN <*> token RPAREN)                                       (* () *)
+  <|> ((fun loc -> BoolLit (loc, true))               <$> token TRUE)                                                         (* true *)
+  <|> ((fun loc -> BoolLit (loc, false))              <$> token FALSE)                                                        (* false *)
+  <|> ((fun loc -> NullLit loc)                       <$> token NULL)                                                         (* null *)
+  <|> ((fun (x, loc) -> Var(loc, x))                  <$> ident)                                                              (* x *)
+  <|> ((fun ls e p draw_expr clauses le -> ListComp(Loc.merge ls le, e, DrawClause(p, draw_expr) :: clauses))                 (* [ e | p <- e, .. ] *)
+    <$> token LBRACKET 
+    <*> expr1
     <*  token PIPE
     <*> pattern 
     <*  token LARROW 
     <*> expr
     <*> list_comp_clauses
-     <* token RBRACKET)
-  <|> ((fun loc es -> ListLit (loc, es)) <$$> (token LBRACKET *> sep_by_trailing (token COMMA) expr <* token RBRACKET))(* [ e, .., e ] *)
-  <|> ((fun loc entries -> MapLit(loc, entries))                                                                            (* { x : e, .., x : e } *)
-    <$$> token HASHLBRACE 
-      *> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident <* token COLON <*> expr)
-     <*  token RBRACE)
-  <|> (token LPAREN *> expr <* token RPAREN)                                                                                (* ( e ) *)
-  <|> ((fun loc p e -> Lambda(loc, [p], e)) <$$> token LAMBDA *> pattern <* token ARROW <*> expr)                           (* \p -> e *)
-  <|> ((fun loc ps e -> Lambda(loc, ps, e)) <$$> token LAMBDA *> token LPAREN *> sep_by_trailing (token COMMA) pattern <* token RPAREN <* token ARROW <*> expr) (* \(p, .., p) -> e *)
-  <|> ((fun loc p e1 e2 -> Let(loc, p, e1, e2)) <$$> token LET *> pattern <* token EQUALS <*> expr <* token IN <*> expr)    (* let x = e in e *)
-  <|> ((fun loc p e1 -> LetSeq(loc, p, e1))     <$$> token LET *> pattern <* token EQUALS <*> expr)                         (* let x = e *)
-  <|> ((fun loc f ps e1 e2 -> LetRec(loc, f, ps, e1, e2)) 
-    <$$> token LET *> ident 
-      <* token LPAREN <*> sep_by_trailing (token COMMA) pattern <* token RPAREN 
-      <* token EQUALS <*> expr <* token IN <*> expr)                                                                        (* let f(p, .., p) = e in e *)
-      <|> ((fun loc f ps e1 -> LetRecSeq(loc, f, ps, e1)) 
-    <$$> token LET *> ident 
-      <* token LPAREN <*> sep_by_trailing (token COMMA) pattern <* token RPAREN 
-      <* token EQUALS <*> expr)                                                                                             (* let f(p, .., p) = e *)
-  <|> (let* t = token LBRACE in let* es = sep_by_trailing (some (token SEMI)) expr in let* _ = token RBRACE in pure (Seq(Token.get_loc t, es))) (* { e ; .. ; e } *)
-  <|> ((fun loc x es -> ProgCall(loc, x, es)) <$$> bang <*> many expr_leaf)                                                      (* !x e .. e *)
-  <|> (token NOT *> ((fun l e -> Not(l, e)) <$$> expr_leaf))                                                                (* not e *)
-  <|> ((fun loc min max -> Range(loc, min, max)) <$$> token LBRACKET *> expr <* token DDOT <*> expr <* token RBRACKET)      (* [ e .. e ] *)
-  <|> ((fun loc c th el -> If(loc, c, th, el)) 
-    <$$> token IF *> expr <* many (token SEMI) 
-     <* token THEN <*> expr <* many (token SEMI) 
-     <* token ELSE <*> expr)                                                                                                (* if e then e else e *)
-  <|> ((fun loc e -> Async(loc, e)) <$$> token ASYNC *> expr1)                                                               (* async e *)
-  <|> ((fun loc e -> Await(loc, e)) <$$> token AWAIT *> expr1)                                                               (* await e *)
-  <|> ((fun loc e branches -> Match(loc, e, branches)) 
-    <$$> token MATCH 
-      *> expr 
-     <*  token LBRACE 
-     <*> sep_by_trailing (some (token SEMI))
+    <*> token RBRACKET)
+  <|> ((fun ls es le -> ListLit (Loc.merge ls le, es)) <$> token LBRACKET <*> sep_by_trailing (token COMMA) expr <*> token RBRACKET)  (* [ e, .., e ] *)
+  <|> ((fun ls entries le -> MapLit(Loc.merge ls le, entries))                                                                        (* { x : e, .., x : e } *)
+    <$> token HASHLBRACE 
+    <*> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident_ <* token COLON <*> expr)
+    <*> token RBRACE)
+  <|> (token LPAREN *> expr <* token RPAREN)                                                                                          (* ( e ) *)
+  <|> ((fun ls p e -> Lambda(Loc.merge ls (get_loc e), [p], e)) <$> token LAMBDA <*> pattern <* token ARROW <*> expr)                 (* \p -> e *)
+  <|> ((fun ls ps e -> Lambda(Loc.merge ls (get_loc e), ps, e))                                                                       (* \(p, .., p) -> e *)
+    <$> token LAMBDA <*> token LPAREN *> sep_by_trailing (token COMMA) pattern <* token RPAREN <* token ARROW <*> expr)               
+  <|> ((fun ls p e1 e2 -> Let(Loc.merge ls (get_loc e2), p, e1, e2))                                                                  (* let x = e in e *)
+    <$> token LET <*> pattern <* token EQUALS <*> expr <* token IN <*> expr)              
+  <|> ((fun ls p e1 -> LetSeq(Loc.merge ls (get_loc e1), p, e1)) <$> token LET <*> pattern <* token EQUALS <*> expr)                  (* let x = e *)
+  <|> ((fun ls f ps e1 e2 -> LetRec(Loc.merge ls (get_loc e2), f, ps, e1, e2))                                                        (* let f(p, .., p) = e in e *)
+    <$> token LET <*> ident_
+    <* token LPAREN <*> sep_by_trailing (token COMMA) pattern <* token RPAREN   
+    <* token EQUALS <*> expr <* token IN <*> expr)                                                                        
+  <|> ((fun ls f ps e1 -> LetRecSeq(Loc.merge ls (get_loc e1), f, ps, e1))                                                                                 (* let f(p, .., p) = e *)
+    <$> token LET <*> ident_ 
+    <* token LPAREN <*> sep_by_trailing (token COMMA) pattern <* token RPAREN 
+    <* token EQUALS <*> expr)                                                                                             
+  <|> (let* ls = token LBRACE in let* es = sep_by_trailing (some (token SEMI)) expr in let* le = token RBRACE in pure (Seq(Loc.merge ls le, es))) (* { e ; .. ; e } *)
+  <|> ((fun (x, loc) es -> ProgCall(Loc.merge loc (Option.value ~default:loc (Option.map get_loc (Util.last es))), x, es))            (* !x e .. e *)
+    <$> bang <*> many expr_leaf)                                                      
+  <|> ((fun loc e -> Not(Loc.merge loc (get_loc e), e)) <$> token NOT <*> expr_leaf)                                                  (* not e *)
+  <|> ((fun ls min max le -> Range(Loc.merge ls le, min, max)) <$> token LBRACKET <*> expr <* token DDOT <*> expr <*> token RBRACKET) (* [ e .. e ] *)
+  <|> ((fun ls c th el -> If(Loc.merge ls (get_loc el), c, th, el))                                                                   (* if e then e else e *)
+    <$> token IF <*> expr <* many (token SEMI)
+    <* token THEN <*> expr <* many (token SEMI)
+    <* token ELSE <*> expr)
+  <|> ((fun loc e -> Async(Loc.merge loc (get_loc e), e)) <$> token ASYNC <*> expr1)                                                  (* async e *)
+  <|> ((fun loc e -> Await(Loc.merge loc (get_loc e), e)) <$> token AWAIT <*> expr1)                                                  (* await e *)
+  <|> ((fun ls e branches le -> Match(Loc.merge ls le, e, branches)) 
+    <$> token MATCH 
+    <*> expr 
+    <*  token LBRACE 
+    <*> sep_by_trailing (some (token SEMI))
         ((fun x y -> (x, y)) <$> pattern <* token ARROW <*> expr)
-     <*  token RBRACE)
+    <*>  token RBRACE)
   end stream
 
 and list_comp_clauses stream = begin
@@ -334,7 +344,7 @@ let entry = (fun h exprs -> (h, exprs) )
   <*> sep_by_trailing (some (token SEMI)) expr
 
 
-let main : Token.t Athena.Stream.t -> (header * expr list, AthenaInst.parse_error) result = 
+let main : (Token.t * loc) Athena.Stream.t -> (header * expr list, AthenaInst.parse_error) result = 
   fun stream ->
     parse entry stream
 

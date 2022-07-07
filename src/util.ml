@@ -56,3 +56,8 @@ let command_exists path =
 
 let take n list =
   List.of_seq (Seq.take n (List.to_seq list))
+
+let rec last = function
+  | [] -> None
+  | [x] -> Some x
+  | _ :: xs -> last xs

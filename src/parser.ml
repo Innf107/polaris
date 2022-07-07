@@ -116,14 +116,6 @@ module Token = struct
   let to_string = pretty
 
   let equal : t -> t -> bool = (=)
-
-  let get_loc _ = {
-    file = "TODO"
-  ; start_line = 0
-  ; start_col = 0
-  ; end_line = 0
-  ; end_col = 0
-  }
 end
 
 module AthenaInst = Athena.Make(Token)
@@ -195,11 +187,11 @@ let header = (fun u d opts -> { usage = u; description = d; options = Option.val
   <*> optional header_options                               (* options *)
 
 let rec pattern stream = begin
-  chainl1 pattern1 (let* t = token PIPE in pure (fun p1 p2 -> OrPat(Token.get_loc t, p1, p2)))                          (* p | p *)
+  chainl1 pattern1 (let* loc = token PIPE in pure (fun p1 p2 -> OrPat(loc, p1, p2)))                          (* p | p *)
 end stream
 
 and pattern1 stream = begin
-  chainl1 pattern_leaf (let* t = token COLON in pure (fun p1 p2 -> ConsPat(Token.get_loc t, p1, p2)))                   (* p : p *)
+  chainl1 pattern_leaf (let* loc = token COLON in pure (fun p1 p2 -> ConsPat(loc, p1, p2)))                   (* p : p *)
 end stream
 
 and pattern_leaf stream = begin
@@ -219,8 +211,8 @@ end stream
 
 and expr1 stream = begin
   let op = 
-      (let* t = token OR in pure (fun e1 e2 -> Or(Token.get_loc t, e1, e2)))
-  <|> (let* t = token AND in pure (fun e1 e2 -> And(Token.get_loc t, e1, e2))) 
+      (let* loc = token OR in pure (fun e1 e2 -> Or(loc, e1, e2)))
+  <|> (let* loc = token AND in pure (fun e1 e2 -> And(loc, e1, e2))) 
   in
   chainl1 expr2 op
 end stream
@@ -232,29 +224,29 @@ end stream
 
 and expr2 stream = begin
   let op = 
-      (let* t = token BANGEQUALS in pure (fun e1 e2 -> NotEquals(Token.get_loc t, e1, e2)))
-  <|> (let* t = token DOUBLEEQUALS in pure (fun e1 e2 -> Equals(Token.get_loc t, e1, e2))) 
-  <|> (let* t = token LT in pure (fun e1 e2 -> LT(Token.get_loc t, e1, e2))) 
-  <|> (let* t = token GT in pure (fun e1 e2 -> GT(Token.get_loc t, e1, e2)))
-  <|> (let* t = token LE in pure (fun e1 e2 -> LE(Token.get_loc t, e1, e2))) 
-  <|> (let* t = token GE in pure (fun e1 e2 -> GE(Token.get_loc t, e1, e2))) 
+      (let* loc = token BANGEQUALS in pure (fun e1 e2 -> NotEquals(loc, e1, e2)))
+  <|> (let* loc = token DOUBLEEQUALS in pure (fun e1 e2 -> Equals(loc, e1, e2))) 
+  <|> (let* loc = token LT in pure (fun e1 e2 -> LT(loc, e1, e2))) 
+  <|> (let* loc = token GT in pure (fun e1 e2 -> GT(loc, e1, e2)))
+  <|> (let* loc = token LE in pure (fun e1 e2 -> LE(loc, e1, e2))) 
+  <|> (let* loc = token GE in pure (fun e1 e2 -> GE(loc, e1, e2))) 
   in
   chainl1 expr3 op
 end stream
   
 and expr3 stream = begin
   let op = 
-      (let* t = token PLUS in pure (fun e1 e2 -> Add(Token.get_loc t, e1, e2)))
-  <|> (let* t = token MINUS in pure (fun e1 e2 -> Sub(Token.get_loc t, e1, e2))) 
-  <|> (let* t = token TILDE in pure (fun e1 e2 -> Concat(Token.get_loc t, e1, e2))) 
+      (let* loc = token PLUS in pure (fun e1 e2 -> Add(loc, e1, e2)))
+  <|> (let* loc = token MINUS in pure (fun e1 e2 -> Sub(loc, e1, e2))) 
+  <|> (let* loc = token TILDE in pure (fun e1 e2 -> Concat(loc, e1, e2))) 
   in
   chainl1 expr4 op
 end stream
 
 and expr4 stream = begin
   let op = 
-      (let* t = token STAR in pure (fun e1 e2 -> Mul(Token.get_loc t, e1, e2)))
-  <|> (let* t = token SLASH in pure (fun e1 e2 -> Div(Token.get_loc t, e1, e2))) 
+      (let* loc = token STAR in pure (fun e1 e2 -> Mul(loc, e1, e2)))
+  <|> (let* loc = token SLASH in pure (fun e1 e2 -> Div(loc, e1, e2))) 
   in
   chainl1 expr5 op
 end stream

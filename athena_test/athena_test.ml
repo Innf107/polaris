@@ -1,4 +1,4 @@
-
+open Athena
 module AthenaInst = Athena.Make(struct 
   include String 
   let to_string x = x
@@ -8,7 +8,7 @@ open AthenaInst
 let lex_string str = Athena.Stream.of_list begin
   match String.split_on_char ' ' str with
   | [""] -> []
-  | x -> x
+  | xs-> List.map (fun x -> (x, Athena.Loc.internal)) xs
   end
 
 type expr = Var of string
@@ -23,14 +23,14 @@ let rec pretty_expr = function
   | Mul (x, y) -> "(" ^ pretty_expr x ^ " * " ^ pretty_expr y ^ ")"
 
 let pretty_parse_error = function
-  | RemainingTokens toks -> "RemainingTokens: " ^ String.concat ", " (List.map (fun t -> "'" ^ t ^ "'") (Athena.Stream.collect toks))
+  | RemainingTokens toks -> "RemainingTokens: " ^ String.concat ", " (List.map (fun (t, _) -> "'" ^ t ^ "'") (Athena.Stream.collect toks))
   | UnexpectedEOF -> "UnexpectedEOF"
   | ParseError msg -> "Parse error: " ^ msg
-  | ParseErrorOn (msg, tok) -> "Unexpected '" ^ tok ^ "': " ^ msg
-  | UnexpectedToken tok     -> "Unexpected '" ^ tok ^ "'"
+  | ParseErrorOn (msg, tok, loc) -> Athena.Loc.pretty loc ^ ": Unexpected '" ^ tok ^ "': " ^ msg
+  | UnexpectedToken (tok, loc) -> Athena.Loc.pretty loc ^ ": Unexpected '" ^ tok ^ "'"
 
 
-let var = (fun x -> Var x) <$> any
+let var = (fun (x, _) -> Var x) <$> any
 
 let rec mul_term stream = begin
   (fun x y -> Mul(x, y))
@@ -98,10 +98,10 @@ let id x = x
 
 let () = 
   should_be_ok "pure" (parse (pure 5) (lex_string "")) 5 Int.to_string pretty_parse_error;
-  should_be_ok "token" (parse (token "1") (lex_string "1")) "1" id pretty_parse_error;
-  should_be_ok "any" (parse any (lex_string "x")) "x" id pretty_parse_error;
-  should_be_ok "map id" (parse (map id any) (lex_string "x")) "x" id pretty_parse_error;
-  should_be_ok "map Var" (parse ((fun x -> Var x) <$> any) (lex_string "x")) (Var "x") pretty_expr pretty_parse_error;
+  should_be_ok "token" (parse (token "1") (lex_string "1")) Loc.internal Loc.pretty pretty_parse_error;
+  should_be_ok "any" (parse any (lex_string "x")) ("x", Loc.internal) fst pretty_parse_error;
+  should_be_ok "map id" (parse (map id any) (lex_string "x")) ("x", Loc.internal) fst pretty_parse_error;
+  should_be_ok "map Var" (parse ((fun (x, _) -> Var x) <$> any) (lex_string "x")) (Var "x") pretty_expr pretty_parse_error;
   should_be_ok "var" (parse var (lex_string "x")) (Var "x") pretty_expr pretty_parse_error;
   should_be_ok "var var" (parse (var *> var) (lex_string "x y")) (Var "y") pretty_expr pretty_parse_error;
   should_be_ok "many" (parse (many var) (lex_string "x y")) [Var "x"; Var "y"] (fun x -> String.concat ", " (List.map pretty_expr x)) pretty_parse_error;

@@ -80,7 +80,7 @@ and Driver : DriverI = struct
       let stream = Athena.Stream.of_iter begin fun () -> 
         match Lexer.token lex_state lexbuf with 
         | Parser.Token.EOF -> None 
-        | x -> Some(x)
+        | x -> Some(x, Loc.from_pos lexbuf.lex_start_p lexbuf.lex_curr_p)
         end
       in
       match

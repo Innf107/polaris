@@ -747,7 +747,7 @@ end) = struct
     | Varargs name ->
       let env, flag_ref = insert_var name (ListV []) env in
       { aliases
-      ; arg_count = -1
+      ; arg_count = 1
       ; description
       ; action = fun args ->
         match !flag_ref with

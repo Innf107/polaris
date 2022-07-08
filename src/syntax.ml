@@ -100,7 +100,8 @@ struct
   type flag_args =
     | Varargs of name
     | Switch of name
-    | Named of (name * string option) list
+    | Named of name list
+    | NamedDefault of (name * string) list 
 
   type flag_def = {
     flags: string list

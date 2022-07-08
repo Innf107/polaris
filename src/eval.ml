@@ -756,7 +756,18 @@ end) = struct
       }, env
     | Named args ->
       let env, refs = List.fold_left_map (
-        fun env (x, default) -> insert_var x (Option.fold ~none:NullV ~some:(fun x -> StringV x) default) env
+        fun env x -> insert_var x NullV env
+        ) env args
+      in
+      { aliases
+      ; arg_count = List.length args
+      ; description
+      ; action = fun args ->
+        List.iter2 (fun r x -> r := StringV x) refs args
+      }, env  
+    | NamedDefault args ->
+      let env, refs = List.fold_left_map (
+        fun env (x, default) -> insert_var x (StringV default) env
         ) env args
       in
       { aliases

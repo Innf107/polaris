@@ -189,11 +189,16 @@ options_list:
 option_def:
   | STRING+ AS IDENT descr_clause? { { flags = $1; args = Switch $3; description = $4 } }
   | STRING+ LPAREN STAR RPAREN AS IDENT descr_clause? { { flags = $1; args = Varargs $6; description = $7 } }
-  | STRING+ LPAREN flagarg_list RPAREN descr_clause? { { flags = $1; args = Named $3; description = $5 } }
+  | STRING+ LPAREN required_named_flag_args RPAREN descr_clause? { { flags = $1; args = Named $3; description = $5 } }
+  | STRING+ LPAREN default_named_flag_args RPAREN descr_clause? { { flags = $1; args = NamedDefault $3; description = $5 } }
 
-flagarg_list:
-  | IDENT default_clause?                      { [($1, $2)] }
-  | IDENT default_clause? COMMA flagarg_list   { ($1, $2) :: $4 }
+default_named_flag_args:
+  | IDENT default_clause                                 { [($1, $2)] }
+  | IDENT default_clause COMMA default_named_flag_args   { ($1, $2) :: $4 }
+
+required_named_flag_args:
+  | IDENT                                 { [$1] }
+  | IDENT COMMA required_named_flag_args  { $1 :: $3 }
 
 default_clause:
   | EQUALS STRING { $2 }

@@ -179,9 +179,13 @@ let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.
             let name' = RenameScope.fresh_var scope name in
             Renamed.Switch name', RenameScope.insert_var name name' scope
         | Named args ->
+            let args' = List.map (RenameScope.fresh_var scope) args in
+            let scope = List.fold_right2 (RenameScope.insert_var) args args' scope in
+            Named args', scope
+        | NamedDefault args ->
             let args' = List.map (fun (x, def) -> (RenameScope.fresh_var scope x, def)) args in
             let scope = List.fold_right2 (fun (x, _) (y, _) -> RenameScope.insert_var x y) args args' scope in
-            Named args', scope
+            NamedDefault args', scope
     in        
     { args
     ; flags = flag_def.flags

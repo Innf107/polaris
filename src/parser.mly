@@ -187,16 +187,13 @@ options_list:
 
 
 option_def:
-  | STRING+ maybe_args maybe_as default_clause? descr_clause? { {flag_var = $3; flags = $1; args = $2; default = $4; description = $5 } }
+  | STRING+ AS IDENT descr_clause? { { flags = $1; args = Switch $3; description = $4 } }
+  | STRING+ LPAREN STAR RPAREN AS IDENT descr_clause? { { flags = $1; args = Varargs $6; description = $7 } }
+  | STRING+ LPAREN flagarg_list RPAREN descr_clause? { { flags = $1; args = Named $3; description = $5 } }
 
-maybe_args:
-  | LPAREN ident_list RPAREN { Named $2 }
-  | LPAREN STAR RPAREN { Varargs }
-  | { Switch }
-
-maybe_as:
-  | AS IDENT { Some $2 }
-  | { None }
+flagarg_list:
+  | IDENT default_clause?                      { [($1, $2)] }
+  | IDENT default_clause? COMMA flagarg_list   { ($1, $2) :: $4 }
 
 default_clause:
   | EQUALS STRING { $2 }

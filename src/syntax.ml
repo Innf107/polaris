@@ -98,15 +98,13 @@ struct
     | FilterClause of expr            (* e *)
 
   type flag_args =
-    | Varargs
-    | Switch
-    | Named of name list
+    | Varargs of name
+    | Switch of name
+    | Named of (name * string option) list
 
   type flag_def = {
-    flag_var: name option
-  ; flags: string list
+    flags: string list
   ; args: flag_args
-  ; default: string option
   ; description: string option
   }
 

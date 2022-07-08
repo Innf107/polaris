@@ -734,65 +734,38 @@ end) = struct
   let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs
 
   let flag_info_of_flag_def (env : eval_env) (flag_def : Renamed.flag_def): Argparse.flag_info * eval_env =
-    let default_value = match flag_def.args with
-    | Switch -> BoolV false
-    | Varargs -> ListV []
-    | Named args -> match flag_def.default with
-      | Some(str) -> StringV(str)
-      | None -> NullV
-    in
-
-    let env, flag_ref = match flag_def.flag_var with
-    | Some flag_var -> 
-      let env, flag_ref = insert_var flag_var default_value env in
-      env, Some flag_ref
-    | None -> env, None
-    in
-    let env = match flag_def.args with
+    let aliases = flag_def.flags in
+    let description = Option.value ~default:"" flag_def.description in
+    match flag_def.args with
+    | Switch name ->
+      let env, flag_ref = insert_var name (BoolV false) env in
+      { aliases
+      ; arg_count = 0
+      ; description
+      ; action = fun _ -> flag_ref := BoolV true
+      }, env
+    | Varargs name ->
+      let env, flag_ref = insert_var name (ListV []) env in
+      { aliases
+      ; arg_count = -1
+      ; description
+      ; action = fun args ->
+        match !flag_ref with
+        | ListV prev_args -> flag_ref := ListV (prev_args @ (List.map (fun x -> StringV x) args))
+        | v -> raise (Panic ("flag_info_of_flag_def: Non-list value in varargs flag reference: " ^ Value.pretty v))
+      }, env
     | Named args ->
-      List.fold_right (fun arg env -> let env, _ = insert_var arg NullV env in env) args env
-    | _ -> env
-    in
-
-    { aliases = flag_def.flags 
-    ; arg_count = 
-      begin match flag_def.args with 
-      | Varargs -> 1
-      | Switch -> 0
-      | Named args -> List.length args
-      end
-    ; description = Option.value ~default:"" flag_def.description
-    ; action = function
-      | [] -> 
-        begin match flag_ref with
-        | None -> ()
-        | Some flag_ref -> flag_ref := BoolV true
-        end
-      | strs -> 
-        match flag_def.args with
-        | Varargs -> 
-          let flag_ref = match flag_ref with
-            | None -> raise (Panic ("Variadic flag without flag_ref: " ^ String.concat ", " flag_def.flags))
-            | Some flag_ref -> flag_ref
-          in
-          begin match strs, !flag_ref with
-          | [str], ListV vals -> flag_ref := ListV (vals @ [StringV str]) (* quadratic :/*)
-          | _, ListV _ -> raise (Panic ("Variadic flag not called with exactly one argument: " ^ String.concat ", " flag_def.flags))
-          | _, _ -> raise  (Panic ("Variadic flag with intermediary non-list value: " ^ String.concat ", " flag_def.flags))
-          end
-        | Switch -> raise (Panic ("Switch received argument: " ^ String.concat ", " flag_def.flags))
-        | Named args ->
-          begin match flag_ref with
-          | None -> ()
-          | Some flag_ref -> 
-            flag_ref := ListV (List.map (fun x -> StringV x) strs);
-          end;
-          let update name str = 
-            let ref = lookup_var env Loc.internal name in
-            ref := StringV str
-          in
-          List.iter2 update args strs
-    }, env
+      let env, refs = List.fold_left_map (
+        fun env (x, default) -> insert_var x (Option.fold ~none:NullV ~some:(fun x -> StringV x) default) env
+        ) env args
+      in
+      { aliases
+      ; arg_count = List.length args
+      ; description
+      ; action = fun args ->
+        List.iter2 (fun r x -> r := StringV x) refs args
+      }, env
+      
 
   let eval_header (env : eval_env) (header : Renamed.header) : eval_env =
     let description = Option.value ~default:"" header.description in

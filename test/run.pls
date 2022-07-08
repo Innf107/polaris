@@ -24,8 +24,8 @@ let files = lines(!find categories "-name" "*.pls")
 let errors = 0
 
 for(files, \file -> {
-    let expectation = !grep "-Po" "(?<=# EXPECT:).+" file;
-    let args = split("|", !grep "-Po" "(?<=# ARGS:).+" file);
+    let expectation = !grep "-Po" "(?<=# EXPECT: ).+" file;
+    let args = split("|", !grep "-Po" "(?<=# ARGS: ).+" file);
 
     let result = 
         if useDune then 

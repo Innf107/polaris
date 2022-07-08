@@ -173,6 +173,13 @@ end) = struct
     (* Comparisons of different values are always false *)
     | _, _ -> false
 
+  let trim_output = function
+  | "" -> "" 
+  | str -> match str.[String.length str - 1] with
+    | '\n' -> String.sub str 0 (String.length str - 1)
+    | _ -> str
+
+
   let rec match_pat (pat : Renamed.pattern) (scrut : value) : (eval_env -> eval_env) option =
     let (let*) = Option.bind in
     match pat, scrut with
@@ -401,7 +408,7 @@ end) = struct
     | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
       let progs = progs_of_exprs env exprs in
       let in_chan = Pipe.compose_in progs in
-      StringV (String.trim (In_channel.input_all in_chan))
+      StringV (trim_output (In_channel.input_all in_chan))
 
     | Pipe (loc, (expr :: exprs)) ->
       let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
@@ -411,7 +418,7 @@ end) = struct
       let in_chan = Pipe.compose_in_out progs (fun out_chan ->
           List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
         ) in
-      StringV (String.trim (In_channel.input_all in_chan))
+      StringV (trim_output (In_channel.input_all in_chan))
     | Async (loc, expr) ->
       let promise = Promise.create begin fun _ ->
         eval_expr env expr

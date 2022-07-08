@@ -1,5 +1,5 @@
 # EXPECT: 1 2 3 true a b c
-# ARGS:-f|1|2|-g|3|-h
+# ARGS: -f|1|2|-g|3|-h
 options {
     "-f" (x, y)
     "-g" (g1)

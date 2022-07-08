@@ -1,4 +1,4 @@
-# EXPECT:[[1, "a"], [2, "b"], [3, "c"]]
+# EXPECT: [[1, "a"], [2, "b"], [3, "c"]]
 
 let zip(xs, ys) = match [xs, ys] {
     [[], _] -> []

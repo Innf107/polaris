@@ -741,6 +741,7 @@ end) = struct
       let env, flag_ref = insert_var name (BoolV false) env in
       { aliases
       ; arg_count = 0
+      ; required = false
       ; description
       ; action = fun _ -> flag_ref := BoolV true
       }, env
@@ -748,6 +749,7 @@ end) = struct
       let env, flag_ref = insert_var name (ListV []) env in
       { aliases
       ; arg_count = 1
+      ; required = false
       ; description
       ; action = fun args ->
         match !flag_ref with
@@ -761,6 +763,7 @@ end) = struct
       in
       { aliases
       ; arg_count = List.length args
+      ; required = true
       ; description
       ; action = fun args ->
         List.iter2 (fun r x -> r := StringV x) refs args
@@ -772,6 +775,7 @@ end) = struct
       in
       { aliases
       ; arg_count = List.length args
+      ; required = false
       ; description
       ; action = fun args ->
         List.iter2 (fun r x -> r := StringV x) refs args

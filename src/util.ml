@@ -53,3 +53,15 @@ let command_exists path =
   match quiet_command "which" [path] with
   | Unix.WEXITED 0 -> true
   | _ -> false
+
+(* O(n) *)
+let rec extract : ('a -> bool) -> 'a list -> ('a * 'a list) option =
+  fun pred xs -> match xs with
+  | [] -> None
+  | x :: xs -> 
+    if pred x then
+      Some (x, xs)
+    else
+      match extract pred xs with
+      | None -> None
+      | Some (y, ys) -> Some(y, x::ys)

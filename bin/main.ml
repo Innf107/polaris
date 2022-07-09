@@ -66,11 +66,15 @@ let handle_errors print_fun f =
       ^ "\n" ^ pretty_call_trace locs
     )
   | TryingToLookupDynamicInNonMap (value, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Trying to lookup dynamic key in non-map value: " ^ Value.pretty value
+      Loc.pretty loc ^ ": Trying to lookup dynamic key in non map or list value: " ^ Value.pretty value
       ^ "\n" ^ pretty_call_trace locs
     )
-  | InvalidKey (key, map, loc::locs) -> print_fun (
+  | InvalidMapKey (key, map, loc::locs) -> print_fun (
       Loc.pretty loc ^ ": Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in map: " ^ Value.pretty (MapV map)
+      ^ "\n" ^ pretty_call_trace locs
+    )
+  | InvalidListKey (key, list, loc::locs) -> print_fun (
+      Loc.pretty loc ^ ": Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in list: " ^ Value.pretty (ListV list)
       ^ "\n" ^ pretty_call_trace locs
     )
 

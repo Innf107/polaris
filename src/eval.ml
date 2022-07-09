@@ -46,8 +46,10 @@ module EvalError = struct
   exception TryingToApplyNonFunction of value * loc list
   exception TryingToLookupInNonMap of value * string * loc list
   exception TryingToLookupDynamicInNonMap of value * loc list
-  exception InvalidKey of value * value MapVImpl.t * loc list
+  exception InvalidMapKey of value * value MapVImpl.t * loc list
+  exception InvalidListKey of value * value list * loc list
   exception MapDoesNotContain of value MapVImpl.t * string * loc list
+  exception IndexOutOfRange of value list * int * loc list
   exception InvalidNumberOfArguments of name list * value list * loc list
   (* TODO: Once exceptions are implemented, prim op argument errors should
     just be polaris exceptions. 
@@ -249,7 +251,17 @@ end) = struct
                          | Some value -> value
                          | None -> NullV
                          end
-        | value -> raise (EvalError.InvalidKey (value, map, loc :: env.call_trace))
+        | value -> raise (EvalError.InvalidMapKey (value, map, loc :: env.call_trace))
+        end
+      | ListV list ->
+        begin match eval_expr env key_expr with
+        | NumV num when Float.is_integer num ->
+          let index = Float.to_int num in
+          begin match List.nth_opt list index with
+          | Some x -> x
+          | None -> raise (EvalError.IndexOutOfRange(list, index, loc :: env.call_trace))
+          end
+        | value -> raise (EvalError.InvalidListKey (value, list, loc :: env.call_trace))
         end
       | value -> raise (EvalError.TryingToLookupDynamicInNonMap (value, loc :: env.call_trace))
       end
@@ -622,6 +634,19 @@ end) = struct
 
                       StringV (Re.replace regexp ~f:transform str_v)
                   | _ -> raise (PrimOpArgumentError ("regexpTransform", args, "Expected (string, function, string)", loc :: env.call_trace))
+                  end
+    | "regexpTransformAll" -> begin match args with
+                  | [StringV pattern; transformClos; StringV str_v] ->
+                    let regexp = Re.Pcre.regexp pattern in
+
+                    let transform group = 
+                      match eval_app env loc transformClos [ListV (List.map (fun x -> StringV x) (Array.to_list (Re.Group.all group)))] with
+                      | StringV repl -> repl
+                      | value -> raise (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace))
+                    in
+
+                    StringV (Re.replace regexp ~f:transform str_v)
+                  | _ -> raise (PrimOpArgumentError ("regexpTransformAll", args, "Expected (string, function, string)", loc :: env.call_trace))
                   end
     | "writeFile" -> begin match args with
                   | [path_v; content_v] ->

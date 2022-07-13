@@ -12,6 +12,8 @@ type eval_env = {
 ; argv : string list 
 ; call_trace : loc list
 }
+(* TODO: Add list (map?) of overridden environment variables. This should probably be a *mutable* list, since
+   env vars should be dynamically scoped (Should they?) *)
 
 and value =
   | StringV of string
@@ -187,6 +189,8 @@ end) = struct
     match pat, scrut with
     | VarPat (_, x), scrut ->
       Some(fun env -> fst(insert_var x scrut env))
+    | EnvVarPat (_, x), scrut ->
+      todo __POS__
     | ConsPat(_, p, ps), ListV (v :: vs) ->
       let* x_trans = match_pat p v in
       let* xs_trans = match_pat ps (ListV vs) in
@@ -431,6 +435,12 @@ end) = struct
           List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
         ) in
       StringV (trim_output (In_channel.input_all in_chan))
+    | EnvVar(loc, var) ->
+      (* TODO: We also have to check for overridden environment variables (which are NYI at the time of writing) *)
+      begin match Sys.getenv_opt var with
+      | None -> NullV
+      | Some(str) -> StringV str
+      end
     | Async (loc, expr) ->
       let promise = Promise.create begin fun _ ->
         eval_expr env expr

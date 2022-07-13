@@ -26,6 +26,7 @@ let loc = Loc.from_pos
 %token DDOT
 %token OR AND NOT
 %token <string> BANG
+%token <string> ENVVAR
 %token PIPE
 %token IF THEN ELSE
 %token ASYNC AWAIT
@@ -84,7 +85,8 @@ expr:
   | LBRACE expr_semi_list RBRACE                                { Seq(loc $startpos $endpos, $2) }                                 // {e; ..; e}
   | expr LPAREN expr_comma_list RPAREN                          { App(loc $startpos $endpos, $1, $3) }                             // e(e, .., e)
   | IDENT COLONEQUALS expr                                      { Assign(loc $startpos $endpos, $1, $3)}                           // x = e
-  | BANG exprs                                                  { ProgCall(loc $startpos $endpos, $1, $2) }                        // /p e .. e
+  | BANG exprs                                                  { ProgCall(loc $startpos $endpos, $1, $2) }                        // !p e .. e
+  | ENVVAR                                                      { EnvVar(loc $startpos $endpos, $1) }                              // $x
   | expr PLUS expr                                              { Add(loc $startpos $endpos, $1, $3) }                             // e + e
   | expr MINUS expr                                             { Sub(loc $startpos $endpos, $1, $3) }                             // e - e
   | expr STAR expr                                              { Mul(loc $startpos $endpos, $1, $3) }                             // e * e
@@ -159,6 +161,7 @@ pattern:
   | pattern COLON pattern { ConsPat(loc $startpos $endpos, $1, $3) }
   | LBRACKET pattern_comma_list RBRACKET { ListPat(loc $startpos $endpos, $2) }
   | IDENT { VarPat(loc $startpos $endpos, $1) }
+  | ENVVAR { EnvVarPat(loc $startpos $endpos, $1) }
   | INT { NumPat (loc $startpos $endpos, float_of_int $1) }
   | FLOAT { NumPat (loc $startpos $endpos, $1) }
   | LPAREN pattern RPAREN { $2 }

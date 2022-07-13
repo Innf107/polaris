@@ -34,6 +34,7 @@ let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in functio
     | Parsed.VarPat (loc, var) ->
         let var' = fresh_var scope var in
         (Renamed.VarPat (loc, var'), fun scope -> insert_var var var' scope)
+    | EnvVarPat (loc, var) -> (EnvVarPat(loc, var), fun scope -> scope)
     | ConsPat (loc, x, xs) ->
         let x', x_trans = rename_pattern scope x in
         let xs', xs_trans = rename_pattern scope xs in
@@ -129,6 +130,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
         ProgCall (loc, p, List.map (rename_expr scope) args)
     | Pipe (loc, exprs) ->
         Pipe (loc, List.map (rename_expr scope) exprs)
+    | EnvVar (loc, var) -> EnvVar(loc, var)
     | Async (loc, expr) ->
         Async (loc, rename_expr scope expr)
     | Await (loc, expr) ->

@@ -42,6 +42,7 @@ let pretty_token = function
 | AND -> "AND" 
 | NOT -> "NOT"
 | BANG str -> "BANG(" ^ str ^ ")"
+| ENVVAR str -> "ENVVAR(" ^ str ^ ")"
 | PIPE -> "PIPE"
 | IF -> "IF" 
 | THEN -> "THEN" 

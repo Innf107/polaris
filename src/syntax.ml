@@ -33,6 +33,7 @@ struct
 
   type pattern =
     | VarPat of loc * name
+    | EnvVarPat of loc * string
     | ConsPat of loc * pattern * pattern
     | ListPat of loc * pattern list
     | NumPat of loc * float
@@ -87,6 +88,7 @@ struct
     (* Scripting capabilities *)
     | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
+    | EnvVar of loc * string                (* $var *)
     (* Async / Await (colorless) *)
     | Async of loc * expr                   (* async e *)
     | Await of loc * expr                   (* await e*)
@@ -117,6 +119,7 @@ struct
 
   let rec pretty_pattern = function
     | VarPat (_, x) -> Name.pretty x
+    | EnvVarPat (_, x) -> "$" ^ x
     | ConsPat (_, x, xs) -> "(" ^ pretty_pattern x ^ ") : (" ^ pretty_pattern xs ^ ")"
     | ListPat (_, pats) -> "[" ^ String.concat ", " (List.map pretty_pattern pats) ^ "]" 
     | NumPat (_, f) -> Float.to_string f
@@ -178,6 +181,7 @@ struct
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
+    | EnvVar (_, x) -> "$" ^ x
     | Async (_, expr) -> "async " ^ pretty expr
     | Await (_, expr) -> "await " ^ pretty expr
 
@@ -197,7 +201,7 @@ struct
     | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _) | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
-    | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _)
+    | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _)
     -> loc
 end

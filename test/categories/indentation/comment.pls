@@ -1,4 +1,4 @@
-# EXPECT:1
+# EXPECT: 1
 # Taken from the test runner
 
 let files = []

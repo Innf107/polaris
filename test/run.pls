@@ -31,8 +31,8 @@ else
     ()
 
 for(files, \file -> {
-    let expectation = !grep "-Po" "(?<=# EXPECT:).+" file;
-    let args = split("|", !grep "-Po" "(?<=# ARGS:).+" file);
+    let expectation = !grep "-Po" "(?<=# EXPECT: ).+" file;
+    let args = split("|", !grep "-Po" "(?<=# ARGS: ).+" file);
 
     let result = 
         if useDune then 

@@ -1,4 +1,4 @@
-# EXPECT:true
+# EXPECT: true
 
 let List = require("list.pls");
 

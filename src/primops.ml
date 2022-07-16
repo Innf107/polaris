@@ -12,6 +12,7 @@ let primops = PrimOpNameSet.of_list [
   "regexpReplace";
   "regexpMatch";
   "regexpTransform";
+  "regexpTransformAll";
   "writeFile";
   "parseInt";
   "parseNum";

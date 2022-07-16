@@ -1,4 +1,4 @@
-# EXPECT:5
+# EXPECT: 5
 
 let x = 1;
 

@@ -1,4 +1,4 @@
-# EXPECT:[1, 4, 4, 5, 6, 21, 22, 32, 534]
+# EXPECT: [1, 4, 4, 5, 6, 21, 22, 32, 534]
 
 let List = require("list.pls")
 

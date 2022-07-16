@@ -160,18 +160,32 @@ let float = token_of begin fun loc -> function
 | _ -> None
 end
 
-let args =
-      ((fun args -> Named args) <$> (token LPAREN *> sep_by_trailing (token COMMA) ident_ <* token RPAREN))
-  <|> (token LPAREN *> token STAR *> token RPAREN *> pure Varargs)
-  <|> pure Switch
+let descr_clause = optional (token COLON *> string_)
+
+let named_args = 
+  ((fun xs -> NamedDefault xs) 
+    <$> sep_by_trailing1 (token COMMA) ((fun x y -> (x, y)) <$> ident_ <* token EQUALS <*> string_))
+  <|> ((fun xs -> Named xs)
+    <$> sep_by_trailing1 (token COMMA) ident_)
 
 let option_def = 
-  (fun flags args flag_var default description -> { flags; flag_var; args; default; description })
-  <$> some string_
-  <*> args
-  <*> optional (token AS *> ident_)
-  <*> optional (token EQUALS *> string_)
-  <*> optional (token COLON *> string_)
+  let* flags = some string_ in
+  ((fun name descr -> { flags=flags; args=Switch name; description=descr })
+    <$> token AS
+     *> ident_
+    <*> descr_clause)
+  <|> ((fun name descr -> { flags=flags; args=Varargs name; description=descr })
+    <$> token LPAREN
+     *> token STAR
+     *> token RPAREN
+     *> token AS
+     *> ident_
+    <*> descr_clause)
+  <|> ((fun args descr -> { flags=flags; args=args; description=descr })
+    <$> token LPAREN
+     *> named_args
+    <*  token RPAREN
+    <*> descr_clause)
 
 let header_options = 
       token OPTIONS

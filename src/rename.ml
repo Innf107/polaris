@@ -177,25 +177,24 @@ and rename_seq scope exprs =
     res
 
 let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.flag_def * RenameScope.t =
-    let flag_var, scope = match flag_def.flag_var with
-        | Some old_flag_var -> 
-            let flag_var = RenameScope.fresh_var scope old_flag_var in
-            let scope = RenameScope.insert_var old_flag_var flag_var scope in
-            Some flag_var, scope
-        | None -> None, scope
-    in
     let args, scope = match flag_def.args with
-        | Varargs -> Renamed.Varargs, scope
-        | Switch -> Renamed.Switch, scope
+        | Varargs name -> 
+            let name' = RenameScope.fresh_var scope name in
+            Renamed.Varargs name', RenameScope.insert_var name name' scope
+        | Switch name ->
+            let name' = RenameScope.fresh_var scope name in
+            Renamed.Switch name', RenameScope.insert_var name name' scope
         | Named args ->
             let args' = List.map (RenameScope.fresh_var scope) args in
-            let scope = List.fold_right2 RenameScope.insert_var args args' scope in
+            let scope = List.fold_right2 (RenameScope.insert_var) args args' scope in
             Named args', scope
+        | NamedDefault args ->
+            let args' = List.map (fun (x, def) -> (RenameScope.fresh_var scope x, def)) args in
+            let scope = List.fold_right2 (fun (x, _) (y, _) -> RenameScope.insert_var x y) args args' scope in
+            NamedDefault args', scope
     in        
     { args
-    ; flag_var
     ; flags = flag_def.flags
-    ; default = flag_def.default
     ; description = flag_def.description
     }, scope
 

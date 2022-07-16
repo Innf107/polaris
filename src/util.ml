@@ -61,3 +61,14 @@ let rec last = function
   | [] -> None
   | [x] -> Some x
   | _ :: xs -> last xs
+(* O(n) *)
+let rec extract : ('a -> bool) -> 'a list -> ('a * 'a list) option =
+  fun pred xs -> match xs with
+  | [] -> None
+  | x :: xs -> 
+    if pred x then
+      Some (x, xs)
+    else
+      match extract pred xs with
+      | None -> None
+      | Some (y, ys) -> Some(y, x::ys)

@@ -11,6 +11,7 @@ type flag_info = {
 ; arg_count: int
 ; action: string list -> unit
 ; description: string
+; required: bool
 }
 
 let pretty_flags flags =
@@ -33,6 +34,8 @@ let with_usage prog_info flags msg =
 let run : flag_info list -> program_info -> (string -> void) -> string list -> string list =
   fun flags prog_info fail_fun args ->
     let fail_fun msg = absurd (fail_fun (with_usage prog_info flags msg)) in
+    let required_flags = List.filter_map (fun def -> if def.required then Some(def.aliases) else None) flags in
+    
     (* TODO: intern this into a map *)
     let get_flag flag = 
       match List.find_opt (fun info -> List.exists (fun x -> String.equal x flag) info.aliases) flags with
@@ -40,21 +43,25 @@ let run : flag_info list -> program_info -> (string -> void) -> string list -> s
       | None -> fail_fun ("Invalid flag: '" ^ flag ^ "'")
     in
     
-    let rec go = 
+    let rec go required_flags = 
       let process_flag flag args = 
         let info = get_flag flag in
         begin match Util.split_at_exact info.arg_count args with
         | None -> fail_fun ("Not enough arguments for flag '" ^ flag ^ "'. Expected " ^ Int.to_string info.arg_count ^ " arguments.")
-        | Some(flag_args, remaining) -> 
+        | Some(flag_args, remaining) ->
+          let required_flags = match Util.extract (fun aliases -> List.mem flag aliases) required_flags with
+          | None -> required_flags
+          | Some (_, rest) -> rest
+          in
           info.action flag_args;
-          go remaining
+          go required_flags remaining
         end
       in
       function
       | (arg::args) when String.starts_with ~prefix:"--" arg ->
         process_flag arg args
 
-      | ("-"::args) -> "-" :: go args
+      | ("-"::args) -> "-" :: go required_flags args
       | (arg::args) when String.starts_with ~prefix:"-" arg -> 
         let first_flag = "-" ^ String.sub arg 1 1 in
         let remaining = "-" ^ String.sub arg 2 (String.length arg - 2) in
@@ -65,8 +72,16 @@ let run : flag_info list -> program_info -> (string -> void) -> string list -> s
         end
 
       | (arg::args) ->
-        arg :: go args
-      | [] -> []
+        arg :: go required_flags args
+      | [] -> 
+        match required_flags with
+        | [] -> []
+        | _ -> 
+          let pretty_flag = function
+            | [x] -> x
+            | xs -> "(" ^ String.concat " | " xs ^ ")"
+          in
+          fail_fun ("Missing required flags: " ^ String.concat ", " (List.map pretty_flag required_flags))
     in
-    go args
+    go required_flags args
 

@@ -46,9 +46,11 @@ module EvalError = struct
   exception TryingToApplyNonFunction of value * loc list
   exception TryingToLookupInNonMap of value * string * loc list
   exception TryingToLookupDynamicInNonMap of value * loc list
-  exception InvalidKey of value * value MapVImpl.t * loc list
+  exception InvalidMapKey of value * value MapVImpl.t * loc list
+  exception InvalidListKey of value * value list * loc list
   exception MapDoesNotContain of value MapVImpl.t * string * loc list
   exception InvalidNumberOfArguments of Renamed.pattern list * value list * loc list
+  exception IndexOutOfRange of value list * int * loc list
   (* TODO: Once exceptions are implemented, prim op argument errors should
     just be polaris exceptions. 
     Maybe these could even just be contract failures, if those ever
@@ -168,6 +170,13 @@ end) = struct
     (* Comparisons of different values are always false *)
     | _, _ -> false
 
+  let trim_output = function
+  | "" -> "" 
+  | str -> match str.[String.length str - 1] with
+    | '\n' -> String.sub str 0 (String.length str - 1)
+    | _ -> str
+
+
   let rec match_pat_opt (pat : Renamed.pattern) (scrut : value) : (eval_env -> eval_env) option =
     let (let*) = Option.bind in
     match pat, scrut with
@@ -250,7 +259,17 @@ end) = struct
                          | Some value -> value
                          | None -> NullV
                          end
-        | value -> raise (EvalError.InvalidKey (value, map, loc :: env.call_trace))
+        | value -> raise (EvalError.InvalidMapKey (value, map, loc :: env.call_trace))
+        end
+      | ListV list ->
+        begin match eval_expr env key_expr with
+        | NumV num when Float.is_integer num ->
+          let index = Float.to_int num in
+          begin match List.nth_opt list index with
+          | Some x -> x
+          | None -> raise (EvalError.IndexOutOfRange(list, index, loc :: env.call_trace))
+          end
+        | value -> raise (EvalError.InvalidListKey (value, list, loc :: env.call_trace))
         end
       | value -> raise (EvalError.TryingToLookupDynamicInNonMap (value, loc :: env.call_trace))
       end
@@ -407,7 +426,7 @@ end) = struct
     | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
       let progs = progs_of_exprs env exprs in
       let in_chan = Pipe.compose_in progs in
-      StringV (String.trim (In_channel.input_all in_chan))
+      StringV (trim_output (In_channel.input_all in_chan))
 
     | Pipe (loc, (expr :: exprs)) ->
       let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
@@ -417,7 +436,7 @@ end) = struct
       let in_chan = Pipe.compose_in_out progs (fun out_chan ->
           List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
         ) in
-      StringV (String.trim (In_channel.input_all in_chan))
+      StringV (trim_output (In_channel.input_all in_chan))
     | Async (loc, expr) ->
       let promise = Promise.create begin fun _ ->
         eval_expr env expr
@@ -625,6 +644,19 @@ end) = struct
                       StringV (Re.replace regexp ~f:transform str_v)
                   | _ -> raise (PrimOpArgumentError ("regexpTransform", args, "Expected (string, function, string)", loc :: env.call_trace))
                   end
+    | "regexpTransformAll" -> begin match args with
+                  | [StringV pattern; transformClos; StringV str_v] ->
+                    let regexp = Re.Pcre.regexp pattern in
+
+                    let transform group = 
+                      match eval_app env loc transformClos [ListV (List.map (fun x -> StringV x) (Array.to_list (Re.Group.all group)))] with
+                      | StringV repl -> repl
+                      | value -> raise (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace))
+                    in
+
+                    StringV (Re.replace regexp ~f:transform str_v)
+                  | _ -> raise (PrimOpArgumentError ("regexpTransformAll", args, "Expected (string, function, string)", loc :: env.call_trace))
+                  end
     | "writeFile" -> begin match args with
                   | [path_v; content_v] ->
                     let context = "Trying to apply 'writeFile'" in
@@ -743,65 +775,53 @@ end) = struct
   let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs
 
   let flag_info_of_flag_def (env : eval_env) (flag_def : Renamed.flag_def): Argparse.flag_info * eval_env =
-    let default_value = match flag_def.args with
-    | Switch -> BoolV false
-    | Varargs -> ListV []
-    | Named args -> match flag_def.default with
-      | Some(str) -> StringV(str)
-      | None -> NullV
-    in
-
-    let env, flag_ref = match flag_def.flag_var with
-    | Some flag_var -> 
-      let env, flag_ref = insert_var flag_var default_value env in
-      env, Some flag_ref
-    | None -> env, None
-    in
-    let env = match flag_def.args with
+    let aliases = flag_def.flags in
+    let description = Option.value ~default:"" flag_def.description in
+    match flag_def.args with
+    | Switch name ->
+      let env, flag_ref = insert_var name (BoolV false) env in
+      { aliases
+      ; arg_count = 0
+      ; required = false
+      ; description
+      ; action = fun _ -> flag_ref := BoolV true
+      }, env
+    | Varargs name ->
+      let env, flag_ref = insert_var name (ListV []) env in
+      { aliases
+      ; arg_count = 1
+      ; required = false
+      ; description
+      ; action = fun args ->
+        match !flag_ref with
+        | ListV prev_args -> flag_ref := ListV (prev_args @ (List.map (fun x -> StringV x) args))
+        | v -> raise (Panic ("flag_info_of_flag_def: Non-list value in varargs flag reference: " ^ Value.pretty v))
+      }, env
     | Named args ->
-      List.fold_right (fun arg env -> let env, _ = insert_var arg NullV env in env) args env
-    | _ -> env
-    in
-
-    { aliases = flag_def.flags 
-    ; arg_count = 
-      begin match flag_def.args with 
-      | Varargs -> 1
-      | Switch -> 0
-      | Named args -> List.length args
-      end
-    ; description = Option.value ~default:"" flag_def.description
-    ; action = function
-      | [] -> 
-        begin match flag_ref with
-        | None -> ()
-        | Some flag_ref -> flag_ref := BoolV true
-        end
-      | strs -> 
-        match flag_def.args with
-        | Varargs -> 
-          let flag_ref = match flag_ref with
-            | None -> raise (Panic ("Variadic flag without flag_ref: " ^ String.concat ", " flag_def.flags))
-            | Some flag_ref -> flag_ref
-          in
-          begin match strs, !flag_ref with
-          | [str], ListV vals -> flag_ref := ListV (vals @ [StringV str]) (* quadratic :/*)
-          | _, ListV _ -> raise (Panic ("Variadic flag not called with exactly one argument: " ^ String.concat ", " flag_def.flags))
-          | _, _ -> raise  (Panic ("Variadic flag with intermediary non-list value: " ^ String.concat ", " flag_def.flags))
-          end
-        | Switch -> raise (Panic ("Switch received argument: " ^ String.concat ", " flag_def.flags))
-        | Named args ->
-          begin match flag_ref with
-          | None -> ()
-          | Some flag_ref -> 
-            flag_ref := ListV (List.map (fun x -> StringV x) strs);
-          end;
-          let update name str = 
-            let ref = lookup_var env Loc.internal name in
-            ref := StringV str
-          in
-          List.iter2 update args strs
-    }, env
+      let env, refs = List.fold_left_map (
+        fun env x -> insert_var x NullV env
+        ) env args
+      in
+      { aliases
+      ; arg_count = List.length args
+      ; required = true
+      ; description
+      ; action = fun args ->
+        List.iter2 (fun r x -> r := StringV x) refs args
+      }, env  
+    | NamedDefault args ->
+      let env, refs = List.fold_left_map (
+        fun env (x, default) -> insert_var x (StringV default) env
+        ) env args
+      in
+      { aliases
+      ; arg_count = List.length args
+      ; required = false
+      ; description
+      ; action = fun args ->
+        List.iter2 (fun r x -> r := StringV x) refs args
+      }, env
+      
 
   let eval_header (env : eval_env) (header : Renamed.header) : eval_env =
     let description = Option.value ~default:"" header.description in
@@ -819,7 +839,7 @@ end) = struct
     ; usage
     } in
 
-    let args = Argparse.run infos prog_info (fun msg -> raise (EvalError.ArgParseError msg)) env.argv in
+    let args = Argparse.run infos prog_info (fun msg -> raise (EvalError.ArgParseError msg)) (List.tl env.argv) in
 
     { env with argv = (List.hd env.argv :: args) }
 end

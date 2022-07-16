@@ -155,7 +155,7 @@ end) = struct
     sep_by1 sep parser
     <|> pure []
 
-  let rec sep_by_trailing sep parser =
+  let rec sep_by_trailing1 sep parser =
     begin
       let* x = parser in
       
@@ -166,7 +166,8 @@ end) = struct
       end stream)
       <|> pure [x]
     end
-    <|> pure []
+
+  and sep_by_trailing sep parser = sep_by_trailing1 sep parser <|> pure []
 
   let optional parser =
     (fun x -> Some x) <$> parser

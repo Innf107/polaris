@@ -3,12 +3,15 @@ open Util
 
 module VarMap = Map.Make (Name)
 
+module EnvMap = Map.Make (String)
+
 module MapVImpl = Map.Make (String)
 
 (* `eval_env` unfortunately has to be defined outside of `Eval.Make`,
    since `value` depends on it. *)
 type eval_env = { 
   vars : value ref VarMap.t
+; env_vars : string EnvMap.t
 ; argv : string list 
 ; call_trace : loc list
 }
@@ -68,6 +71,7 @@ module EvalError = struct
   exception NonListInListComp of value * loc list
 
   exception InvalidProcessArg of value * loc list
+  exception InvalidEnvVarValue of string * value * loc list
 
   exception NonProgCallInPipe of Renamed.expr * loc list
 
@@ -141,6 +145,15 @@ end) = struct
       let var_ref = ref value in
       { env with vars = VarMap.add var var_ref env.vars }, var_ref
 
+  let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
+    fun loc var value env -> 
+      match value with 
+      | NullV     -> { env with env_vars = EnvMap.remove var env.env_vars }
+      | StringV x -> { env with env_vars = EnvMap.add var x env.env_vars }
+      | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
+      | UnitV | ClosureV _ | ListV _ | PrimOpV _ | MapV _ | PromiseV _ 
+        -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
+
   (* Tries to convert a number to a value. Throws an error if it can't *)
   let as_num context loc = function
     | NumV x -> x
@@ -189,8 +202,6 @@ end) = struct
     match pat, scrut with
     | VarPat (_, x), scrut ->
       Some(fun env -> fst(insert_var x scrut env))
-    | EnvVarPat (_, x), scrut ->
-      todo __POS__
     | ConsPat(_, p, ps), ListV (v :: vs) ->
       let* x_trans = match_pat p v in
       let* xs_trans = match_pat ps (ListV vs) in
@@ -397,7 +408,7 @@ end) = struct
         eval_expr env e3
 
     | Seq (_, exprs) -> eval_seq env exprs
-    | LetSeq _ | LetRecSeq _ -> raise (Panic "let assignment found outside of sequence expression")
+    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
     | Let (loc, pat, e1, e2) ->
       let scrut = eval_expr env e1 in
@@ -409,6 +420,9 @@ end) = struct
     | LetRec (loc, f, params, e1, e2) ->
       let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e1)] env loc) in
       eval_expr (Lazy.force env') e2
+    | LetEnv (loc, x, e1, e2) ->
+      let env' = insert_env_var loc x (eval_expr env e1) env in
+      eval_expr env' e2
     | Assign (loc, x, e1) ->
       let x_ref = lookup_var env loc x  in
       x_ref := (eval_expr env e1);
@@ -436,10 +450,14 @@ end) = struct
         ) in
       StringV (trim_output (In_channel.input_all in_chan))
     | EnvVar(loc, var) ->
-      (* TODO: We also have to check for overridden environment variables (which are NYI at the time of writing) *)
-      begin match Sys.getenv_opt var with
-      | None -> NullV
+      (* We first check if the env var has been locally overriden by a 
+         'let $x = ...' expression. If it has not, we look for actual environment variables *)
+      begin match EnvMap.find_opt var env.env_vars with
       | Some(str) -> StringV str
+      | None -> begin match Sys.getenv_opt var with
+        | None -> NullV
+        | Some(str) -> StringV str
+        end
       end
     | Async (loc, expr) ->
       let promise = Promise.create begin fun _ ->
@@ -494,7 +512,9 @@ end) = struct
     | LetRecSeq (loc, f, params, e) :: exprs ->
       let rec env' = lazy (insert_vars [f] [ClosureV (env', params, e)] env loc) in
       eval_seq_cont (Lazy.force env') exprs cont
-    
+    | LetEnvSeq (loc, x, e) :: exprs ->
+      let env' = insert_env_var loc x (eval_expr env e) env in
+      eval_seq_cont env' exprs cont
     (* Single program calls are just evaluated like pipes *)
     | ProgCall (loc, _, _) as expr :: exprs ->
       eval_seq_cont env (Pipe (loc, [expr]) :: exprs) cont
@@ -769,6 +789,7 @@ end) = struct
 
   let empty_eval_env (argv: string list): eval_env = {
     vars = VarMap.empty;
+    env_vars = EnvMap.empty;
     argv = argv;
     call_trace = []
   }

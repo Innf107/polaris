@@ -34,7 +34,6 @@ let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in functio
     | Parsed.VarPat (loc, var) ->
         let var' = fresh_var scope var in
         (Renamed.VarPat (loc, var'), fun scope -> insert_var var var' scope)
-    | EnvVarPat (loc, var) -> (EnvVarPat(loc, var), fun scope -> scope)
     | ConsPat (loc, x, xs) ->
         let x', x_trans = rename_pattern scope x in
         let xs', xs_trans = rename_pattern scope xs in
@@ -109,7 +108,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
 
     | Seq (loc, es) -> Seq (loc, rename_seq scope es)
 
-    | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _) -> raise (RenameError.LetSeqInNonSeq (expr, loc))
+    | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _) | LetEnvSeq (loc, _, _) -> raise (RenameError.LetSeqInNonSeq (expr, loc))
 
     | Let (loc, p, e1, e2) ->
         let p', scope_trans = rename_pattern scope p in
@@ -122,6 +121,8 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
         let inner_scope = List.fold_right2 insert_var params params' scope' in
         (* let rec's *are* recursive *)
         LetRec(loc, x', params', rename_expr inner_scope e1, rename_expr scope' e2)
+    | LetEnv (loc, x, e1, e2) ->
+        LetEnv (loc, x, rename_expr scope e1, rename_expr scope e2)
     | Assign (loc, x, e) ->
         let x' = lookup_var scope loc x in
         Assign (loc, x', rename_expr scope e)
@@ -163,6 +164,9 @@ and rename_seq_state (scope : RenameScope.t) (exprs : Parsed.expr list) : Rename
         let e' = rename_expr inner_scope e in
         let exprs', res_scope = rename_seq_state scope' exprs in
         (LetRecSeq(loc, x', params', e') :: exprs', res_scope)
+    | LetEnvSeq (loc, x, e) :: exprs ->
+        let exprs, scope = rename_seq_state scope exprs in
+        LetEnvSeq (loc, x, rename_expr scope e) :: exprs, scope
     | (e :: exprs) -> 
         let e' = rename_expr scope e in
         let exprs', res_state = rename_seq_state scope exprs in

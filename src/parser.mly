@@ -82,6 +82,8 @@ expr:
   | LET pattern EQUALS expr                                     { LetSeq (loc $startpos $endpos, $2, $4) }                         // let x = e
   | LET IDENT LPAREN ident_list RPAREN EQUALS expr              { LetRecSeq (loc $startpos $endpos, $2, $4, $7) }                  // let rec f(x, .., x) = e
   | LET IDENT LPAREN ident_list RPAREN EQUALS expr IN expr      { LetRec (loc $startpos $endpos, $2, $4, $7, $9) }                 // let rec f(x, .., x) = e in e
+  | LET ENVVAR EQUALS expr                                      { LetEnvSeq (loc $startpos $endpos, $2, $4) }                      // let $x = e in e
+  | LET ENVVAR EQUALS expr IN expr                              { LetEnv (loc $startpos $endpos, $2, $4, $6) }                     // let $x = e in e
   | LBRACE expr_semi_list RBRACE                                { Seq(loc $startpos $endpos, $2) }                                 // {e; ..; e}
   | expr LPAREN expr_comma_list RPAREN                          { App(loc $startpos $endpos, $1, $3) }                             // e(e, .., e)
   | IDENT COLONEQUALS expr                                      { Assign(loc $startpos $endpos, $1, $3)}                           // x = e
@@ -161,7 +163,6 @@ pattern:
   | pattern COLON pattern { ConsPat(loc $startpos $endpos, $1, $3) }
   | LBRACKET pattern_comma_list RBRACKET { ListPat(loc $startpos $endpos, $2) }
   | IDENT { VarPat(loc $startpos $endpos, $1) }
-  | ENVVAR { EnvVarPat(loc $startpos $endpos, $1) }
   | INT { NumPat (loc $startpos $endpos, float_of_int $1) }
   | FLOAT { NumPat (loc $startpos $endpos, $1) }
   | LPAREN pattern RPAREN { $2 }

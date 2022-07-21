@@ -154,6 +154,12 @@ end) = struct
       | UnitV | ClosureV _ | ListV _ | PrimOpV _ | MapV _ | PromiseV _ 
         -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
 
+  let full_env_vars : eval_env -> string array =
+    fun env ->
+      Array.append
+      (Unix.environment ()) 
+      (Array.of_seq (Seq.map (fun (x, y) -> x ^ "=" ^ y) (EnvMap.to_seq env.env_vars)))
+
   (* Tries to convert a number to a value. Throws an error if it can't *)
   let as_num context loc = function
     | NumV x -> x
@@ -437,7 +443,7 @@ end) = struct
 
     | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
       let progs = progs_of_exprs env exprs in
-      let in_chan = Pipe.compose_in progs in
+      let in_chan = Pipe.compose_in (Some (full_env_vars env)) progs in
       StringV (trim_output (In_channel.input_all in_chan))
 
     | Pipe (loc, (expr :: exprs)) ->
@@ -445,7 +451,7 @@ end) = struct
 
       let progs = progs_of_exprs env exprs in
 
-      let in_chan = Pipe.compose_in_out progs (fun out_chan ->
+      let in_chan = Pipe.compose_in_out (Some (full_env_vars env)) progs (fun out_chan ->
           List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
         ) in
       StringV (trim_output (In_channel.input_all in_chan))
@@ -523,14 +529,14 @@ end) = struct
     (* Pipes without value inputs also inherit the parents stdin *)
     | Pipe (loc, ((ProgCall _ :: _) as prog_exprs)) :: exprs -> 
       let progs = progs_of_exprs env prog_exprs in
-      Pipe.compose progs;
+      Pipe.compose (Some (full_env_vars env)) progs;
       eval_seq_cont env exprs cont
     | Pipe (loc, (expr :: prog_exprs)) :: exprs ->
       let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
       
       let progs = progs_of_exprs env prog_exprs in
       
-      Pipe.compose_out_with progs (fun out_chan -> 
+      Pipe.compose_out_with (Some (full_env_vars env)) progs (fun out_chan -> 
           List.iter (fun line -> Out_channel.output_string out_chan (line ^ "\n")) output_lines
         );
       eval_seq_cont env exprs cont

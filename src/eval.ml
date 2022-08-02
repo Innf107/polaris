@@ -14,6 +14,7 @@ type eval_env = {
 ; env_vars : string EnvMap.t
 ; argv : string list 
 ; call_trace : loc list
+; last_status : int ref
 }
 (* TODO: Add list (map?) of overridden environment variables. This should probably be a *mutable* list, since
    env vars should be dynamically scoped (Should they?) *)
@@ -437,24 +438,26 @@ end) = struct
     | ProgCall (loc, prog, args) as expr -> 
       eval_expr env (Pipe (loc, [expr]))
 
-      
-
     | Pipe (loc, []) -> raise (Panic "empty pipe") 
 
     | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
       let progs = progs_of_exprs env exprs in
-      let in_chan = Pipe.compose_in (Some (full_env_vars env)) progs in
-      StringV (trim_output (In_channel.input_all in_chan))
+      let in_chan, pid = Pipe.compose_in (Some (full_env_vars env)) progs in
+      let result = StringV (trim_output (In_channel.input_all in_chan)) in
+      env.last_status := Pipe.wait_to_status pid;
+      result
 
     | Pipe (loc, (expr :: exprs)) ->
       let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
 
       let progs = progs_of_exprs env exprs in
 
-      let in_chan = Pipe.compose_in_out (Some (full_env_vars env)) progs (fun out_chan ->
+      let in_chan, pid = Pipe.compose_in_out (Some (full_env_vars env)) progs (fun out_chan ->
           List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
         ) in
-      StringV (trim_output (In_channel.input_all in_chan))
+      let result = StringV (trim_output (In_channel.input_all in_chan)) in
+      env.last_status := Pipe.wait_to_status pid;
+      result
     | EnvVar(loc, var) ->
       (* We first check if the env var has been locally overriden by a 
          'let $x = ...' expression. If it has not, we look for actual environment variables *)
@@ -529,16 +532,18 @@ end) = struct
     (* Pipes without value inputs also inherit the parents stdin *)
     | Pipe (loc, ((ProgCall _ :: _) as prog_exprs)) :: exprs -> 
       let progs = progs_of_exprs env prog_exprs in
-      Pipe.compose (Some (full_env_vars env)) progs;
+      let pid = Pipe.compose (Some (full_env_vars env)) progs in
+      env.last_status := Pipe.wait_to_status pid;
       eval_seq_cont env exprs cont
     | Pipe (loc, (expr :: prog_exprs)) :: exprs ->
       let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
       
       let progs = progs_of_exprs env prog_exprs in
       
-      Pipe.compose_out_with (Some (full_env_vars env)) progs (fun out_chan -> 
+      let pid = Pipe.compose_out_with (Some (full_env_vars env)) progs (fun out_chan -> 
           List.iter (fun line -> Out_channel.output_string out_chan (line ^ "\n")) output_lines
-        );
+        ) in
+      env.last_status := Pipe.wait_to_status pid;
       eval_seq_cont env exprs cont
 
     | [ e ] -> 
@@ -782,6 +787,7 @@ end) = struct
                     raise (EnsureFailed (path, loc::env.call_trace))
                 | _ -> raise (PrimOpArgumentError("ensure", args, "Expected a string", loc :: env.call_trace))
                 end
+    | "status" -> NumV (Float.of_int !(env.last_status))
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   and progs_of_exprs env = function
@@ -797,7 +803,8 @@ end) = struct
     vars = VarMap.empty;
     env_vars = EnvMap.empty;
     argv = argv;
-    call_trace = []
+    call_trace = [];
+    last_status = ref 0;
   }
 
   let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs

@@ -25,6 +25,7 @@ type lex_kind =
   | InIdent of string
   | InOp of string
   | InString of string
+  | InSingleString of string
   | InBang of string
   | InEnv of string
   | InNumber of string
@@ -219,6 +220,9 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | Some('"') ->
       set_state (InString "") state lexbuf;
       continue ()
+    | Some('\'') ->
+      set_state (InSingleString "") state lexbuf;
+      continue ()
     | Some('!') ->
       set_state (InBang "") state lexbuf;
       continue ()
@@ -299,6 +303,17 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
       STRING str
     | Some(c) ->
       set_state (InString (str ^ string_of_char c)) state lexbuf;
+      continue ()
+    | None ->
+      raise (LexError UnterminatedString)
+    end
+  | InSingleString str -> 
+    begin match next_char lexbuf with
+    | Some('\'') ->
+      set_state (Default) state lexbuf;
+      STRING str
+    | Some(c) ->
+      set_state (InSingleString (str ^ string_of_char c)) state lexbuf;
       continue ()
     | None ->
       raise (LexError UnterminatedString)

@@ -156,9 +156,17 @@ let handle_errors print_fun f =
   | NonExhaustiveMatch (value, loc::locs) -> print_fun (
     Loc.pretty loc ^ ": Non-exhaustive pattern match does not cover value: " ^ Value.pretty value
   )
-  | LexError (InvalidOperator (loc, name)) -> print_fun (
-    Loc.pretty loc ^ ": Invalid operator: '" ^ name ^ "'"
-  )
+  | LexError err -> begin match err with
+    | InvalidOperator (loc, name) -> print_fun (
+        Loc.pretty loc ^ ": Invalid operator: '" ^ name ^ "'"
+      )
+    | UnterminatedString -> print_fun (
+        "Unterminated string"
+      )
+    | InvalidChar (loc, char) -> print_fun (
+        Loc.pretty loc ^ ": Invalid char '" ^ string_of_char char ^ "'"
+      )
+  end
   (* We can safely abort the program, since this can only ever happen when directly
      running a script *)
   | ArgParseError msg -> print_endline msg; exit 1

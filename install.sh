@@ -17,7 +17,7 @@ echo "Installing menhir"
 opam install menhir
 
 echo "Installing bestline"
-opam pin add bestline ssh://git@github.com/Innf107/ocaml-bestline
+opam pin add bestline https://git@github.com/Innf107/ocaml-bestline
 
 echo "Installing other dependencies"
 opam install . --deps-only

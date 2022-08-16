@@ -9,6 +9,18 @@ end) =
 struct
   type name = Name.t
 
+  type ty =
+    | Forall of name * ty
+    | Var of name
+    (* The 'name' is just kept around for error messages but *completely ignored* when typechecking *)
+    | Unif of Unique.t * name
+    | Number
+    | Bool
+    | String
+    | Tuple of ty array
+    | List of ty
+    (* TODO: row polymorphism and type classes s*)
+
   type pattern =
     | VarPat of loc * name
     | ConsPat of loc * pattern * pattern
@@ -97,6 +109,16 @@ struct
     ; description: string option
     ; options: flag_def list
     }
+
+  let rec pretty_type = function
+    | Forall (var, ty) -> "∀" ^ Name.pretty var ^ ". " ^ pretty_type ty
+    | Var var -> Name.pretty var
+    | Unif (u, name) -> Name.pretty name ^ "$" ^ Unique.display u
+    | Number -> "Number"
+    | Bool -> "Bool"
+    | String -> "String"
+    | Tuple tys -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty_type tys)) ^ ")"
+    | List ty -> "List(" ^ pretty_type ty ^ ")"
 
   let rec pretty_pattern = function
     | VarPat (_, x) -> Name.pretty x

@@ -113,6 +113,8 @@ and Driver : DriverI = struct
   let run_env (options : driver_options) (lexbuf : Lexing.lexbuf) (env : eval_env) (scope : RenameScope.t) : value * eval_env * RenameScope.t = 
     let renamed_header, renamed, new_scope = parse_and_rename options lexbuf scope in
     
+    Types.typecheck renamed;
+
     let env = EvalInst.eval_header env renamed_header in
     let res, new_env = EvalInst.eval_seq_state env renamed in
     res, new_env, new_scope

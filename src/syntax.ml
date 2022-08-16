@@ -13,6 +13,7 @@ struct
     | VarPat of loc * name
     | ConsPat of loc * pattern * pattern
     | ListPat of loc * pattern list
+    | TuplePat of loc * pattern list
     | NumPat of loc * float
     | OrPat of loc * pattern * pattern
 
@@ -100,7 +101,8 @@ struct
   let rec pretty_pattern = function
     | VarPat (_, x) -> Name.pretty x
     | ConsPat (_, x, xs) -> "(" ^ pretty_pattern x ^ ") : (" ^ pretty_pattern xs ^ ")"
-    | ListPat (_, pats) -> "[" ^ String.concat ", " (List.map pretty_pattern pats) ^ "]" 
+    | ListPat (_, pats) -> "[" ^ String.concat ", " (List.map pretty_pattern pats) ^ "]"
+    | TuplePat (_, pats) -> "(" ^ String.concat ", " (List.map pretty_pattern pats) ^ ")"
     | NumPat (_, f) -> Float.to_string f
     | OrPat (_, p1, p2) -> "(" ^ pretty_pattern p1 ^ " | " ^ pretty_pattern p2 ^ ")"
 

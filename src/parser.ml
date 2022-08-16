@@ -221,7 +221,12 @@ and pattern_leaf stream = begin
   <|> ((fun (x, loc) -> VarPat(loc, x)) <$> ident)                                                                      (* x *)
   <|> ((fun (x, loc) -> NumPat(loc, float_of_int x)) <$> int)                                                           (* n *)
   <|> ((fun (x, loc) -> NumPat(loc, x)) <$> float)                                                                      (* f *)
-  <|> (token LPAREN *> pattern <* token RPAREN)                                                                         (* ( p ) *)
+  <|> (let* ls = token LPAREN in
+      let* patterns = sep_by_trailing1 (token COMMA) pattern in 
+      let* le = token RPAREN in
+      match patterns with
+      | [p] -> pure p
+      | _ -> pure (TuplePat (Loc.merge ls le, patterns)))                                                                         (* ( p ) *)
 end stream
 
 let rec expr stream = begin 
@@ -311,10 +316,10 @@ and expr_leaf stream = begin
       let* le = token RPAREN in
       match exprs with
       | [e] -> pure e
-      | _ -> pure (TupleLit (Loc.merge ls le, exprs)))                                                                                                          (* ( e, .., e ) *)
-  <|> ((fun ls p e -> Lambda(Loc.merge ls (get_loc e), [p], e)) <$> token LAMBDA <*> pattern <* token ARROW <*> expr)                 (* \p -> e *)
+      | _ -> pure (TupleLit (Loc.merge ls le, exprs)))  
   <|> ((fun ls ps e -> Lambda(Loc.merge ls (get_loc e), ps, e))                                                                       (* \(p, .., p) -> e *)
-    <$> token LAMBDA <*> token LPAREN *> sep_by_trailing (token COMMA) pattern <* token RPAREN <* token ARROW <*> expr)               
+    <$> token LAMBDA <*> token LPAREN *> sep_by_trailing (token COMMA) pattern <* token RPAREN <* token ARROW <*> expr)                                                                                                                         (* ( e, .., e ) *)
+  <|> ((fun ls p e -> Lambda(Loc.merge ls (get_loc e), [p], e)) <$> token LAMBDA <*> pattern <* token ARROW <*> expr)                 (* \p -> e *)
   <|> ((fun ls p e1 e2 -> Let(Loc.merge ls (get_loc e2), p, e1, e2))                                                                  (* let x = e in e *)
     <$> token LET <*> pattern <* token EQUALS <*> expr <* token IN <*> expr)
   <|> ((fun ls (x, _) e1 e2 -> LetEnv(Loc.merge ls (get_loc e2), x, e1, e2))                                                                  (* let x = e in e *)

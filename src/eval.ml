@@ -216,7 +216,16 @@ end) = struct
       else
         let* transformations = Util.sequence_options (List.map2 match_pat_opt ps vs) in
         Some(List.fold_right (fun t r env -> t (r env)) transformations (fun x -> x))
-    | NumPat(_, f1), NumV f2 when Float.equal f1 f2 ->
+    | TuplePat(_, ps), TupleV vs ->
+      let pats = Array.of_list ps in
+      (* This check is technically redundant once the type checker is implemented *)
+      if Array.length pats != Array.length vs then
+        None
+      else
+        let* transformations = Util.sequence_options_array (Array.map2 match_pat_opt pats vs) in
+        Some(Array.fold_right (fun t r env -> t (r env)) transformations (fun x -> x))
+      
+     | NumPat(_, f1), NumV f2 when Float.equal f1 f2 ->
         Some (fun x -> x) 
     | OrPat(_, p1, p2), v ->
       begin match match_pat_opt p1 v with

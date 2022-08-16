@@ -23,12 +23,12 @@ let from_pos (start_pos : Lexing.position) (end_pos : Lexing.position) : t = {
 let internal : t = { file = "<internal>"; start_line = 0; end_line = 0; start_col = 0; end_col = 0 }
 
 let merge loc1 loc2 =
-  if loc1 = internal then
+  if loc1 = internal || loc1.file = "" then
     loc2
-  else if loc2 = internal then
+  else if loc2 = internal || loc2.file = "" then
     loc1
   else if loc1.file = loc2.file then
-    { loc1 with 
+    { loc1 with
       end_line = loc2.end_line
     ; end_col = loc2.end_col
     }

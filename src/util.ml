@@ -37,6 +37,12 @@ let rec sequence_options = function
   | Some(v) :: opts -> Option.map (fun x -> v :: x) (sequence_options opts) 
   | [] -> Some []
 
+let sequence_options_array arr =
+  if Array.for_all Option.is_some arr then
+    Some (Array.map Option.get arr)
+  else
+    None
+
 let quiet_command cmd args =
   match Unix.fork () with
   | 0 ->

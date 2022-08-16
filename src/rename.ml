@@ -114,7 +114,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
 
     | Seq (loc, es) -> Seq (loc, rename_seq scope es)
 
-    | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _) -> raise (RenameError.LetSeqInNonSeq (expr, loc))
+    | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _) | LetEnvSeq (loc, _, _) -> raise (RenameError.LetSeqInNonSeq (expr, loc))
 
     | Let (loc, p, e1, e2) ->
         let p', scope_trans = rename_pattern scope p in
@@ -127,6 +127,8 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
         let inner_scope = scope_trans scope' in
         (* let rec's *are* recursive *)
         LetRec(loc, x', patterns', rename_expr inner_scope e1, rename_expr scope' e2)
+    | LetEnv (loc, x, e1, e2) ->
+        LetEnv (loc, x, rename_expr scope e1, rename_expr scope e2)
     | Assign (loc, x, e) ->
         let x' = lookup_var scope loc x in
         Assign (loc, x', rename_expr scope e)
@@ -135,6 +137,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
         ProgCall (loc, p, List.map (rename_expr scope) args)
     | Pipe (loc, exprs) ->
         Pipe (loc, List.map (rename_expr scope) exprs)
+    | EnvVar (loc, var) -> EnvVar(loc, var)
     | Async (loc, expr) ->
         Async (loc, rename_expr scope expr)
     | Await (loc, expr) ->
@@ -167,6 +170,9 @@ and rename_seq_state (scope : RenameScope.t) (exprs : Parsed.expr list) : Rename
         let e' = rename_expr inner_scope e in
         let exprs', res_scope = rename_seq_state scope' exprs in
         (LetRecSeq(loc, x', patterns', e') :: exprs', res_scope)
+    | LetEnvSeq (loc, x, e) :: exprs ->
+        let exprs, scope = rename_seq_state scope exprs in
+        LetEnvSeq (loc, x, rename_expr scope e) :: exprs, scope
     | (e :: exprs) -> 
         let e' = rename_expr scope e in
         let exprs', res_state = rename_seq_state scope exprs in

@@ -25,7 +25,9 @@ type lex_kind =
   | InIdent of string
   | InOp of string
   | InString of string
+  | InSingleString of string
   | InBang of string
+  | InEnv of string
   | InNumber of string
   | InDecimal of string
   | Defer of Token.t list
@@ -129,10 +131,16 @@ let is_op c = is_op_start c || match c with
   | '-' -> true
   | _ -> false
 
-(* TODO: This is directly adapted from the OCamllex version, but we should probably to something slightly more intelligent *)
+(* TODO: This is directly adapted from the OCamllex version, but we should probably do something slightly more intelligent *)
 let is_prog_char c = match c with
   | ' ' | '\t' | '\n' | '(' | ')' | '[' | ']' | '{' | '}' -> false
   | _ -> true
+
+(* TODO: This is certainly not exhaustive. Perhaps we should allow $"var" syntax to permit arbitrary env var names? *)
+let is_env_char c = match c with
+  | '-' | '_' -> true
+  | c when is_alpha_num c -> true
+  | _ -> false
 
 let is_paren = function
   | '(' | ')' | '[' | ']' | '{' | '}' -> true
@@ -212,8 +220,14 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Token.t =
     | Some('"') ->
       set_state (InString "") state lexbuf;
       continue ()
+    | Some('\'') ->
+      set_state (InSingleString "") state lexbuf;
+      continue ()
     | Some('!') ->
       set_state (InBang "") state lexbuf;
+      continue ()
+    | Some('$') ->
+      set_state (InEnv "") state lexbuf;
       continue ()
     | Some('-') ->
       set_state LeadingMinus state lexbuf;
@@ -293,6 +307,17 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Token.t =
     | None ->
       raise (LexError UnterminatedString)
     end
+  | InSingleString str -> 
+    begin match next_char lexbuf with
+    | Some('\'') ->
+      set_state (Default) state lexbuf;
+      STRING str
+    | Some(c) ->
+      set_state (InSingleString (str ^ string_of_char c)) state lexbuf;
+      continue ()
+    | None ->
+      raise (LexError UnterminatedString)
+    end
   | InBang str -> begin match peek_char lexbuf with
     | Some('=') ->
       let _ = next_char lexbuf in
@@ -305,6 +330,15 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Token.t =
     | _ ->
       set_state (Default) state lexbuf;
       BANG str
+    end
+  | InEnv str -> begin match peek_char lexbuf with
+    | Some(c) when is_env_char c ->
+      let _ = next_char lexbuf in
+      set_state (InEnv (str ^ string_of_char c)) state lexbuf;
+      continue ()
+    | _ ->
+      set_state Default state lexbuf;
+      ENVVAR str
     end
   | InOp str -> begin match peek_char lexbuf with
     | Some(c) when is_op c ->

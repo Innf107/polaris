@@ -57,14 +57,17 @@ struct
     (* Sequencing *)
     | Seq of loc * expr list                      (* { e₁ ; .. ; eₙ } *)
     | LetSeq of loc * pattern * expr              (* let p = e (Only valid inside `Seq` expressions) *)
-    | LetRecSeq of loc * name * pattern list * expr  (* let rec f(p, .., p) = e*)
+    | LetRecSeq of loc * name * pattern list * expr  (* let rec f(x, .., x) = e*)
+    | LetEnvSeq of loc * string * expr            (* let $x = e *)
     (* Mutable local definitions *)
     | Let of loc * pattern * expr * expr              (* let p = e1 in e2 (valid everywhere) *)
-    | LetRec of loc * name * pattern list * expr * expr  (* let rec f(p, .., p) = e*)
-    | Assign of loc * name * expr                     (* x = e *)
+    | LetRec of loc * name * pattern list * expr * expr  (* let rec f(x, .., x) = e*)
+    | LetEnv of loc * string * expr * expr            (* let $x = e in e *)
+    | Assign of loc * name * expr                     (* x := e *)
     (* Scripting capabilities *)
     | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
+    | EnvVar of loc * string                (* $var *)
     (* Async / Await (colorless) *)
     | Async of loc * expr                   (* async e *)
     | Await of loc * expr                   (* await e*)
@@ -149,13 +152,16 @@ struct
     | Seq (_, exprs) -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
     | LetSeq (_, x, e) -> "let " ^ pretty_pattern x ^ " = " ^ pretty e
     | LetRecSeq (_, x, xs, e) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e
+    | LetEnvSeq (_, x, e) -> "let $" ^ x ^ " = " ^ pretty e
     | Let (_, x, e1, e2) ->
         "let " ^ pretty_pattern x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
     | LetRec (_, x, xs, e1, e2) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
+    | LetEnv (_, x, e1, e2) -> "let $" ^ x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
     | Assign (_, x, e) -> Name.pretty x ^ " = " ^ pretty e
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
+    | EnvVar (_, x) -> "$" ^ x
     | Async (_, expr) -> "async " ^ pretty expr
     | Await (_, expr) -> "await " ^ pretty expr
 
@@ -174,8 +180,8 @@ struct
     | Div(loc, _ , _) | Concat(loc, _, _) | Equals(loc, _, _) | NotEquals(loc, _, _) | LE(loc, _, _) 
     | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _) | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)
-    | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | Let(loc, _, _, _)
-    | LetRec(loc, _, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _)
+    | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | LetEnvSeq(loc, _, _) | Let(loc, _, _, _)
+    | LetRec(loc, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _)
     -> loc
 end

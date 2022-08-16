@@ -3,15 +3,21 @@ open Util
 
 module VarMap = Map.Make (Name)
 
+module EnvMap = Map.Make (String)
+
 module MapVImpl = Map.Make (String)
 
 (* `eval_env` unfortunately has to be defined outside of `Eval.Make`,
    since `value` depends on it. *)
 type eval_env = { 
   vars : value ref VarMap.t
+; env_vars : string EnvMap.t
 ; argv : string list 
 ; call_trace : loc list
+; last_status : int ref
 }
+(* TODO: Add list (map?) of overridden environment variables. This should probably be a *mutable* list, since
+   env vars should be dynamically scoped (Should they?) *)
 
 and value =
   | StringV of string
@@ -66,6 +72,7 @@ module EvalError = struct
   exception NonListInListComp of value * loc list
 
   exception InvalidProcessArg of value * loc list
+  exception InvalidEnvVarValue of string * value * loc list
 
   exception NonProgCallInPipe of Renamed.expr * loc list
 
@@ -133,6 +140,21 @@ end) = struct
     fun var value env ->
       let var_ref = ref value in
       { env with vars = VarMap.add var var_ref env.vars }, var_ref
+
+  let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
+    fun loc var value env -> 
+      match value with 
+      | NullV     -> { env with env_vars = EnvMap.remove var env.env_vars }
+      | StringV x -> { env with env_vars = EnvMap.add var x env.env_vars }
+      | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
+      | UnitV | ClosureV _ | ListV _ | PrimOpV _ | MapV _ | PromiseV _ 
+        -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
+
+  let full_env_vars : eval_env -> string array =
+    fun env ->
+      Array.append
+      (Unix.environment ()) 
+      (Array.of_seq (Seq.map (fun (x, y) -> x ^ "=" ^ y) (EnvMap.to_seq env.env_vars)))
 
   (* Tries to convert a number to a value. Throws an error if it can't *)
   let as_num context loc = function
@@ -401,7 +423,7 @@ end) = struct
         eval_expr env e3
 
     | Seq (_, exprs) -> eval_seq env exprs
-    | LetSeq _ | LetRecSeq _ -> raise (Panic "let assignment found outside of sequence expression")
+    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
     | Let (loc, pat, e1, e2) ->
       let scrut = eval_expr env e1 in
@@ -411,6 +433,9 @@ end) = struct
     | LetRec (loc, f, params, e1, e2) ->
       let rec env' = lazy (fst (insert_var f (ClosureV (env', params, e1)) env)) in
       eval_expr (Lazy.force env') e2
+    | LetEnv (loc, x, e1, e2) ->
+      let env' = insert_env_var loc x (eval_expr env e1) env in
+      eval_expr env' e2
     | Assign (loc, x, e1) ->
       let x_ref = lookup_var env loc x  in
       x_ref := (eval_expr env e1);
@@ -419,24 +444,36 @@ end) = struct
     | ProgCall (loc, prog, args) as expr -> 
       eval_expr env (Pipe (loc, [expr]))
 
-      
-
     | Pipe (loc, []) -> raise (Panic "empty pipe") 
 
     | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
       let progs = progs_of_exprs env exprs in
-      let in_chan = Pipe.compose_in progs in
-      StringV (trim_output (In_channel.input_all in_chan))
+      let in_chan, pid = Pipe.compose_in (Some (full_env_vars env)) progs in
+      let result = StringV (trim_output (In_channel.input_all in_chan)) in
+      env.last_status := Pipe.wait_to_status pid;
+      result
 
     | Pipe (loc, (expr :: exprs)) ->
       let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
 
       let progs = progs_of_exprs env exprs in
 
-      let in_chan = Pipe.compose_in_out progs (fun out_chan ->
+      let in_chan, pid = Pipe.compose_in_out (Some (full_env_vars env)) progs (fun out_chan ->
           List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
         ) in
-      StringV (trim_output (In_channel.input_all in_chan))
+      let result = StringV (trim_output (In_channel.input_all in_chan)) in
+      env.last_status := Pipe.wait_to_status pid;
+      result
+    | EnvVar(loc, var) ->
+      (* We first check if the env var has been locally overriden by a 
+         'let $x = ...' expression. If it has not, we look for actual environment variables *)
+      begin match EnvMap.find_opt var env.env_vars with
+      | Some(str) -> StringV str
+      | None -> begin match Sys.getenv_opt var with
+        | None -> NullV
+        | Some(str) -> StringV str
+        end
+      end
     | Async (loc, expr) ->
       let promise = Promise.create begin fun _ ->
         eval_expr env expr
@@ -491,7 +528,9 @@ end) = struct
     | LetRecSeq (loc, f, params, e) :: exprs ->
       let rec env' = lazy (fst (insert_var f (ClosureV (env', params, e)) env)) in
       eval_seq_cont (Lazy.force env') exprs cont
-    
+    | LetEnvSeq (loc, x, e) :: exprs ->
+      let env' = insert_env_var loc x (eval_expr env e) env in
+      eval_seq_cont env' exprs cont
     (* Single program calls are just evaluated like pipes *)
     | ProgCall (loc, _, _) as expr :: exprs ->
       eval_seq_cont env (Pipe (loc, [expr]) :: exprs) cont
@@ -500,16 +539,18 @@ end) = struct
     (* Pipes without value inputs also inherit the parents stdin *)
     | Pipe (loc, ((ProgCall _ :: _) as prog_exprs)) :: exprs -> 
       let progs = progs_of_exprs env prog_exprs in
-      Pipe.compose progs;
+      let pid = Pipe.compose (Some (full_env_vars env)) progs in
+      env.last_status := Pipe.wait_to_status pid;
       eval_seq_cont env exprs cont
     | Pipe (loc, (expr :: prog_exprs)) :: exprs ->
       let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
       
       let progs = progs_of_exprs env prog_exprs in
       
-      Pipe.compose_out_with progs (fun out_chan -> 
+      let pid = Pipe.compose_out_with (Some (full_env_vars env)) progs (fun out_chan -> 
           List.iter (fun line -> Out_channel.output_string out_chan (line ^ "\n")) output_lines
-        );
+        ) in
+      env.last_status := Pipe.wait_to_status pid;
       eval_seq_cont env exprs cont
 
     | [ e ] -> 
@@ -755,6 +796,7 @@ end) = struct
                     raise (EnsureFailed (path, loc::env.call_trace))
                 | _ -> raise (PrimOpArgumentError("ensure", args, "Expected a string", loc :: env.call_trace))
                 end
+    | "status" -> NumV (Float.of_int !(env.last_status))
     | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
   and progs_of_exprs env = function
@@ -768,8 +810,10 @@ end) = struct
 
   let empty_eval_env (argv: string list): eval_env = {
     vars = VarMap.empty;
+    env_vars = EnvMap.empty;
     argv = argv;
-    call_trace = []
+    call_trace = [];
+    last_status = ref 0;
   }
 
   let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs

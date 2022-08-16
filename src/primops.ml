@@ -29,6 +29,7 @@ let primops = PrimOpNameSet.of_list [
   "scriptLocal";
   "commandExists";
   "ensure";
+  "status";
 ]
 
 let is_primop name = PrimOpNameSet.mem name primops

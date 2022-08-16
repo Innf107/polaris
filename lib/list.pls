@@ -101,10 +101,7 @@ let forConcurrent(xs, f) = {
 }
 
 
-let length(xs) = match xs {
-    [] -> 0
-    (_ : xs) -> length(xs)
-}
+let length(xs) = foldl(\(r, _) -> r + 1, 0, xs)
 
 let reverse(xs) = foldl(\(xs, x) -> cons(x, xs), [], xs)
 

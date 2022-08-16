@@ -1,8 +1,8 @@
 #!/usr/bin/env polaris
 options {
-    "-s" "--sync" as sync: "Execute tests synchronously instead of in parralel"
+    "-s" "--sync" as sync: "Execute tests synchronously instead of in parallel"
     "-e" "--exclude" (*) as exclude: "Exclude category from tests"
-    "--use-dune" as useDune: "Run test using 'dune exec polaris --' instead of 'polaris'"
+    "--use-dune" as useDune: "Run tests using 'dune exec polaris' instead of 'polaris'"
 }
 
 let List = require("list.pls")
@@ -56,4 +56,5 @@ if errors == 0 then {
     !echo "-e" "\e[32mAll test passed.\e[0m"
 } else {
     !echo "-e" "\e[31m" ~ errors ~ " TESTS FAILED!\e[0m"
+    exit(errors)
 }

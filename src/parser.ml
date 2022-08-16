@@ -45,6 +45,7 @@ module Token = struct
   | AND 
   | NOT
   | BANG of string
+  | ENVVAR of string
   | PIPE
   | IF 
   | THEN 
@@ -100,6 +101,7 @@ module Token = struct
   | AND -> "AND" 
   | NOT -> "NOT"
   | BANG str -> "BANG(" ^ str ^ ")"
+  | ENVVAR str -> "ENVVAR(" ^ str ^ ")"
   | PIPE -> "PIPE"
   | IF -> "IF" 
   | THEN -> "THEN" 
@@ -147,6 +149,11 @@ let string_ = fst <$> string
 
 let bang = token_of begin fun loc -> function
 | Token.BANG str -> Some(str, loc)
+| _ -> None
+end
+
+let envvar = token_of begin fun loc -> function
+| Token.ENVVAR str -> Some(str, loc)
 | _ -> None
 end
 
@@ -284,6 +291,7 @@ and expr_leaf stream = begin
   <|> ((fun loc -> BoolLit (loc, false))              <$> token FALSE)                                                        (* false *)
   <|> ((fun loc -> NullLit loc)                       <$> token NULL)                                                         (* null *)
   <|> ((fun (x, loc) -> Var(loc, x))                  <$> ident)                                                              (* x *)
+  <|> ((fun (x, loc) -> EnvVar(loc, x))               <$> envvar)                                                             (* $x *)
   <|> ((fun ls e p draw_expr clauses le -> ListComp(Loc.merge ls le, e, DrawClause(p, draw_expr) :: clauses))                 (* [ e | p <- e, .. ] *)
     <$> token LBRACKET 
     <*> expr1
@@ -303,7 +311,11 @@ and expr_leaf stream = begin
   <|> ((fun ls ps e -> Lambda(Loc.merge ls (get_loc e), ps, e))                                                                       (* \(p, .., p) -> e *)
     <$> token LAMBDA <*> token LPAREN *> sep_by_trailing (token COMMA) pattern <* token RPAREN <* token ARROW <*> expr)               
   <|> ((fun ls p e1 e2 -> Let(Loc.merge ls (get_loc e2), p, e1, e2))                                                                  (* let x = e in e *)
-    <$> token LET <*> pattern <* token EQUALS <*> expr <* token IN <*> expr)              
+    <$> token LET <*> pattern <* token EQUALS <*> expr <* token IN <*> expr)
+  <|> ((fun ls (x, _) e1 e2 -> LetEnv(Loc.merge ls (get_loc e2), x, e1, e2))                                                                  (* let x = e in e *)
+    <$> token LET <*> envvar <* token EQUALS <*> expr <* token IN <*> expr)                            
+  <|> ((fun ls (x, _) e1 -> LetEnvSeq(Loc.merge ls (get_loc e1), x, e1))                                                                  (* let x = e in e *)
+    <$> token LET <*> envvar <* token EQUALS <*> expr)                            
   <|> ((fun ls p e1 -> LetSeq(Loc.merge ls (get_loc e1), p, e1)) <$> token LET <*> pattern <* token EQUALS <*> expr)                  (* let x = e *)
   <|> ((fun ls f ps e1 e2 -> LetRec(Loc.merge ls (get_loc e2), f, ps, e1, e2))                                                        (* let f(p, .., p) = e in e *)
     <$> token LET <*> ident_

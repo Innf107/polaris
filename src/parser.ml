@@ -306,7 +306,12 @@ and expr_leaf stream = begin
     <$> token HASHLBRACE 
     <*> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident_ <* token COLON <*> expr)
     <*> token RBRACE)
-  <|> (token LPAREN *> expr <* token RPAREN)                                                                                          (* ( e ) *)
+  <|> (let* ls = token LPAREN in
+      let* exprs = sep_by_trailing1 (token COMMA) expr in
+      let* le = token RPAREN in
+      match exprs with
+      | [e] -> pure e
+      | _ -> pure (TupleLit (Loc.merge ls le, exprs)))                                                                                                          (* ( e, .., e ) *)
   <|> ((fun ls p e -> Lambda(Loc.merge ls (get_loc e), [p], e)) <$> token LAMBDA <*> pattern <* token ARROW <*> expr)                 (* \p -> e *)
   <|> ((fun ls ps e -> Lambda(Loc.merge ls (get_loc e), ps, e))                                                                       (* \(p, .., p) -> e *)
     <$> token LAMBDA <*> token LPAREN *> sep_by_trailing (token COMMA) pattern <* token RPAREN <* token ARROW <*> expr)               

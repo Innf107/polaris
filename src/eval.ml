@@ -41,6 +41,7 @@ and value =
      by mutable references to immutable lists 99% of the time, so this is
      hopefully not going to be an issue. *)
   | ListV of value list
+  | TupleV of value array
   | MapV of (value MapVImpl.t)
   | NullV
   (* Represents a concurrent thread of execution *)
@@ -107,6 +108,7 @@ module Value = struct
     | NullV -> "null"
     | BoolV b -> string_of_bool b
     | ListV vals -> "[" ^ String.concat ", " (List.map pretty vals) ^ "]"
+    | TupleV vals -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty vals)) ^ ")"
     | MapV kvs -> 
       let kv_list = List.of_seq (MapVImpl.to_seq kvs) in
       "#{" ^ String.concat ", " (List.map (fun (k, v) -> k ^ ": " ^ pretty v) kv_list) ^ "}"
@@ -121,7 +123,7 @@ module Value = struct
     | StringV v -> [v]
     | NumV _ | BoolV _ -> [pretty x]
     (* TODO: Should Maps be converted to JSON? *)
-    | ClosureV _ | PrimOpV _ | UnitV | NullV | MapV _ | PromiseV _ -> fail x
+    | ClosureV _ | PrimOpV _ | UnitV | NullV | TupleV _ | MapV _ | PromiseV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
@@ -147,7 +149,7 @@ end) = struct
       | NullV     -> { env with env_vars = EnvMap.remove var env.env_vars }
       | StringV x -> { env with env_vars = EnvMap.add var x env.env_vars }
       | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
-      | UnitV | ClosureV _ | ListV _ | PrimOpV _ | MapV _ | PromiseV _ 
+      | UnitV | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | MapV _ | PromiseV _ 
         -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
 
   let full_env_vars : eval_env -> string array =
@@ -260,6 +262,9 @@ end) = struct
     | ListLit (_, exprs) -> 
       let vals = List.map (eval_expr env) exprs in 
       ListV vals
+    | TupleLit (_, exprs) ->
+      let vals = Array.map (eval_expr env) (Array.of_list exprs) in
+      TupleV vals
     | MapLit (_, kvs) ->
       let kv_vals = Seq.map (fun (k, e) -> (k, eval_expr env e)) (List.to_seq kvs) in
       MapV (MapVImpl.of_seq kv_vals)

@@ -72,6 +72,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
     | UnitLit loc -> UnitLit loc
     | NullLit loc -> NullLit loc
     | ListLit (loc, exprs) -> ListLit (loc, List.map (rename_expr scope) exprs)
+    | TupleLit (loc, exprs) -> TupleLit (loc, List.map (rename_expr scope) exprs)
     | MapLit (loc, kvs) -> MapLit (loc, List.map (fun (k, e) -> (k, rename_expr scope e)) kvs)
 
     | MapLookup (loc, expr, key) -> MapLookup (loc, rename_expr scope expr, key)

@@ -170,30 +170,42 @@ and check : local_env -> ty -> expr -> unit =
     let ty = infer env expr in
     unify env (get_loc expr) ty expected_ty
 
-and infer_seq : local_env -> expr list -> ty =
-  fun env exprs -> match exprs with
-    | [] -> Tuple [||]
-    (* TODO: Special case for '!p e*' expressions and pipes *)
-    (* TODO: What if 'LetSeq' is the last expression?
-       I think it just returns (), so this should be fine? *)
-    | LetSeq (loc, pat, e) :: exprs ->
+and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
+    fun env expr -> match expr with
+    | LetSeq (loc, pat, e) ->
       let ty, env_trans = infer_pattern env pat in
       check env ty e;
-      infer_seq (env_trans env) exprs
-    | LetRecSeq(loc, fun_name, pats, body) :: exprs ->
+      env_trans
+    | LetRecSeq(loc, fun_name, pats, body) ->
       let arg_tys, transformers = List.split (List.map (infer_pattern env) pats) in
       let result_ty = fresh_unif () in
       (* We have to check the body against a unification variable instead of inferring,
-         since we need to know the functions type in its own (possibly recursive) definition*)
-      let env = insert_var fun_name (Fun (arg_tys, result_ty)) env in
-      let inner_env = List.fold_left (<<) Fun.id transformers env in
+          since we need to know the functions type in its own (possibly recursive) definition*)
+      let env_trans = insert_var fun_name (Fun (arg_tys, result_ty)) in
+      let inner_env = List.fold_left (<<) Fun.id transformers (env_trans env) in
       check inner_env result_ty body;
-      infer_seq env exprs
+      env_trans
+    (* TODO: Special case for !p e* expressions nad pipes *)
     (* TODO: Handle remaining LetSeq forms *)
+    | expr ->
+      check env (Tuple [||]) expr;
+      Fun.id
+
+and infer_seq : local_env -> expr list -> ty =
+  fun env exprs -> match exprs with
+    | [] -> Tuple [||]
+    | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ as expr] ->
+      (* If the last expression in an expression block is a
+         LetSeq* expresion, we don't need to carry the environment transformations,
+         but we do have to make sure to check the expression with `infer_seq_expr`, 
+         so it is not passed to `infer_expr`  
+        *)
+      let _ : _ = infer_seq_expr env expr in
+      Tuple [||]
     | [ expr ] -> infer env expr
     | expr :: exprs -> 
-      check env (Tuple [||]) expr;
-      infer_seq env exprs
+      let env_trans = infer_seq_expr env expr in
+      infer_seq (env_trans env) exprs
 
 let rec occurs u = function
       | Unif (u2, _) -> Unique.equal u u2
@@ -239,36 +251,28 @@ let solve_constraints : ty_constraint list -> Subst.t =
 let typecheck_top_level : global_env -> expr -> global_env =
   fun global_env expr ->
     let local_env = { local_types = global_env.var_types; constraints = ref Difflist.empty } in
-    let local_env, gloabl_env = match expr with
-      | LetSeq (loc, pat, e) ->
-        let pat_ty, env_trans = infer_pattern local_env pat in
-        (* LetSeq's are still non-recursive *)
-        check local_env pat_ty e;
-      
-        (* This is *extremely hacky* right now.
-           We temporarily construct a fake local environment to figure out the top-level local type bindings.
-           We then extract those, throw away the collected constraints (they're part of the real local_env anyway)
-           and add the bindings to the global environment
-        *)
-        let temp_local_env = { local_types = VarTypeMap.empty; constraints = ref Difflist.empty} in
-      
-        let global_env = { global_env with var_types = VarTypeMap.union (fun _ _ x -> Some x) (global_env.var_types) (temp_local_env.local_types) } in
-      
-        env_trans local_env, global_env
-      (* TODO: Handle top-level progcalls and pipes correctly*)
-      (* TODO: Handle remaining LetSeq variants*)
-      | expr ->
-        (* Top level non-definition expressions currently need to have type ().
-           This is in line with local expression blocks, but might be a bit inconvenient.
-           If we ever decide to allow arbitrary types, we will just have to use 'infer' here instead #
-           and ignore the inferred type *)
-        check local_env (Tuple [||]) expr;
-        local_env, global_env
-    in
+    
+    let local_env_trans = infer_seq_expr local_env expr in
+    
+    (* This is *extremely hacky* right now.
+        We temporarily construct a fake local environment to figure out the top-level local type bindings.
+        We then extract those, throw away the collected constraints (they're part of the real local_env anyway)
+        and add the bindings to the global environment
+    *)
+    let temp_local_env = local_env_trans { local_types = VarTypeMap.empty; constraints = ref Difflist.empty} in
+
     (* TODO: Actually check the expression *)
     let subst = solve_constraints (Difflist.to_list !(local_env.constraints)) in
-    todo __LOC__
-    (* TODO: apply substitution, generalize, update global_env *)
+
+    let global_env = { 
+      global_env with 
+        var_types = 
+          VarTypeMap.union (fun _ _ x -> Some x) 
+            (global_env.var_types) 
+            (VarTypeMap.map (Subst.apply subst) temp_local_env.local_types) 
+      } in
+    (* TODO: generalize *)
+    global_env
 
 let typecheck exprs = 
   (* TODO: Include types for primitives, imports and options variables *)

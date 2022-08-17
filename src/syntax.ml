@@ -210,6 +210,11 @@ struct
     | LetRec(loc, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _)
     -> loc
+
+  let get_pattern_loc = function
+    | VarPat (loc, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
+    | NumPat (loc, _) | OrPat (loc, _, _) 
+    -> loc
 end
 
 type name = { name : string; index : int }

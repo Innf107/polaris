@@ -78,3 +78,5 @@ let rec extract : ('a -> bool) -> 'a list -> ('a * 'a list) option =
       match extract pred xs with
       | None -> None
       | Some (y, ys) -> Some(y, x::ys)
+
+let (<<) f g x = f (g x)

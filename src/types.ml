@@ -33,6 +33,8 @@ module Subst : sig
   
   val merge : t -> t -> t
 
+  val concat : t list -> t
+
   val apply : t -> ty -> ty
 end = struct
   type t = ty UniqueMap.t 
@@ -43,6 +45,8 @@ end = struct
 
   let merge = UniqueMap.union (fun _ _ x -> Some x)
 
+  let concat list = List.fold_right merge list empty
+
   let rec apply subst = function
     | Unif (u, _) as ty ->
       begin match UniqueMap.find_opt u subst with
@@ -51,6 +55,7 @@ end = struct
       end
     (* Recursive boilerplate *)
     | Forall (a, ty) -> Forall (a, apply subst ty)
+    | Fun (dom, cod) -> Fun (List.map (apply subst) dom, apply subst cod)
     | Tuple tys -> Tuple (Array.map (apply subst) tys)
     | List ty -> List (apply subst ty)
     (* unaffected non-recursive cases *)
@@ -62,7 +67,7 @@ let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
     env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
 
-let anonymous_unif = Name.{ name = "u"; index = 0 }
+let fresh_unif () = Unif (Unique.fresh (), Name.{ name = "u"; index = 0 })
 
 let insert_var : name -> ty -> local_env -> local_env =
   fun x ty env -> { env with local_types = VarTypeMap.add x ty env.local_types }
@@ -84,6 +89,7 @@ let rec replace_tvar : name -> ty -> ty -> ty =
       else
         Var tv
     (* Recursive boilerplate *)
+    | Fun (dom, cod) -> Fun (List.map go dom, go cod)
     | Tuple tys ->
       Tuple (Array.map go tys)
     | List ty ->
@@ -102,15 +108,15 @@ let rec instantiate : ty -> ty =
 let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
   fun env pat -> match pat with
     | VarPat (_, x) ->
-      let var_ty = Unif (Unique.fresh (), anonymous_unif) in
+      let var_ty = fresh_unif () in
       var_ty, insert_var x var_ty
     | ConsPat (_, head_pat, tail_pat) ->
-      let elem_ty = Unif (Unique.fresh (), anonymous_unif) in
+      let elem_ty = fresh_unif () in
       let head_trans = check_pattern env head_pat elem_ty in
       let tail_trans = check_pattern (head_trans env) tail_pat (List elem_ty) in
       (List elem_ty, head_trans << tail_trans)
     | ListPat (_, patterns) ->
-      let elem_ty = Unif (Unique.fresh (), anonymous_unif) in
+      let elem_ty = fresh_unif () in
       let trans = List.fold_left (<<) Fun.id (List.map (fun p -> check_pattern env p elem_ty) patterns) in
       List elem_ty, trans
     | TuplePat (_, patterns) ->
@@ -139,7 +145,25 @@ let rec infer : local_env -> expr -> ty =
       | Some ty -> instantiate ty
       | None -> panic __LOC__ ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")
       end
-    | _ -> todo __LOC__
+    | App (loc, func, args) ->
+      (* We infer the argument types first and then check the function type against that.
+         Since most functions are going to be defined in a let binding, it might be more efficient to
+        infer the function type first and either match on that directly or unify with a function type to get the argument types *)
+      let arg_tys = List.map (infer env) args in
+      let result_ty = fresh_unif() in
+      check env (Fun (arg_tys, result_ty)) func;
+      result_ty
+    | Lambda (loc, args, body) -> 
+      let arg_tys, transformers = List.split (List.map (fun p -> infer_pattern env p) args) in
+      let env = List.fold_left (<<) Fun.id transformers env in 
+      let result_ty = infer env body in
+      Fun (arg_tys, result_ty)
+    | StringLit _ -> String
+    | NumLit _ -> Number
+    | BoolLit _ -> Bool
+    | UnitLit _ -> Tuple [||]
+    | NullLit _ -> panic __LOC__ "Nulls should be phased out now that we have static types" 
+    | expr -> panic __LOC__ ("NYI: " ^ pretty expr)
 
 and check : local_env -> ty -> expr -> unit =
   fun env expected_ty expr ->
@@ -152,12 +176,21 @@ and infer_seq : local_env -> expr list -> ty =
     (* TODO: Special case for '!p e*' expressions and pipes *)
     (* TODO: What if 'LetSeq' is the last expression?
        I think it just returns (), so this should be fine? *)
-    | [ expr ] -> infer env expr
     | LetSeq (loc, pat, e) :: exprs ->
       let ty, env_trans = infer_pattern env pat in
       check env ty e;
       infer_seq (env_trans env) exprs
+    | LetRecSeq(loc, fun_name, pats, body) :: exprs ->
+      let arg_tys, transformers = List.split (List.map (infer_pattern env) pats) in
+      let result_ty = fresh_unif () in
+      (* We have to check the body against a unification variable instead of inferring,
+         since we need to know the functions type in its own (possibly recursive) definition*)
+      let env = insert_var fun_name (Fun (arg_tys, result_ty)) env in
+      let inner_env = List.fold_left (<<) Fun.id transformers env in
+      check inner_env result_ty body;
+      infer_seq env exprs
     (* TODO: Handle remaining LetSeq forms *)
+    | [ expr ] -> infer env expr
     | expr :: exprs -> 
       check env (Tuple [||]) expr;
       infer_seq env exprs
@@ -165,6 +198,7 @@ and infer_seq : local_env -> expr list -> ty =
 let rec occurs u = function
       | Unif (u2, _) -> Unique.equal u u2
       | Forall (_, ty) -> occurs u ty
+      | Fun (dom, cod) -> List.exists (occurs u) dom || occurs u cod
       | List ty -> occurs u ty
       | Tuple tys -> Array.exists (occurs u) tys
       | Number | Bool | String | Var _ -> false
@@ -181,6 +215,8 @@ let solve_unify : loc -> ty -> ty -> Subst.t =
           else
             Subst.extend u ty Subst.empty 
         end
+      | Fun (dom1, cod1), Fun (dom2, cod2) ->
+        Subst.merge (Subst.concat (List.map2 go dom1 dom2)) (go cod1 cod2)
       | Tuple tys1, Tuple tys2 when Array.length tys1 = Array.length tys2 ->
         Array.fold_right Subst.merge (Array.map2 go tys1 tys2) Subst.empty
       | List ty1, List ty2 -> go ty1 ty2
@@ -192,9 +228,13 @@ let solve_unify : loc -> ty -> ty -> Subst.t =
     go original_ty1 original_ty2
 
 let solve_constraints : ty_constraint list -> Subst.t =
-  function
-  | [] -> Subst.empty
-  | Unify (loc, ty1, ty2) :: constrs -> todo __LOC__
+  let rec go subst = function
+    | [] -> subst
+    | Unify (loc, ty1, ty2) :: constrs -> 
+      let subst = solve_unify loc (Subst.apply subst ty1) (Subst.apply subst ty2) in
+      go subst constrs
+  in
+  go (Subst.empty)
 
 let typecheck_top_level : global_env -> expr -> global_env =
   fun global_env expr ->
@@ -228,7 +268,7 @@ let typecheck_top_level : global_env -> expr -> global_env =
     (* TODO: Actually check the expression *)
     let subst = solve_constraints (Difflist.to_list !(local_env.constraints)) in
     todo __LOC__
-    (* TODO: Solve constraints, apply substitution, generalize, update global_env *)
+    (* TODO: apply substitution, generalize, update global_env *)
 
 let typecheck exprs = 
   (* TODO: Include types for primitives, imports and options variables *)

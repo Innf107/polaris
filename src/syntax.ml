@@ -11,6 +11,7 @@ struct
 
   type ty =
     | Forall of name * ty
+    | Fun of ty list * ty
     | Var of name
     (* The 'name' is just kept around for error messages but *completely ignored* when typechecking *)
     | Unif of Unique.t * name
@@ -112,6 +113,7 @@ struct
 
   let rec pretty_type = function
     | Forall (var, ty) -> "∀" ^ Name.pretty var ^ ". " ^ pretty_type ty
+    | Fun (args, res) -> "(" ^ String.concat ", " (List.map pretty_type args) ^ ") -> " ^ pretty_type res
     | Var var -> Name.pretty var
     | Unif (u, name) -> Name.pretty name ^ "$" ^ Unique.display u
     | Number -> "Number"

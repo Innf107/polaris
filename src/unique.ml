@@ -9,4 +9,6 @@ let fresh () =
 
 let equal = Int.equal
 
+let compare = Int.compare
+
 let display = Int.to_string

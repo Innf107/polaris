@@ -1,4 +1,4 @@
-open Polaris
+    open Polaris
 open Polaris.Syntax
 open Polaris.Eval  (* Required for exceptions *)
 open Polaris.Lexer (* Required for exceptions *)
@@ -177,8 +177,23 @@ let handle_errors print_fun f =
     ^ "\n" ^ pretty_call_trace locs
   )
   | TypeError (loc, err) -> print_fun begin match err with
-    | UnableToUnify (ty1, ty2) -> Loc.pretty loc ^ ": Unable to unify types '" ^ Renamed.pretty_type ty1 ^ "' and '" ^ Renamed.pretty_type ty2 ^ "'"
-    end
+    | UnableToUnify ((ty1, ty2), (original_ty1, original_ty2)) -> 
+      Loc.pretty loc ^ ": Unable to unify types '" ^ Renamed.pretty_type ty1 ^ "'\n"
+                     ^ "                    and '" ^ Renamed.pretty_type ty2 ^ "'\n"
+                     ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
+                     ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"
+    | Impredicative ((ty1, ty2), (original_ty1, original_ty2)) ->
+      Loc.pretty loc ^ ": Impredicative instantiation attempted when matching types '" ^ Renamed.pretty_type ty1 ^ "'\n"
+      ^ "                    and '" ^ Renamed.pretty_type ty2 ^ "'\n"
+      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
+      ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'\n"
+      ^ "Unification involving ∀-types is not supported (and most likely a bug)"
+    | OccursCheck (u, name, ty, original_ty1, original_ty2) -> 
+      Loc.pretty loc ^ ": Unable to construct the infinite type '" ^ Renamed.pretty_type (Unif (u, name)) ^ "'\n"
+                      ^ "                    ~ '" ^ Renamed.pretty_type ty ^ "'\n"
+                      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
+                      ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"    
+  end
 let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;
   let driver_options = {

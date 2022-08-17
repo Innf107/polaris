@@ -2,6 +2,9 @@
 exception TODO of string
 exception Panic of string
 
+(* Should be used as `panic __LOC__ "message"`*)
+let panic loc msg = raise (Panic (loc ^ ": " ^ msg))
+
 (* Should be used as `todo __LOC__` *)
 let todo str = raise (TODO str)
 

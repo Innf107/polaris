@@ -163,6 +163,50 @@ let rec infer : local_env -> expr -> ty =
     | BoolLit _ -> Bool
     | UnitLit _ -> Tuple [||]
     | NullLit _ -> panic __LOC__ "Nulls should be phased out now that we have static types" 
+    | ListLit (loc, []) ->
+      let elem_ty = fresh_unif () in
+      List elem_ty
+    | ListLit (loc, (expr :: exprs)) ->
+      let elem_ty = infer env expr in
+      List.iter (check env elem_ty) exprs;
+      List elem_ty
+    | TupleLit (loc, exprs) ->
+      Tuple (Array.map (infer env) (Array.of_list exprs))
+    | MapLit _ | MapLookup _ | DynLookup _ -> panic __LOC__ "Typechecking maps is NYI since maps and records are not yet separated and row polymorphism is NYI"
+    | Add (_, expr1, expr2) | Sub (_, expr1, expr2) | Mul (_, expr1, expr2) | Div (_, expr1, expr2) ->
+      check env Number expr1;
+      check env Number expr2;
+      Number
+    | Concat _ -> panic __LOC__ "Typechecking '~' is NYI, since it would be heavily overloaded and thus require type classes"
+    | Equals (_, expr1, expr2) | NotEquals (_, expr1, expr2) ->
+      let ty1 = infer env expr1 in
+      check env ty1 expr2;
+      Bool
+    | LE (_, expr1, expr2) | GE (_, expr1, expr2) | LT (_, expr1, expr2) | GT (_, expr1, expr2) ->
+      check env Number expr1;
+      check env Number expr2;
+      Bool
+    | Or (_, expr1, expr2) | And (_, expr1, expr2) ->
+      check env Bool expr1;
+      check env Bool expr2;
+      Bool
+    | Not (_, expr) ->
+      check env Bool expr;
+      Bool
+    | Range (_, first, last) ->
+      check env Number first;
+      check env Number last;
+      List Number
+    | ListComp _ -> todo __LOC__
+    | If (_, cond, th, el) ->
+      check env Bool cond;
+      let res_ty = infer env th in
+      (* With subtyping (even subsumption), this might not be correct *)
+      check env res_ty el;
+      res_ty
+    | Seq (_, exprs) -> infer_seq env exprs
+    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
+    
     | expr -> panic __LOC__ ("NYI: " ^ pretty expr)
 
 and check : local_env -> ty -> expr -> unit =
@@ -198,7 +242,7 @@ and infer_seq : local_env -> expr list -> ty =
       (* If the last expression in an expression block is a
          LetSeq* expresion, we don't need to carry the environment transformations,
          but we do have to make sure to check the expression with `infer_seq_expr`, 
-         so it is not passed to `infer_expr`  
+         so it is not passed to `infer`
         *)
       let _ : _ = infer_seq_expr env expr in
       Tuple [||]
@@ -259,7 +303,7 @@ let typecheck_top_level : global_env -> expr -> global_env =
         We then extract those, throw away the collected constraints (they're part of the real local_env anyway)
         and add the bindings to the global environment
     *)
-    let temp_local_env = local_env_trans { local_types = VarTypeMap.empty; constraints = ref Difflist.empty} in
+    let temp_local_env = local_env_trans { local_types = VarTypeMap.empty; constraints = local_env.constraints } in
 
     (* TODO: Actually check the expression *)
     let subst = solve_constraints (Difflist.to_list !(local_env.constraints)) in

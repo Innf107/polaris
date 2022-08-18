@@ -13,7 +13,10 @@ exception TypeError of loc * type_error
 
 module VarTypeMap = Map.Make(Name)
 module UniqueMap = Map.Make(Unique)
-module UniqueSet = Set.Make(Unique)
+module UnifSet = Set.Make(struct
+  type t = Unique.t * name
+  let compare (u1, _) (u2, _) = Unique.compare u1 u2
+end)
 
 type ty_constraint = Unify of loc * ty * ty
 
@@ -64,18 +67,24 @@ let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
     env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
 
-let fresh_unif () = Unif (Unique.fresh (), Name.{ name = "u"; index = 0 })
+let fresh_unif () = 
+  let index = Unique.fresh() in
+  Unif (index, Name.{ name = "u"; index })
 
 let insert_var : name -> ty -> local_env -> local_env =
   fun x ty env -> { env with local_types = VarTypeMap.add x ty env.local_types }
 
 let replace_tvar : name -> ty -> ty -> ty =
   fun var replacement -> Ty.transform begin function
-    | Var tv ->
-      if tv = var then
-        replacement
-      else
-        Var tv
+    (* We rely on the renamer and generalization to eliminate
+       and name shadowing, so we don't need to deal with foralls here *)
+    | Var tv when tv = var -> replacement
+    | ty -> ty
+    end
+
+let replace_unif : Unique.t -> ty -> ty -> ty =
+  fun var replacement -> Ty.transform begin function
+    | Unif (u, _) when Unique.equal u var -> replacement
     | ty -> ty
     end
 
@@ -274,18 +283,26 @@ let solve_constraints : ty_constraint list -> Subst.t =
   in
   go (Subst.empty)
 
-let free_unifs : ty -> UniqueSet.t =
-  Ty.collect (monoid_set (module UniqueSet)) begin function
-    | Unif (u, _) -> UniqueSet.of_list [u]
-    | _ -> UniqueSet.empty 
+let free_unifs : ty -> UnifSet.t =
+  Ty.collect (monoid_set (module UnifSet)) begin function
+    | Unif (u, name) -> UnifSet.of_list [(u, name)]
+    | _ -> UnifSet.empty 
     end
 
+(* TODO: What about local let generalization? 
+   How the heck does that work in a constraint based typechecker? *)
 (** Generalizes a given type by turning residual unification variables into
     forall-bound type variables.
     This is the *only* way to introduce forall tyeps right now, 
     since explicit type signatures are not yet supported.  *)
 let generalize : ty -> ty =
-  fun ty -> todo __LOC__
+  fun ty -> 
+    UnifSet.fold 
+      (fun (u, name) r -> 
+        let name = Name.refresh name in
+        Forall(name, replace_unif u (Var name) r)) 
+      (free_unifs ty) 
+      ty
     
 let typecheck_top_level : global_env -> expr -> global_env =
   fun global_env expr ->
@@ -310,11 +327,10 @@ let typecheck_top_level : global_env -> expr -> global_env =
             (global_env.var_types) 
             (VarTypeMap.map (generalize << Subst.apply subst) temp_local_env.local_types) 
       } in
-    (* TODO: generalize *)
     global_env
 
 let typecheck exprs = 
   (* TODO: Include types for primitives, imports and options variables *)
   let global_env = { var_types = VarTypeMap.empty } in
   let _ = List.fold_left (fun env e -> typecheck_top_level env e) global_env exprs in
-  todo __LOC__
+  ()

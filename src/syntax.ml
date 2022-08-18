@@ -28,11 +28,12 @@ struct
 
   module Ty = struct 
     type t = ty
+
     (** Recursively apply a list returning operation over every constructor of 
       a type and concatenate the results with a provided monoid implementation.
       The type is traversed in pre-order
       The results are collected in a `Difflist.t`, so concatenation is very efficient *)
-    let rec collect : type a. (module Monoid with type t = a) -> (t -> a) -> t -> a =
+    let collect : type a. (module Monoid with type t = a) -> (t -> a) -> t -> a =
       fun monoid get ty ->
         let (module M) = monoid in
         let rec go ty = 
@@ -269,19 +270,21 @@ struct
     -> loc
 end
 
-type name = { name : string; index : int }
+type name = { name : string; index : Unique.t }
 
 module Name = struct
   type t = name
 
   let original_name (name : t) = name.name
 
-  let pretty (name : t) = name.name ^ "_" ^ string_of_int name.index
+  let pretty (name : t) = name.name ^ "_" ^ Unique.display name.index
 
   (* Comparisons are purely based on the name index
      and therefore have no actual meaning.
   *)
-  let compare (x : t) (y : t) : int = Int.compare x.index y.index
+  let compare (x : t) (y : t) : int = Unique.compare x.index y.index
+
+  let refresh (name : t) = { name with index = Unique.fresh() }
 end
 
 module Parsed = Make (struct

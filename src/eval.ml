@@ -252,7 +252,7 @@ end) = struct
     match expr with
     (* The name index -1 specifies primops *)
     | Var (loc, x) ->
-        if x.index == -1 
+        if x.index = Rename.primop_index 
         then PrimOpV x.name
         else !(lookup_var env loc x)
     | App (loc, f, args) ->

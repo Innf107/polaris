@@ -10,10 +10,10 @@ end
 
 module RenameScope = struct
     open RenameMap
-    type t = {counter: int ref; variables: name RenameMap.t}
+    type t = { variables: name RenameMap.t }
 
     let empty : t =
-        { counter = ref 0; variables = RenameMap.empty }
+        { variables = RenameMap.empty }
 
     let insert_var (old : string) (renamed : name) (scope : t) : t =
         { scope with variables = add old renamed scope.variables }
@@ -23,16 +23,15 @@ module RenameScope = struct
             find var scope.variables 
         with
             Not_found -> raise (RenameError.VarNotFound (var, loc))
-
-    let fresh_var (scope : t) (var : string) : 'name =
-        let ix = !(scope.counter) in
-        scope.counter := ix + 1;
-        { name = var; index = ix }
 end
+
+let fresh_var (var : string) : name =
+    { name = var; index = Unique.fresh () }
+
 
 let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in function
     | Parsed.VarPat (loc, var) ->
-        let var' = fresh_var scope var in
+        let var' = fresh_var var in
         (Renamed.VarPat (loc, var'), fun scope -> insert_var var var' scope)
     | ConsPat (loc, x, xs) ->
         let x', x_trans = rename_pattern scope x in
@@ -57,11 +56,13 @@ let rename_patterns scope pats =
         (pat' :: pats', fun s -> pat_trans (trans s))
     end) pats ([], fun x -> x)
 
+let primop_index = Unique.fresh ()
+
 let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
     match expr with 
     | Var (loc, var_name) ->
         if Primops.is_primop var_name
-        then Var(loc, {name=var_name; index= -1})
+        then Var(loc, {name=var_name; index=primop_index})
         else Var (loc, lookup_var scope loc var_name)
     | App (loc, f, args) -> App (loc, rename_expr scope f, List.map (rename_expr scope) args)
     
@@ -125,7 +126,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
         (* regular lets are non-recursive, so e1 is *not* evaluated in the new scope *)
         Let (loc, p', rename_expr scope e1, rename_expr (scope_trans scope) e2)
     | LetRec (loc, x, patterns, e1, e2) ->
-        let x' = fresh_var scope x in
+        let x' = fresh_var x in
         let patterns', scope_trans = rename_patterns scope patterns in
         let scope' = insert_var x x' scope in
         let inner_scope = scope_trans scope' in
@@ -166,7 +167,7 @@ and rename_seq_state (scope : RenameScope.t) (exprs : Parsed.expr list) : Rename
         let exprs', res_scope = rename_seq_state (scope_trans scope) exprs in
         (LetSeq (loc, p', e') :: exprs', res_scope)
     | LetRecSeq (loc, x, patterns, e) :: exprs -> 
-        let x' = fresh_var scope x in
+        let x' = fresh_var x in
         let patterns', scope_trans = rename_patterns scope patterns in
         let scope' = insert_var x x' scope in
         let inner_scope = scope_trans scope' in
@@ -189,17 +190,17 @@ and rename_seq scope exprs =
 let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.flag_def * RenameScope.t =
     let args, scope = match flag_def.args with
         | Varargs name -> 
-            let name' = RenameScope.fresh_var scope name in
+            let name' = fresh_var name in
             Renamed.Varargs name', RenameScope.insert_var name name' scope
         | Switch name ->
-            let name' = RenameScope.fresh_var scope name in
+            let name' = fresh_var name in
             Renamed.Switch name', RenameScope.insert_var name name' scope
         | Named args ->
-            let args' = List.map (RenameScope.fresh_var scope) args in
+            let args' = List.map fresh_var args in
             let scope = List.fold_right2 (RenameScope.insert_var) args args' scope in
             Named args', scope
         | NamedDefault args ->
-            let args' = List.map (fun (x, def) -> (RenameScope.fresh_var scope x, def)) args in
+            let args' = List.map (fun (x, def) -> (fresh_var x, def)) args in
             let scope = List.fold_right2 (fun (x, _) (y, _) -> RenameScope.insert_var x y) args args' scope in
             NamedDefault args', scope
     in        

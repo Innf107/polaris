@@ -1,6 +1,7 @@
 open Syntax
 open Syntax.Renamed
 open Util
+open Classes
 
 type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                                  (* ^           ^ full original types *)
@@ -12,6 +13,7 @@ exception TypeError of loc * type_error
 
 module VarTypeMap = Map.Make(Name)
 module UniqueMap = Map.Make(Unique)
+module UniqueSet = Set.Make(Unique)
 
 type ty_constraint = Unify of loc * ty * ty
 
@@ -47,19 +49,14 @@ end = struct
 
   let concat list = List.fold_right merge list empty
 
-  let rec apply subst = function
+  let apply subst = Ty.transform begin function
     | Unif (u, _) as ty ->
       begin match UniqueMap.find_opt u subst with
       | None -> ty
       | Some ty' -> ty'
       end
-    (* Recursive boilerplate *)
-    | Forall (a, ty) -> Forall (a, apply subst ty)
-    | Fun (dom, cod) -> Fun (List.map (apply subst) dom, apply subst cod)
-    | Tuple tys -> Tuple (Array.map (apply subst) tys)
-    | List ty -> List (apply subst ty)
-    (* unaffected non-recursive cases *)
-    | (Number |Var _ | Bool | String) as ty -> ty
+    | ty -> ty
+    end
 end
 
 
@@ -72,30 +69,15 @@ let fresh_unif () = Unif (Unique.fresh (), Name.{ name = "u"; index = 0 })
 let insert_var : name -> ty -> local_env -> local_env =
   fun x ty env -> { env with local_types = VarTypeMap.add x ty env.local_types }
 
-let rec replace_tvar : name -> ty -> ty -> ty =
-  fun var replacement -> 
-    let go = replace_tvar var replacement in
-    function
-    | Forall (tv, ty) ->
-      if tv = var then
-        (* 'var' has been shadowed. *)
-        (* This is probably unnecessary, since the renamer should already rename tvars*)
-        Forall (tv, ty)
-      else
-        Forall (tv, go ty)
+let replace_tvar : name -> ty -> ty -> ty =
+  fun var replacement -> Ty.transform begin function
     | Var tv ->
       if tv = var then
         replacement
       else
         Var tv
-    (* Recursive boilerplate *)
-    | Fun (dom, cod) -> Fun (List.map go dom, go cod)
-    | Tuple tys ->
-      Tuple (Array.map go tys)
-    | List ty ->
-      List (go ty)
-    (* Unaffected non-recursive cases *)
-    | (Number | Bool | String | Unif _) as ty -> ty
+    | ty -> ty
+    end
 
 let rec instantiate : ty -> ty =
   function
@@ -292,6 +274,19 @@ let solve_constraints : ty_constraint list -> Subst.t =
   in
   go (Subst.empty)
 
+let free_unifs : ty -> UniqueSet.t =
+  Ty.collect (monoid_set (module UniqueSet)) begin function
+    | Unif (u, _) -> UniqueSet.of_list [u]
+    | _ -> UniqueSet.empty 
+    end
+
+(** Generalizes a given type by turning residual unification variables into
+    forall-bound type variables.
+    This is the *only* way to introduce forall tyeps right now, 
+    since explicit type signatures are not yet supported.  *)
+let generalize : ty -> ty =
+  fun ty -> todo __LOC__
+    
 let typecheck_top_level : global_env -> expr -> global_env =
   fun global_env expr ->
     let local_env = { local_types = global_env.var_types; constraints = ref Difflist.empty } in
@@ -313,7 +308,7 @@ let typecheck_top_level : global_env -> expr -> global_env =
         var_types = 
           VarTypeMap.union (fun _ _ x -> Some x) 
             (global_env.var_types) 
-            (VarTypeMap.map (Subst.apply subst) temp_local_env.local_types) 
+            (VarTypeMap.map (generalize << Subst.apply subst) temp_local_env.local_types) 
       } in
     (* TODO: generalize *)
     global_env

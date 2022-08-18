@@ -1,3 +1,6 @@
+open Classes
+open Util
+
 type loc = Athena.loc
 module Loc = Athena.Loc
 
@@ -8,6 +11,7 @@ module Make (Name : sig
 end) =
 struct
   type name = Name.t
+
 
   type ty =
     | Forall of name * ty
@@ -21,6 +25,52 @@ struct
     | Tuple of ty array
     | List of ty
     (* TODO: row polymorphism and type classes s*)
+
+  module Ty = struct 
+    type t = ty
+    (** Recursively apply a list returning operation over every constructor of 
+      a type and concatenate the results with a provided monoid implementation.
+      The type is traversed in pre-order
+      The results are collected in a `Difflist.t`, so concatenation is very efficient *)
+    let rec collect : type a. (module Monoid with type t = a) -> (t -> a) -> t -> a =
+      fun monoid get ty ->
+        let (module M) = monoid in
+        let rec go ty = 
+          let result = get ty in
+          let remaining = match ty with
+            | Forall (_, ty) -> go ty
+            | Fun (args, ty) ->
+              M.append (mconcat monoid (List.map go args)) (go ty)
+            | Tuple tys ->
+              mconcat monoid (Array.to_list (Array.map go tys))
+            | List ty -> go ty
+            (* non-recursive cases *)
+            | Var _ | Unif _ | Number | Bool | String  -> M.empty
+          in
+          M.append result remaining
+        in
+        go ty
+      
+    (* Like `collect` but returns the result in a list instead of an arbitrary monoid.
+       This function uses `Difflist`s internally, so it should be significantly faster
+       than `collect monoid_list`*)
+    let collect_list : 'a. (t -> 'a list) -> t -> 'a list =
+      fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
+  
+    (* Recursively apply a transformation function over every node of a type 
+       (in a bottom-up fashion / post-order traversal). *)
+    let rec transform : (t -> t) -> t -> t =
+      fun trans ty ->
+        let transformed = match ty with
+        | Forall (x, ty) -> Forall (x, transform trans ty)
+        | Fun (args, res) -> Fun (List.map (transform trans) args, transform trans res)
+        | Tuple tys -> Tuple (Array.map (transform trans) tys)
+        | List ty -> List (transform trans ty)
+        (* Non-recursive cases *)
+        | (Var _ | Unif _ | Number | Bool | String) as ty -> ty
+        in
+        trans transformed
+  end
 
   type pattern =
     | VarPat of loc * name

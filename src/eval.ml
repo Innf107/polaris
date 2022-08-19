@@ -173,14 +173,14 @@ end) = struct
 
   let rec val_eq (x : value) (y : value) : bool = 
     match x, y with
-    | StringV x, StringV y -> String.compare x y == 0;
+    | StringV x, StringV y -> String.compare x y = 0;
     | NumV x, NumV y -> 
       Float.equal x y;
     (* Closure comparison always evaluates to false.
        We're not going to solve the halting problem for this. *)
     | (ClosureV _, _ | _, ClosureV _) -> false
     | UnitV, UnitV -> true
-    | BoolV x, BoolV y -> x == y
+    | BoolV x, BoolV y -> x = y
     (* Lists are compared elements-wise, *not* by reference
       (whatever that would even mean with polaris' (more or less)
       referentially transparent semantics) *)

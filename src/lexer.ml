@@ -63,7 +63,7 @@ let next_char (lexbuf : lexbuf) : char option =
     lexbuf.lex_curr_p <- { 
       lexbuf.lex_curr_p with pos_cnum = lexbuf.lex_curr_p.pos_cnum + 1
     };
-    if char == '\n' then
+    if char = '\n' then
       new_line lexbuf
     else
       ();
@@ -119,7 +119,7 @@ let is_digit = function
 
 let is_alpha_num c = is_alpha c || is_digit c
 
-let is_ident_start c = is_alpha c || c == '_'
+let is_ident_start c = is_alpha c || c = '_'
 
 let is_ident c = is_ident_start c || is_digit c
 

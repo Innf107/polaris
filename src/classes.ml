@@ -43,3 +43,11 @@ let monoid_set : type a.
             let append = SetImpl.union
         end in
         (module SetM)
+
+let monoid_or : (module Monoid with type t = bool)
+    = let module BoolM = struct
+            type t = bool
+            let append = (||)
+            let empty = false     
+        end in
+        (module BoolM)

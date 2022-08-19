@@ -5,6 +5,7 @@ open Classes
 
 let tc_category, trace_tc = Trace.make ~flag:"types" ~prefix:"Types" 
 let unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
+let subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix: "Subst"
 
 type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                                  (* ^           ^ full original types *)
@@ -32,6 +33,13 @@ type local_env = {
   constraints : ty_constraint Difflist.t ref;
 }
 
+
+let replace_unif : Unique.t -> ty -> ty -> ty =
+  fun var replacement -> Ty.transform begin function
+    | Unif (u, _) when Unique.equal u var -> replacement
+    | ty -> ty
+    end
+
 module Subst : sig
   type t
 
@@ -49,7 +57,6 @@ end = struct
 
   let empty = UniqueMap.empty
 
-  let extend = UniqueMap.add
 
   let merge = UniqueMap.union (fun _ _ x -> Some x)
 
@@ -63,6 +70,8 @@ end = struct
       end
     | ty -> ty
     end
+
+    let extend = UniqueMap.add  
 end
 
 
@@ -85,11 +94,6 @@ let replace_tvar : name -> ty -> ty -> ty =
     | ty -> ty
     end
 
-let replace_unif : Unique.t -> ty -> ty -> ty =
-  fun var replacement -> Ty.transform begin function
-    | Unif (u, _) when Unique.equal u var -> replacement
-    | ty -> ty
-    end
 
 let rec instantiate : ty -> ty =
   function
@@ -143,8 +147,10 @@ let rec infer : local_env -> expr -> ty =
       (* We infer the argument types first and then check the function type against that.
          Since most functions are going to be defined in a let binding, it might be more efficient to
         infer the function type first and either match on that directly or unify with a function type to get the argument types *)
+      
       let arg_tys = List.map (infer env) args in
       let result_ty = fresh_unif() in
+      trace_tc ("[Infer App(..)]: Expected fun ty: " ^ pretty_type (Fun (arg_tys, result_ty)));
       check env (Fun (arg_tys, result_ty)) func;
       result_ty
     | Lambda (loc, args, body) -> 
@@ -217,6 +223,7 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
     | LetRecSeq(loc, fun_name, pats, body) ->
       let arg_tys, transformers = List.split (List.map (infer_pattern env) pats) in
       let result_ty = fresh_unif () in
+      trace_tc ("[Infer (LetRecSeq ..)]: " ^ Name.pretty fun_name ^ " : " ^ pretty_type (Fun (arg_tys, result_ty)));
       (* We have to check the body against a unification variable instead of inferring,
           since we need to know the functions type in its own (possibly recursive) definition*)
       let env_trans = insert_var fun_name (Fun (arg_tys, result_ty)) in
@@ -245,31 +252,42 @@ and infer_seq : local_env -> expr list -> ty =
       let env_trans = infer_seq_expr env expr in
       infer_seq (env_trans env) exprs
 
-let rec occurs u = function
+let rec occurs u = Ty.collect monoid_or begin function
       | Unif (u2, _) -> Unique.equal u u2
-      | Forall (_, ty) -> occurs u ty
-      | Fun (dom, cod) -> List.exists (occurs u) dom || occurs u cod
-      | List ty -> occurs u ty
-      | Tuple tys -> Array.exists (occurs u) tys
-      | Number | Bool | String | Var _ -> false
+      | _ -> false
+      end
 
 let solve_unify : loc -> ty -> ty -> Subst.t =
   fun loc original_ty1 original_ty2 ->
     trace_unify (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2);
-    let rec go ty1 ty2 = match ty1, ty2 with
+
+    let rec go ty1 ty2 = 
+      (* TODO: Do this more efficiently *)
+      let rec go_list tys1 tys2 = match tys1, tys2 with
+        | ty1 :: tys1, ty2 :: tys2 ->
+          let subst = go ty1 ty2 in
+          Subst.merge subst (go_list (List.map (Subst.apply subst) tys1) (List.map (Subst.apply subst) tys2))
+        | [], [] -> Subst.empty
+        | tys1, tys2 -> panic __LOC__ ("solve_unify -> go_list: Differently sized type lists")
+      in
+      match ty1, ty2 with
       | Unif (u, name), ty | ty, Unif (u, name) -> 
         begin match ty with
+        (* Ignore 'a ~ a' cpnstraints. These are mostly harmless,
+           but might hang the type checker if they become part of the substitution *)
         | Unif (u2, _) when u2 = u -> Subst.empty
         | _ -> 
           if occurs u ty then
             raise (TypeError (loc, OccursCheck(u, name, ty, original_ty1, original_ty2)))
           else
+            trace_subst (pretty_type (Unif (u, name)) ^ " := " ^ pretty_type ty);
             Subst.extend u ty Subst.empty 
         end
       | Fun (dom1, cod1), Fun (dom2, cod2) ->
-        Subst.merge (Subst.concat (List.map2 go dom1 dom2)) (go cod1 cod2)
+        let subst = go_list dom1 dom2 in
+        Subst.merge subst (go (Subst.apply subst cod1) (Subst.apply subst cod2))
       | Tuple tys1, Tuple tys2 when Array.length tys1 = Array.length tys2 ->
-        Array.fold_right Subst.merge (Array.map2 go tys1 tys2) Subst.empty
+        go_list (Array.to_list tys1) (Array.to_list tys2)
       | List ty1, List ty2 -> go ty1 ty2
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), (original_ty1, original_ty2))))
       | (Number, Number) | (Bool, Bool) | (String, String) -> Subst.empty
@@ -282,7 +300,7 @@ let solve_constraints : ty_constraint list -> Subst.t =
   let rec go subst = function
     | [] -> subst
     | Unify (loc, ty1, ty2) :: constrs -> 
-      let subst = solve_unify loc (Subst.apply subst ty1) (Subst.apply subst ty2) in
+      let subst = Subst.merge (solve_unify loc (Subst.apply subst ty1) (Subst.apply subst ty2)) subst in
       go subst constrs
   in
   go (Subst.empty)

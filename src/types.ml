@@ -3,6 +3,9 @@ open Syntax.Renamed
 open Util
 open Classes
 
+let tc_category, trace_tc = Trace.make ~flag:"types" ~prefix:"Types" 
+let unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
+
 type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                                  (* ^           ^ full original types *)
                                  (* | specific mismatch               *)
@@ -252,6 +255,7 @@ let rec occurs u = function
 
 let solve_unify : loc -> ty -> ty -> Subst.t =
   fun loc original_ty1 original_ty2 ->
+    trace_unify (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2);
     let rec go ty1 ty2 = match ty1, ty2 with
       | Unif (u, name), ty | ty, Unif (u, name) -> 
         begin match ty with

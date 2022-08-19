@@ -250,7 +250,6 @@ end) = struct
   let rec eval_expr (env : eval_env) (expr : Renamed.expr) : value =
     let open Renamed in
     match expr with
-    (* The name index -1 specifies primops *)
     | Var (loc, x) ->
         if x.index = Rename.primop_index 
         then PrimOpV x.name
@@ -310,7 +309,6 @@ end) = struct
       | value -> raise (EvalError.TryingToLookupDynamicInNonMap (value, loc :: env.call_trace))
       end
 
-    (* TODO: Handle untyped *)
     | Add (loc, e1, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in

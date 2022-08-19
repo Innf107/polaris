@@ -230,8 +230,12 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
       let inner_env = List.fold_left (<<) Fun.id transformers (env_trans env) in
       check inner_env result_ty body;
       env_trans
+    | LetEnvSeq(loc, envvar, expr) ->
+      (* TODO: Once typeclasses are implemented, the expr should really just have to implement
+         some kind of 'ToString' typeclass. For now we require the expr to be an exact string though *)
+      check env String expr;
+      Fun.id
     (* TODO: Special case for !p e* expressions nad pipes *)
-    (* TODO: Handle remaining LetSeq forms *)
     | expr ->
       check env (Tuple [||]) expr;
       Fun.id
@@ -339,7 +343,6 @@ let typecheck_top_level : global_env -> expr -> global_env =
     *)
     let temp_local_env = local_env_trans { local_types = VarTypeMap.empty; constraints = local_env.constraints } in
 
-    (* TODO: Actually check the expression *)
     let subst = solve_constraints (Difflist.to_list !(local_env.constraints)) in
 
     let global_env = { 

@@ -26,6 +26,8 @@ struct
     | List of ty
     (* TODO: row polymorphism and type classes s*)
 
+  let (-->) xs y = Fun (xs, y)
+
   module Ty = struct 
     type t = ty
 
@@ -284,7 +286,9 @@ module Name = struct
   *)
   let compare (x : t) (y : t) : int = Unique.compare x.index y.index
 
+  let fresh (name : string) = { name; index = Unique.fresh () }
   let refresh (name : t) = { name with index = Unique.fresh() }
+  
 end
 
 module Parsed = Make (struct

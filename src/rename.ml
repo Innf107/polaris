@@ -25,9 +25,7 @@ module RenameScope = struct
             Not_found -> raise (RenameError.VarNotFound (var, loc))
 end
 
-let fresh_var (var : string) : name =
-    { name = var; index = Unique.fresh () }
-
+let fresh_var = Name.fresh
 
 let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in function
     | Parsed.VarPat (loc, var) ->

@@ -24,6 +24,7 @@ struct
     | String
     | Tuple of ty array
     | List of ty
+    | Promise of ty
     (* TODO: row polymorphism and type classes s*)
 
   let (-->) xs y = Fun (xs, y)
@@ -46,7 +47,7 @@ struct
               M.append (mconcat monoid (List.map go args)) (go ty)
             | Tuple tys ->
               mconcat monoid (Array.to_list (Array.map go tys))
-            | List ty -> go ty
+            | List ty | Promise ty -> go ty
             (* non-recursive cases *)
             | Var _ | Unif _ | Number | Bool | String  -> M.empty
           in
@@ -69,6 +70,7 @@ struct
         | Fun (args, res) -> Fun (List.map (transform trans) args, transform trans res)
         | Tuple tys -> Tuple (Array.map (transform trans) tys)
         | List ty -> List (transform trans ty)
+        | Promise ty -> Promise (transform trans ty)
         (* Non-recursive cases *)
         | (Var _ | Unif _ | Number | Bool | String) as ty -> ty
         in
@@ -174,6 +176,7 @@ struct
     | String -> "String"
     | Tuple tys -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty_type tys)) ^ ")"
     | List ty -> "List(" ^ pretty_type ty ^ ")"
+    | Promise ty -> "Promise(" ^ pretty_type ty ^ ")"
 
   let rec pretty_pattern = function
     | VarPat (_, x) -> Name.pretty x

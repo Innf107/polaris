@@ -251,7 +251,7 @@ end) = struct
     let open Renamed in
     match expr with
     | Var (loc, x) ->
-        if x.index = Name.primop_index 
+        if x.index = Name.primop_index
         then PrimOpV x.name
         else !(lookup_var env loc x)
     | App (loc, f, args) ->

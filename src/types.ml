@@ -207,8 +207,28 @@ let rec infer : local_env -> expr -> ty =
       res_ty
     | Seq (_, exprs) -> infer_seq env exprs
     | LetSeq _ | LetRecSeq _ | LetEnvSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
-    
-    | expr -> panic __LOC__ ("NYI: " ^ pretty expr)
+    | Let _ | LetRec _ | LetEnv _ -> todo __LOC__
+    | Assign (loc, var, expr) ->
+      let var_ty = match VarTypeMap.find_opt var env.local_types with
+        | Some ty -> ty
+        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound variable in typechecker (assignment): '" ^ Name.pretty var ^ "'")
+      in
+      check env var_ty expr;
+      Tuple [||]
+    | ProgCall (loc, prog, args) ->
+      (* TODO: We really need some kind of toString typeclass here *)
+      List.iter (check env String) args;
+      String
+    | Pipe _ -> todo __LOC__
+    | EnvVar _ -> String
+    | Async (_, expr) ->
+      let expr_ty = infer env expr in
+      Promise expr_ty
+    | Await (_, expr) ->
+      let expr_ty = fresh_unif () in
+      check env (Promise expr_ty) expr;
+      expr_ty
+    | Match _ -> todo __LOC__
 
 and check : local_env -> ty -> expr -> unit =
   fun env expected_ty expr ->
@@ -298,6 +318,7 @@ let solve_unify : loc -> ty -> ty -> Subst.t =
       | Tuple tys1, Tuple tys2 when Array.length tys1 = Array.length tys2 ->
         go_list (Array.to_list tys1) (Array.to_list tys2)
       | List ty1, List ty2 -> go ty1 ty2
+      | Promise ty1, Promise ty2 -> go ty1 ty2
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), (original_ty1, original_ty2))))
       | (Number, Number) | (Bool, Bool) | (String, String) -> Subst.empty
       | Var a, Var b when a = b -> Subst.empty

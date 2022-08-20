@@ -7,7 +7,7 @@ module PrimOpMap = Map.Make(String)
 let forall (cont : ty -> ty) = let a = Name.fresh "a" in Forall (a, cont (Var a))  
 
 let primops = PrimOpMap.of_seq (List.to_seq [
-  "print", [String] --> Tuple [||];
+  "print", forall (fun a -> [a] --> Tuple [||]);
   "head", forall (fun a -> [List a] -->a);
   "tail", forall (fun a -> [List a] --> List a);
   "cons", forall (fun a -> [a; List a] --> List a);

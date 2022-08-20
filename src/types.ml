@@ -12,6 +12,7 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                                  (* | specific mismatch               *)
                 | Impredicative of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
+                | WrongNumberOfArgs of ty list * ty list * ty * ty
 
 exception TypeError of loc * type_error
 
@@ -288,8 +289,12 @@ let solve_unify : loc -> ty -> ty -> Subst.t =
             Subst.extend u ty Subst.empty 
         end
       | Fun (dom1, cod1), Fun (dom2, cod2) ->
-        let subst = go_list dom1 dom2 in
-        Subst.merge subst (go (Subst.apply subst cod1) (Subst.apply subst cod2))
+        if List.compare_lengths dom1 dom2 != 0 then
+          raise (TypeError (loc, WrongNumberOfArgs(dom1, dom2, original_ty1, original_ty2)))
+        else begin
+          let subst = go_list dom1 dom2 in
+          Subst.merge subst (go (Subst.apply subst cod1) (Subst.apply subst cod2))
+        end
       | Tuple tys1, Tuple tys2 when Array.length tys1 = Array.length tys2 ->
         go_list (Array.to_list tys1) (Array.to_list tys2)
       | List ty1, List ty2 -> go ty1 ty2
@@ -355,7 +360,13 @@ let typecheck_top_level : global_env -> expr -> global_env =
     global_env
 
 let typecheck exprs = 
-  (* TODO: Include types for primitives, imports and options variables *)
-  let global_env = { var_types = VarTypeMap.empty } in
+  let prim_types = 
+    VarTypeMap.of_seq (Seq.map (fun (name, ty) -> ({ name; index=Name.primop_index}, ty)) 
+      (Primops.PrimOpMap.to_seq Primops.primops))
+  in
+  trace_tc (pretty_type (Primops.PrimOpMap.find "print" Primops.primops));
+  trace_tc (pretty_type (VarTypeMap.find { name="print"; index=Name.primop_index } prim_types));
+  (* TODO: Include types for imports and options variables *)
+  let global_env = { var_types = prim_types } in
   let _ = List.fold_left (fun env e -> typecheck_top_level env e) global_env exprs in
   ()

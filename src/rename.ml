@@ -54,13 +54,11 @@ let rename_patterns scope pats =
         (pat' :: pats', fun s -> pat_trans (trans s))
     end) pats ([], fun x -> x)
 
-let primop_index = Unique.fresh ()
-
 let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
     match expr with 
     | Var (loc, var_name) ->
         if Primops.is_primop var_name
-        then Var(loc, {name=var_name; index=primop_index})
+        then Var(loc, {name=var_name; index=Name.primop_index})
         else Var (loc, lookup_var scope loc var_name)
     | App (loc, f, args) -> App (loc, rename_expr scope f, List.map (rename_expr scope) args)
     

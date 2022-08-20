@@ -194,6 +194,12 @@ let handle_errors print_fun f =
                       ^ "                    ~ '" ^ Renamed.pretty_type ty ^ "'\n"
                       ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
                       ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"    
+    | WrongNumberOfArgs (tys1, tys2, original_ty1, original_ty2) ->
+      Loc.pretty loc ^ ": Wrong number of arguments supplied to function.\n"
+                      ^ "Unable to unify argument types '" ^ String.concat ", " (List.map Renamed.pretty_type tys1) ^ "'\n"
+                      ^ "                           and '" ^ String.concat ", " (List.map Renamed.pretty_type tys2) ^ "'\n"
+                      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
+                      ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'\n"                             
   end
 let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;

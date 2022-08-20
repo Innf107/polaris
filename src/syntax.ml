@@ -281,10 +281,17 @@ module Name = struct
 
   let pretty (name : t) = name.name ^ "_" ^ Unique.display name.index
 
+  let primop_index = Unique.fresh ()
+
   (* Comparisons are purely based on the name index
      and therefore have no actual meaning.
+     We have to make sure to compare primops by their name though!
   *)
-  let compare (x : t) (y : t) : int = Unique.compare x.index y.index
+  let compare (x : t) (y : t) : int = 
+    if x.index = primop_index && y.index = primop_index then
+      String.compare x.name y.name 
+    else
+      Unique.compare x.index y.index
 
   let fresh (name : string) = { name; index = Unique.fresh () }
   let refresh (name : t) = { name with index = Unique.fresh() }

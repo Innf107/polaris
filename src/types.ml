@@ -178,7 +178,12 @@ let rec infer : local_env -> expr -> ty =
       check env Number expr1;
       check env Number expr2;
       Number
-    | Concat _ -> panic __LOC__ "Typechecking '~' is NYI, since it would be heavily overloaded and thus require type classes"
+    | Concat (_, expr1, expr2) ->
+      (* TODO: Generalize this to use type classes once they are implemented. 
+         Ideally, concat expressions should really just desugar to a type class method *)
+      check env String expr1;
+      check env String expr2;
+      String
     | Equals (_, expr1, expr2) | NotEquals (_, expr1, expr2) ->
       let ty1 = infer env expr1 in
       check env ty1 expr2;
@@ -198,7 +203,10 @@ let rec infer : local_env -> expr -> ty =
       check env Number first;
       check env Number last;
       List Number
-    | ListComp _ -> todo __LOC__
+    | ListComp (_, result, clauses) ->
+      let env = infer_list_comp env clauses in
+      let ty = infer env result in
+      List ty
     | If (_, cond, th, el) ->
       check env Bool cond;
       let res_ty = infer env th in
@@ -207,7 +215,18 @@ let rec infer : local_env -> expr -> ty =
       res_ty
     | Seq (_, exprs) -> infer_seq env exprs
     | LetSeq _ | LetRecSeq _ | LetEnvSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
-    | Let _ | LetRec _ | LetEnv _ -> todo __LOC__
+    | Let (_, p, e1, e2) ->
+      let ty, env_trans = infer_pattern env p in
+      (* Lets are non-recursive, so we use the *unaltered* environment *)
+      check env ty e1;
+      infer (env_trans env) e2  
+    | LetRec (loc, fun_name, pats, body, rest) ->
+      (* We defer to `infer_seq_expr` here, since the core logic is exactly the same *)
+      let env_trans = infer_seq_expr env (LetRecSeq(loc, fun_name, pats, body)) in
+      infer (env_trans env) rest
+    | LetEnv (_, envvar, e1, e2) ->
+      check env String e1;
+      infer env e2
     | Assign (loc, var, expr) ->
       let var_ty = match VarTypeMap.find_opt var env.local_types with
         | Some ty -> ty
@@ -235,6 +254,19 @@ and check : local_env -> ty -> expr -> unit =
     let ty = infer env expr in
     unify env (get_loc expr) ty expected_ty
 
+and infer_list_comp : local_env -> list_comp_clause list -> local_env =
+    fun env -> function
+    | [] -> env
+    | (FilterClause expr :: clauses) ->
+      check env Bool expr;
+      infer_list_comp env clauses
+    | (DrawClause(pat, expr) :: clauses) ->
+      let ty, env_trans = infer_pattern env pat in
+      (* We use the *unaltered* environment, since
+         draw clauses are non-recursive *)
+      check env (List ty) expr;
+      infer_list_comp (env_trans env) clauses
+
 and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
     fun env expr -> match expr with
     | LetSeq (loc, pat, e) ->
@@ -244,7 +276,7 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
     | LetRecSeq(loc, fun_name, pats, body) ->
       let arg_tys, transformers = List.split (List.map (infer_pattern env) pats) in
       let result_ty = fresh_unif () in
-      trace_tc ("[Infer (LetRecSeq ..)]: " ^ Name.pretty fun_name ^ " : " ^ pretty_type (Fun (arg_tys, result_ty)));
+      trace_tc ("[Infer (LetRec(Seq) ..)]: " ^ Name.pretty fun_name ^ " : " ^ pretty_type (Fun (arg_tys, result_ty)));
       (* We have to check the body against a unification variable instead of inferring,
           since we need to know the functions type in its own (possibly recursive) definition*)
       let env_trans = insert_var fun_name (Fun (arg_tys, result_ty)) in
@@ -256,7 +288,10 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
          some kind of 'ToString' typeclass. For now we require the expr to be an exact string though *)
       check env String expr;
       Fun.id
-    (* TODO: Special case for !p e* expressions nad pipes *)
+    | ProgCall (loc, prog, args) ->
+      List.iter (check env String) args;
+      Fun.id
+    (* TODO: Special case for pipes *)
     | expr ->
       check env (Tuple [||]) expr;
       Fun.id

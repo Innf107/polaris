@@ -1,3 +1,3 @@
 # EXPECT: A
 
-async print("A")
+let _ = async print("A")

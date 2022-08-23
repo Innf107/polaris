@@ -27,8 +27,8 @@ let primops = PrimOpMap.of_seq (List.to_seq [
   "chdir", [String] --> Tuple [||];
   "exit", forall (fun a -> [Number] --> a);
   "toString", forall (fun a -> [a] --> String);
-  "getArgv", [Tuple [||]] --> List String;
-  "getEnv", [Tuple [||]] --> List String;
+  "getArgv", [] --> List String;
+  "getEnv", [] --> List String;
   "insert", Tuple [||]; (* TODO: Map types are NYI*)
   "mapToList", Tuple [||]; (* TODO: Map types are NYI*)
   "fail", forall (fun a -> [String] --> a);

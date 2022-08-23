@@ -3,7 +3,7 @@
 let x = 1;
 
 let update = async {
-    !sleep 0.2;
+    !sleep "0.2";
     x := 5
 };
 

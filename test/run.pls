@@ -10,7 +10,7 @@ let List = require("list.pls")
 let for = if sync then List.for else List.forConcurrent
 
 
-let categories = lines(!find (scriptLocal("categories")) "-mindepth" 1 "-maxdepth" 1 [["-not", "-name", ex] | ex <- exclude])
+let categories = lines(!find (scriptLocal("categories")) "-mindepth" 1 "-maxdepth" 1 "-not" "-name" "*.disabled" [["-not", "-name", ex] | ex <- exclude])
 
 if categories == [] then {
     print("No tests left to run.");

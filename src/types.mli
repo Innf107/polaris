@@ -7,6 +7,7 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | Impredicative of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
                 | WrongNumberOfArgs of ty list * ty list * ty * ty
+                | NonProgCallInPipe of expr
 
 exception TypeError of loc * type_error
 

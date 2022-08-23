@@ -13,6 +13,7 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | Impredicative of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
                 | WrongNumberOfArgs of ty list * ty list * ty * ty
+                | NonProgCallInPipe of expr
 
 exception TypeError of loc * type_error
 
@@ -238,7 +239,23 @@ let rec infer : local_env -> expr -> ty =
       (* TODO: We really need some kind of toString typeclass here *)
       List.iter (check env String) args;
       String
-    | Pipe _ -> todo __LOC__
+    | Pipe (loc, exprs) -> 
+      let rec check_progcalls = function
+      | [] -> ()
+      | (ProgCall _) as expr :: exprs ->
+        let _ = infer env expr in
+        check_progcalls exprs
+      | (expr :: _) -> raise (TypeError (loc, NonProgCallInPipe expr))
+      in
+      begin match exprs with
+      | []-> panic __LOC__ "Empty pipe expression"
+      | ((ProgCall _) :: _) -> check_progcalls exprs
+      | (expr :: exprs) ->
+        (* TODO: Use a toString typeclass *)
+        check env String expr;
+        check_progcalls exprs
+      end;
+      String
     | EnvVar _ -> String
     | Async (_, expr) ->
       let expr_ty = infer env expr in
@@ -247,7 +264,15 @@ let rec infer : local_env -> expr -> ty =
       let expr_ty = fresh_unif () in
       check env (Promise expr_ty) expr;
       expr_ty
-    | Match _ -> todo __LOC__
+    | Match (_, scrut, body) ->
+      (* TODO: Do exhaustiveness checking. This should probably be done in the renamer *)
+      let scrut_ty = infer env scrut in
+      let result_ty = fresh_unif () in
+      body |> List.iter begin fun (pat, expr) -> 
+        let env_trans = check_pattern env pat scrut_ty in
+        check (env_trans env) result_ty expr  
+      end;
+      result_ty 
 
 and check : local_env -> ty -> expr -> unit =
   fun env expected_ty expr ->
@@ -291,7 +316,12 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
     | ProgCall (loc, prog, args) ->
       List.iter (check env String) args;
       Fun.id
-    (* TODO: Special case for pipes *)
+    | Pipe _ as expr ->
+      (* We defer to `infer` here. We don't care about the result type, since
+         a) We know it is `String`
+         b) In this context, pipes don't actually return anything, but print to stdout *)
+      let _ = infer env expr in
+      Fun.id
     | expr ->
       check env (Tuple [||]) expr;
       Fun.id
@@ -420,8 +450,6 @@ let typecheck exprs =
     VarTypeMap.of_seq (Seq.map (fun (name, ty) -> ({ name; index=Name.primop_index}, ty)) 
       (Primops.PrimOpMap.to_seq Primops.primops))
   in
-  trace_tc (pretty_type (Primops.PrimOpMap.find "print" Primops.primops));
-  trace_tc (pretty_type (VarTypeMap.find { name="print"; index=Name.primop_index } prim_types));
   (* TODO: Include types for imports and options variables *)
   let global_env = { var_types = prim_types } in
   let _ = List.fold_left (fun env e -> typecheck_top_level env e) global_env exprs in

@@ -200,6 +200,9 @@ let handle_errors print_fun f =
                       ^ "                           and '" ^ String.concat ", " (List.map Renamed.pretty_type tys2) ^ "'\n"
                       ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
                       ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'\n"                             
+    | NonProgCallInPipe expr ->
+      (* TODO: Is this even possible? *)
+      Loc.pretty loc ^ ": Non program call expression in a pipe."
   end
 let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;

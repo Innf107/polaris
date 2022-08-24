@@ -12,7 +12,6 @@ end) =
 struct
   type name = Name.t
 
-
   type ty =
     | Forall of name * ty
     | Fun of ty list * ty
@@ -25,7 +24,12 @@ struct
     | Tuple of ty array
     | List of ty
     | Promise of ty
-    (* TODO: row polymorphism and type classes s*)
+    | Record of row
+    (* TODO: type classes *)
+  and row =
+    | RowClosed of (string * ty) array
+    | RowUnif of (string * ty) array * (Unique.t * name)
+    | RowVar of (string * ty) array * name
 
   let (-->) xs y = Fun (xs, y)
 
@@ -48,6 +52,14 @@ struct
             | Tuple tys ->
               mconcat monoid (Array.to_list (Array.map go tys))
             | List ty | Promise ty -> go ty
+            | Record (RowClosed fields) ->
+              mconcat monoid (Array.to_list (Array.map (go << snd) fields))
+            (* We traverse the variable as if it was its own node, so
+               callers only need to handle `Unif` to handle all unification variables *)
+            | Record (RowUnif (fields, (u, name))) ->
+              M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (Unif (u, name)))
+            | Record (RowVar (fields, var)) ->
+              M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (Var var))
             (* non-recursive cases *)
             | Var _ | Unif _ | Number | Bool | String  -> M.empty
           in
@@ -71,6 +83,33 @@ struct
         | Tuple tys -> Tuple (Array.map (transform trans) tys)
         | List ty -> List (transform trans ty)
         | Promise ty -> Promise (transform trans ty)
+        | Record (RowClosed tys) -> Record (RowClosed (Array.map (fun (x, ty) -> (x, transform trans ty)) tys))
+        | Record (RowUnif (fields, (u, name))) -> 
+          let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
+          begin match transform trans (Unif (u, name)) with
+          | Unif (u, name) -> Record (RowUnif (fields, (u, name)))
+          | Var var -> Record (RowVar (fields, var))
+          | Record (RowClosed fields2) ->
+            Record (RowClosed (Array.append fields fields2))
+          | Record (RowUnif (fields2, unif)) ->
+            Record (RowUnif (Array.append fields fields2, unif))
+          | Record (RowVar (fields2, var)) ->
+            Record (RowVar (Array.append fields fields2, var))
+          | ty -> panic __LOC__ ("Row extension variable replaced with non-row type")
+          end
+        | Record (RowVar (fields, var)) ->
+          let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
+          begin match transform trans (Var var) with
+          | Unif (u, name) -> Record (RowUnif (fields, (u, name)))
+          | Var var -> Record (RowVar (fields, var))
+          | Record (RowClosed fields2) ->
+            Record (RowClosed (Array.append fields fields2))
+          | Record (RowUnif (fields2, unif)) ->
+            Record (RowUnif (Array.append fields fields2, unif))
+          | Record (RowVar (fields2, var)) ->
+            Record (RowVar (Array.append fields fields2, var))
+          | ty -> panic __LOC__ ("Row extension variable replaced with non-row type")
+          end
         (* Non-recursive cases *)
         | (Var _ | Unif _ | Number | Bool | String) as ty -> ty
         in
@@ -177,6 +216,9 @@ struct
     | Tuple tys -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty_type tys)) ^ ")"
     | List ty -> "List(" ^ pretty_type ty ^ ")"
     | Promise ty -> "Promise(" ^ pretty_type ty ^ ")"
+    | Record (RowClosed fields) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ "}"
+    | Record (RowUnif (fields, (u, name))) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Unif (u, name)) ^ "}"
+    | Record (RowVar (fields, name)) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ Name.pretty name ^ "}"
 
   let rec pretty_pattern = function
     | VarPat (_, x) -> Name.pretty x

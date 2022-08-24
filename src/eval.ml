@@ -5,7 +5,7 @@ module VarMap = Map.Make (Name)
 
 module EnvMap = Map.Make (String)
 
-module MapVImpl = Map.Make (String)
+module RecordVImpl = Map.Make (String)
 
 (* `eval_env` unfortunately has to be defined outside of `Eval.Make`,
    since `value` depends on it. *)
@@ -42,7 +42,7 @@ and value =
      hopefully not going to be an issue. *)
   | ListV of value list
   | TupleV of value array
-  | MapV of (value MapVImpl.t)
+  | RecordV of (value RecordVImpl.t)
   | NullV
   (* Represents a concurrent thread of execution *)
   | PromiseV of value Promise.t
@@ -53,9 +53,9 @@ module EvalError = struct
   exception TryingToApplyNonFunction of value * loc list
   exception TryingToLookupInNonMap of value * string * loc list
   exception TryingToLookupDynamicInNonMap of value * loc list
-  exception InvalidMapKey of value * value MapVImpl.t * loc list
+  exception InvalidMapKey of value * value RecordVImpl.t * loc list
   exception InvalidListKey of value * value list * loc list
-  exception MapDoesNotContain of value MapVImpl.t * string * loc list
+  exception MapDoesNotContain of value RecordVImpl.t * string * loc list
   exception InvalidNumberOfArguments of Renamed.pattern list * value list * loc list
   exception IndexOutOfRange of value list * int * loc list
   (* TODO: Once exceptions are implemented, prim op argument errors should
@@ -109,8 +109,8 @@ module Value = struct
     | BoolV b -> string_of_bool b
     | ListV vals -> "[" ^ String.concat ", " (List.map pretty vals) ^ "]"
     | TupleV vals -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty vals)) ^ ")"
-    | MapV kvs -> 
-      let kv_list = List.of_seq (MapVImpl.to_seq kvs) in
+    | RecordV kvs -> 
+      let kv_list = List.of_seq (RecordVImpl.to_seq kvs) in
       "#{" ^ String.concat ", " (List.map (fun (k, v) -> k ^ ": " ^ pretty v) kv_list) ^ "}"
     | PromiseV p ->
       match Promise.peek p with
@@ -122,8 +122,8 @@ module Value = struct
     match x with
     | StringV v -> [v]
     | NumV _ | BoolV _ -> [pretty x]
-    (* TODO: Should Maps be converted to JSON? *)
-    | ClosureV _ | PrimOpV _ | UnitV | NullV | TupleV _ | MapV _ | PromiseV _ -> fail x
+    (* TODO: Should records/maps be converted to JSON? *)
+    | ClosureV _ | PrimOpV _ | UnitV | NullV | TupleV _ | RecordV _ | PromiseV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
@@ -149,7 +149,7 @@ end) = struct
       | NullV     -> { env with env_vars = EnvMap.remove var env.env_vars }
       | StringV x -> { env with env_vars = EnvMap.add var x env.env_vars }
       | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
-      | UnitV | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | MapV _ | PromiseV _ 
+      | UnitV | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ 
         -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
 
   let full_env_vars : eval_env -> string array =
@@ -188,8 +188,8 @@ end) = struct
       if List.compare_lengths xs ys != 0
       then false
       else List.for_all2 val_eq xs ys
-    | MapV m1, MapV m2 ->
-      MapVImpl.equal val_eq m1 m2
+    | RecordV m1, RecordV m2 ->
+      RecordVImpl.equal val_eq m1 m2
     | NullV, NullV -> true
     (* Comparisons of different values are always false *)
     | _, _ -> false
@@ -273,14 +273,14 @@ end) = struct
     | TupleLit (_, exprs) ->
       let vals = Array.map (eval_expr env) (Array.of_list exprs) in
       TupleV vals
-    | MapLit (_, kvs) ->
+    | RecordLit (_, kvs) ->
       let kv_vals = Seq.map (fun (k, e) -> (k, eval_expr env e)) (List.to_seq kvs) in
-      MapV (MapVImpl.of_seq kv_vals)
+      RecordV (RecordVImpl.of_seq kv_vals)
 
-    | MapLookup (loc, map_expr, key) ->
+    | Subscript (loc, map_expr, key) ->
       begin match eval_expr env map_expr with
-      | MapV map -> 
-        begin match MapVImpl.find_opt key map with
+      | RecordV map -> 
+        begin match RecordVImpl.find_opt key map with
         | Some value -> value
         | None -> raise (EvalError.MapDoesNotContain (map, key, loc :: env.call_trace))
         end
@@ -288,9 +288,9 @@ end) = struct
       end
     | DynLookup (loc, map_expr, key_expr) ->
       begin match eval_expr env map_expr with
-      | MapV map -> 
+      | RecordV map -> 
         begin match eval_expr env key_expr with
-        | StringV key -> begin match MapVImpl.find_opt key map with
+        | StringV key -> begin match RecordVImpl.find_opt key map with
                          | Some value -> value
                          | None -> NullV
                          end
@@ -339,7 +339,7 @@ end) = struct
       let v2 = eval_expr env e2 in
       begin match v1, v2 with
       | ListV xs, ListV ys -> ListV (xs @ ys)
-      | MapV xs, MapV ys -> MapV (MapVImpl.union (fun _ _ y -> Some y) xs ys)
+      | RecordV xs, RecordV ys -> RecordV (RecordVImpl.union (fun _ _ y -> Some y) xs ys)
       | StringV s1, StringV s2 -> StringV (s1 ^ s2)
       | StringV s1, NumV _ -> StringV(s1 ^ Value.pretty v2)
       | NumV _, StringV s2 -> StringV(Value.pretty v1 ^ s2)
@@ -776,16 +776,8 @@ end) = struct
                     end
                   | _ -> raise (PrimOpArgumentError ("getEnv", args, "Expected a single string", loc :: env.call_trace))
                   end
-    | "insert" -> begin match args with
-                  | [StringV key; value; MapV map] ->
-                    MapV (MapVImpl.add key value map)
-                  | _ -> raise(PrimOpArgumentError ("insert", args, "Expected a string, a value and a map", loc :: env.call_trace))
-                  end
-    | "mapToList" -> begin match args with
-                  | [MapV map] ->
-                    ListV (List.map (fun (k, v) -> ListV [StringV k; v]) (MapVImpl.bindings map))
-                  | _ -> raise(PrimOpArgumentError ("mapToList", args, "Expected a single map", loc :: env.call_trace))
-                  end
+    | "insert" -> todo __LOC__
+    | "mapToList" -> todo __LOC__
     | "fail" -> begin match args with
                 | [StringV msg] -> raise (RuntimeError (msg, loc :: env.call_trace))
                 | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))

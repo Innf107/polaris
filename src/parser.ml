@@ -279,7 +279,7 @@ end stream
 
 and expr5 stream = begin
   let ops : (expr -> expr) parser =
-      (let* ls = token DOT in let* (x, le) = ident in pure (fun e -> MapLookup(Loc.merge ls le, e, x)))
+      (let* ls = token DOT in let* (x, le) = ident in pure (fun e -> Subscript(Loc.merge ls le, e, x)))
   <|> (let* ls = token LBRACKET in let* e2 = expr in let* le = token RBRACKET in pure (fun e -> DynLookup(Loc.merge ls le, e, e2)))
   <|> (let* ls = token LPAREN in let* es = sep_by_trailing (token COMMA) expr in let* le = token RPAREN in pure (fun e -> App(Loc.merge ls le, e, es)))
   in
@@ -307,7 +307,7 @@ and expr_leaf stream = begin
     <*> list_comp_clauses
     <*> token RBRACKET)
   <|> ((fun ls es le -> ListLit (Loc.merge ls le, es)) <$> token LBRACKET <*> sep_by_trailing (token COMMA) expr <*> token RBRACKET)  (* [ e, .., e ] *)
-  <|> ((fun ls entries le -> MapLit(Loc.merge ls le, entries))                                                                        (* { x : e, .., x : e } *)
+  <|> ((fun ls entries le -> RecordLit (Loc.merge ls le, entries))                                                                        (* { x : e, .., x : e } *)
     <$> token HASHLBRACE 
     <*> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident_ <* token COLON <*> expr)
     <*> token RBRACE)

@@ -91,7 +91,7 @@ let handle_errors print_fun f =
       ^ "\n" ^ pretty_call_trace locs
     )
   | InvalidMapKey (key, map, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in map: " ^ Value.pretty (MapV map)
+      Loc.pretty loc ^ ": Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in map: " ^ Value.pretty (RecordV map)
       ^ "\n" ^ pretty_call_trace locs
     )
   | InvalidListKey (key, list, loc::locs) -> print_fun (
@@ -100,7 +100,7 @@ let handle_errors print_fun f =
     )
 
   | MapDoesNotContain (map, key, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Map does not contain key '" ^ key ^ "': " ^ Value.pretty (MapV map)
+      Loc.pretty loc ^ ": Map does not contain key '" ^ key ^ "': " ^ Value.pretty (RecordV map)
       ^ "\n" ^ pretty_call_trace locs
     )
   | InvalidNumberOfArguments (params, vals, loc::locs) -> print_fun (

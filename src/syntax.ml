@@ -89,7 +89,7 @@ struct
     (* Lambda calculus *)
     | Var of loc * name                     (* x *)
     | App of loc * expr * expr list         (* e (e₁, .., eₙ) *)
-    | Lambda of loc * pattern list * expr      (* \(p₁, .., pₙ) -> e*)
+    | Lambda of loc * pattern list * expr   (* \(p₁, .., pₙ) -> e*)
     (* Literals *)
     | StringLit of loc * string             (* "str" *)
     | NumLit of loc * float                 (* f *)
@@ -98,9 +98,9 @@ struct
     | NullLit of loc                        (* null *)
     | ListLit of loc * expr list            (* [e, .., e] *)
     | TupleLit of loc * expr list           (* (e, .., e) *)
-    | MapLit of loc * (string * expr) list  (* #{x₁: e₁, .., xₙ: eₙ}*)
+    | RecordLit of loc * (string * expr) list  (* #{x₁: e₁, .., xₙ: eₙ}*)
     (* Map Manipulation *)
-    | MapLookup of loc * expr * string      (* e.x *)
+    | Subscript of loc * expr * string      (* e.x *)
     | DynLookup of loc * expr * expr        (* e[e] *)
     (* Common Operations *)
     | Add of loc * expr * expr              (* e + e *)
@@ -201,9 +201,9 @@ struct
     | NullLit _ -> "null"
     | ListLit (_, exprs) -> "[" ^ String.concat ", " (List.map pretty exprs) ^ "]"
     | TupleLit (_, exprs) -> "(" ^ String.concat ", " (List.map pretty exprs) ^ ")"
-    | MapLit (_, kvs) -> "{" ^ String.concat ", " (List.map (fun (k, e) -> k ^ ": " ^ pretty e) kvs) ^ "}"
+    | RecordLit (_, kvs) -> "#{" ^ String.concat ", " (List.map (fun (k, e) -> k ^ ": " ^ pretty e) kvs) ^ "}"
 
-    | MapLookup (_, expr, key) -> "(" ^ pretty expr ^ ")." ^ key
+    | Subscript (_, expr, key) -> "(" ^ pretty expr ^ ")." ^ key
     | DynLookup (_, mexpr, kexpr) -> "(" ^ pretty mexpr ^ ")[" ^ pretty kexpr ^ "]"
 
     | Add (_, e1, e2)     -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
@@ -259,8 +259,8 @@ struct
 
   let get_loc = function
     | Var (loc, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
-    | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | TupleLit(loc, _) | MapLit(loc, _) 
-    | MapLookup(loc, _, _) | DynLookup(loc, _, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
+    | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
+    | Subscript(loc, _, _) | DynLookup(loc, _, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
     | Div(loc, _ , _) | Concat(loc, _, _) | Equals(loc, _, _) | NotEquals(loc, _, _) | LE(loc, _, _) 
     | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _) | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)

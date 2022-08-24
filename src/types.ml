@@ -174,7 +174,9 @@ let rec infer : local_env -> expr -> ty =
       List elem_ty
     | TupleLit (loc, exprs) ->
       Tuple (Array.map (infer env) (Array.of_list exprs))
-    | MapLit _ | MapLookup _ | DynLookup _ -> panic __LOC__ "Typechecking maps is NYI since maps and records are not yet separated and row polymorphism is NYI"
+    | RecordLit _ -> todo __LOC__
+    | Subscript _ -> todo __LOC__
+    | DynLookup _ -> todo __LOC__
     | Add (_, expr1, expr2) | Sub (_, expr1, expr2) | Mul (_, expr1, expr2) | Div (_, expr1, expr2) ->
       check env Number expr1;
       check env Number expr2;

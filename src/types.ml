@@ -14,6 +14,7 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
                 | WrongNumberOfArgs of ty list * ty list * ty * ty
                 | NonProgCallInPipe of expr
+                | MissingRowFields of (string * ty) list * (string * ty) list * ty * ty
 
 exception TypeError of loc * type_error
 
@@ -371,10 +372,34 @@ let solve_unify : loc -> ty -> ty -> Subst.t =
         | [], [] -> Subst.empty
         | tys1, tys2 -> panic __LOC__ ("solve_unify -> go_list: Differently sized type lists")
       in
+      (** `remaining_cont` is called with the remaining fields from both rows,
+        that is the fields that are not part of the other row. 
+        Closed rows will generally error on this, but unif rows might continue 
+        *)
+      (* TODO: Use maps instead of lists to make this more efficient. 
+         This might be a bit harder than it sounds, since we have to make sure to
+         treat duplicate labels correctly (With the semantics described by Leijen et al) *)
+      let unify_rows fields1 fields2 remaining_cont =
+        let rec go_rows remaining1 = function
+          | (field1, ty1)::fields1, fields2 ->
+            begin match Util.extract (fun (x, _) -> x = field1) fields2 with
+            (* If `field1` is *not* contained in `fields2`, we still have to
+               keep it around for `remaining_cont` *)
+            | None -> go_rows ((field1, ty1) :: remaining1) (fields1, fields2)
+            | Some ((field2, ty2), fields2) ->
+              let subst = go ty1 ty2 in
+              Subst.merge subst (go_rows remaining1 (List.map (fun (x, ty) -> (x, Subst.apply subst ty)) fields1, (List.map (fun (x, ty) -> (x, Subst.apply subst ty)) fields2)))
+            end
+          | [], remaining2 -> match remaining1, remaining2 with
+            | [], [] -> Subst.empty
+            | _ -> remaining_cont remaining1 remaining2
+        in
+        go_rows [] (Array.to_list fields1, Array.to_list fields2)
+      in
       match ty1, ty2 with
       | Unif (u, name), ty | ty, Unif (u, name) -> 
         begin match ty with
-        (* Ignore 'a ~ a' cpnstraints. These are mostly harmless,
+        (* Ignore 'a ~ a' constraints. These are mostly harmless,
            but might hang the type checker if they become part of the substitution *)
         | Unif (u2, _) when u2 = u -> Subst.empty
         | _ -> 
@@ -398,6 +423,9 @@ let solve_unify : loc -> ty -> ty -> Subst.t =
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), (original_ty1, original_ty2))))
       | (Number, Number) | (Bool, Bool) | (String, String) -> Subst.empty
       | Var a, Var b when a = b -> Subst.empty
+      | Record (RowClosed fields1), Record (RowClosed fields2) ->
+        unify_rows fields1 fields2 (fun remaining1 remaining2 -> 
+          raise (TypeError (loc, MissingRowFields (remaining1, remaining2, original_ty1, original_ty2))))
       | _ -> raise (TypeError (loc, UnableToUnify ((ty1, ty2), (original_ty1, original_ty2))))
     in
     go original_ty1 original_ty2

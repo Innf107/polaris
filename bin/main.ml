@@ -203,6 +203,12 @@ let handle_errors print_fun f =
     | NonProgCallInPipe expr ->
       (* TODO: Is this even possible? *)
       Loc.pretty loc ^ ": Non program call expression in a pipe."
+    | MissingRowFields (remaining1, remaining2, original_ty1, original_ty2) ->
+      Loc.pretty loc ^ ": Mismatched row fields.\n"
+                     ^ "Missing Mutual row fields '" ^ Renamed.pretty_type (Record (RowClosed (Array.of_list remaining2))) ^ "'\n"
+                     ^ "                      and '" ^ Renamed.pretty_type (Record (RowClosed (Array.of_list remaining1))) ^ "'\n"
+                     ^ "                      respectively."
+
   end
 let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;

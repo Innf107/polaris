@@ -81,9 +81,12 @@ let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
     env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
 
-let fresh_unif () = 
+let fresh_unif_raw () =
   let index = Unique.fresh() in
-  Unif (index, Name.{ name = "u"; index })
+  index, Name.{ name = "α"; index }
+let fresh_unif () = 
+  let index, name = fresh_unif_raw () in
+  Unif (index, name)
 
 let insert_var : name -> ty -> local_env -> local_env =
   fun x ty env -> { env with local_types = VarTypeMap.add x ty env.local_types }
@@ -172,10 +175,16 @@ let rec infer : local_env -> expr -> ty =
       let elem_ty = infer env expr in
       List.iter (check env elem_ty) exprs;
       List elem_ty
-    | TupleLit (loc, exprs) ->
+    | TupleLit (_, exprs) ->
       Tuple (Array.map (infer env) (Array.of_list exprs))
-    | RecordLit _ -> todo __LOC__
-    | Subscript _ -> todo __LOC__
+    | RecordLit (_, fields) ->
+      let ty_fields = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list fields) in
+      Record (RowClosed ty_fields)
+    | Subscript (_, expr, name) -> 
+      let val_ty = fresh_unif () in
+      let (u, u_name) = fresh_unif_raw () in
+      check env (Record (RowUnif ([|name, val_ty|], (u, u_name)))) expr;
+      val_ty
     | DynLookup _ -> todo __LOC__
     | Add (_, expr1, expr2) | Sub (_, expr1, expr2) | Mul (_, expr1, expr2) | Div (_, expr1, expr2) ->
       check env Number expr1;

@@ -6,9 +6,11 @@ module Make(Key : Map.OrderedType) : sig
     val empty : 'a t
 
     val add : key -> 'a -> 'a t -> 'a t
-    val add_seq : (key * 'a) Seq.t -> 'a t -> 'a t
+    val add_list : (key * 'a) list -> 'a t -> 'a t
 
     val to_seq : 'a t -> (key * 'a) Seq.t
+
+    val of_list : (key * 'a) list -> 'a t
     val of_seq : (key * 'a) Seq.t -> 'a t
 
     val equal : ('a -> 'a -> bool) -> 'a t -> 'a t -> bool

@@ -10,16 +10,19 @@ module Make(Key: Map.OrderedType) = struct
   let add k v m =
     M.update k (function None -> Some [v] | Some vs -> Some (v :: vs)) m
 
-  let add_seq seq m =
-    Seq.fold_left (fun m (k, v) -> add k v m) m seq
+  let add_list list m =
+    List.fold_right (fun (k, v) m -> add k v m) list m
 
   let to_seq m = 
     Seq.concat_map 
       (fun (k, vs) -> Seq.map (fun v -> (k, v)) (List.to_seq vs)) 
       (M.to_seq m)
 
+  let of_list list =
+    add_list list empty
+
   let of_seq seq =
-    add_seq seq empty
+    add_list (List.of_seq seq) empty
 
   let equal comp m1 m2 = M.equal (List.equal comp) m1 m2
 

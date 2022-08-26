@@ -137,9 +137,12 @@ struct
     | NullLit of loc                        (* null *)
     | ListLit of loc * expr list            (* [e, .., e] *)
     | TupleLit of loc * expr list           (* (e, .., e) *)
+    (* Records *)
     | RecordLit of loc * (string * expr) list  (* #{x₁: e₁, .., xₙ: eₙ}*)
-    (* Map Manipulation *)
     | Subscript of loc * expr * string      (* e.x *)
+    | RecordUpdate of loc * expr * (string * expr) list (* #{r with x₁: e₁, .., xₙ: eₙ} *)
+    | RecordExtension of loc * expr * (string * expr) list (* #{r extend x₁: e₁, .., xₙ: eₙ} *)
+
     | DynLookup of loc * expr * expr        (* e[e] *)
     (* Common Operations *)
     | Add of loc * expr * expr              (* e + e *)
@@ -243,9 +246,11 @@ struct
     | NullLit _ -> "null"
     | ListLit (_, exprs) -> "[" ^ String.concat ", " (List.map pretty exprs) ^ "]"
     | TupleLit (_, exprs) -> "(" ^ String.concat ", " (List.map pretty exprs) ^ ")"
-    | RecordLit (_, kvs) -> "#{" ^ String.concat ", " (List.map (fun (k, e) -> k ^ ": " ^ pretty e) kvs) ^ "}"
-
+    | RecordLit (_, kvs) -> "#{" ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
     | Subscript (_, expr, key) -> "(" ^ pretty expr ^ ")." ^ key
+    | RecordUpdate (_, expr, kvs) -> "#{" ^ pretty expr ^ " with " ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
+    | RecordExtension (_, expr, kvs) -> "#{" ^ pretty expr ^ " extend " ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
+
     | DynLookup (_, mexpr, kexpr) -> "(" ^ pretty mexpr ^ ")[" ^ pretty kexpr ^ "]"
 
     | Add (_, e1, e2)     -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
@@ -302,7 +307,8 @@ struct
   let get_loc = function
     | Var (loc, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
-    | Subscript(loc, _, _) | DynLookup(loc, _, _) | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
+    | Subscript(loc, _, _) | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
+    | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
     | Div(loc, _ , _) | Concat(loc, _, _) | Equals(loc, _, _) | NotEquals(loc, _, _) | LE(loc, _, _) 
     | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _) | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)

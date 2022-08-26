@@ -76,6 +76,8 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
     | RecordLit (loc, kvs) -> RecordLit (loc, List.map (fun (k, e) -> (k, rename_expr scope e)) kvs)
 
     | Subscript (loc, expr, key) -> Subscript (loc, rename_expr scope expr, key)
+    | RecordUpdate (loc, expr, kvs) -> RecordUpdate (loc, rename_expr scope expr, List.map (fun (x, expr) -> (x, rename_expr scope expr)) kvs)
+    | RecordExtension (loc, expr, kvs) -> RecordExtension (loc, rename_expr scope expr, List.map (fun (x, expr) -> (x, rename_expr scope expr)) kvs)
     | DynLookup (loc, mexpr, kexpr) -> DynLookup (loc, rename_expr scope mexpr, rename_expr scope kexpr)
 
     | Add(loc, e1,e2)    -> Add(loc, rename_expr scope e1, rename_expr scope e2)

@@ -176,6 +176,8 @@ let ident_token = let open Token in function
 | "options" -> OPTIONS
 | "as" -> AS
 | "not" -> NOT
+| "with" -> WITH
+| "extend" -> EXTEND
 | str -> IDENT(str)
 
 let op_token lexbuf = let open Token in function

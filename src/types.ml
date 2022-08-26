@@ -194,6 +194,7 @@ let rec infer : local_env -> expr -> ty =
       let (u, u_name) = fresh_unif_raw () in
       check env (Record (RowUnif ([|name, val_ty|], (u, u_name)))) expr;
       val_ty
+    | RecordUpdate _ | RecordExtension _ -> todo __LOC__
     | DynLookup _ -> todo __LOC__
     | Add (_, expr1, expr2) | Sub (_, expr1, expr2) | Mul (_, expr1, expr2) | Div (_, expr1, expr2) ->
       check env Number expr1;
@@ -383,7 +384,7 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
     trace_unify (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2);
 
     let rec go ty1 ty2 = 
-      (** `remaining_cont` is called with the remaining fields from both rows,
+      (* `remaining_cont` is called with the remaining fields from both rows,
         that is the fields that are not part of the other row. 
         Closed rows will generally error on this, but unif rows might continue 
         *)

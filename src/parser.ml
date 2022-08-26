@@ -58,6 +58,8 @@ module Token = struct
   | DESCRIPTION
   | OPTIONS
   | AS
+  | WITH
+  | EXTEND
 
   let pretty = function
   | IDENT i -> "IDENT(" ^ i ^ ")"
@@ -114,6 +116,8 @@ module Token = struct
   | DESCRIPTION -> "DESCRIPTION"
   | OPTIONS -> "OPTIONS"
   | AS -> "AS"
+  | WITH -> "WITH"
+  | EXTEND -> "EXTEND"
 
   let to_string = pretty
 
@@ -307,9 +311,15 @@ and expr_leaf stream = begin
     <*> list_comp_clauses
     <*> token RBRACKET)
   <|> ((fun ls es le -> ListLit (Loc.merge ls le, es)) <$> token LBRACKET <*> sep_by_trailing (token COMMA) expr <*> token RBRACKET)  (* [ e, .., e ] *)
+  <|> ((fun ls expr is_extend entries le -> if is_extend then RecordExtension (Loc.merge ls le, expr, entries) else RecordUpdate (Loc.merge ls le, expr, entries))                                                                        (* { x : e, .., x : e } *)
+    <$> token HASHLBRACE
+    <*> expr
+    <*> ((token WITH *> pure false) <|> (token EXTEND *> pure true))
+    <*> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident_ <* token EQUALS <*> expr)
+    <*> token RBRACE)
   <|> ((fun ls entries le -> RecordLit (Loc.merge ls le, entries))                                                                        (* { x : e, .., x : e } *)
     <$> token HASHLBRACE 
-    <*> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident_ <* token COLON <*> expr)
+    <*> sep_by_trailing (token COMMA) ((fun x y -> (x, y)) <$> ident_ <* token EQUALS <*> expr)
     <*> token RBRACE)
   <|> (let* ls = token LPAREN in
       let* exprs = sep_by_trailing1 (token COMMA) expr in

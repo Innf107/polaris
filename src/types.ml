@@ -46,11 +46,12 @@ let replace_unif : Unique.t -> ty -> ty -> ty =
 module Subst : sig
   type t
 
+  val of_map : ty UniqueMap.t -> t
+
   val empty : t
 
   val extend : Unique.t -> ty -> t -> t
-  val extend_apply : Unique.t -> ty -> t -> t
-  
+
   val merge : t -> t -> t
 
   val concat : t list -> t
@@ -62,6 +63,7 @@ end = struct
 
   let empty = UniqueMap.empty
 
+  let of_map m = m
 
   let merge = UniqueMap.union (fun _ _ x -> Some x)
 
@@ -77,10 +79,6 @@ end = struct
     end
 
     let extend = UniqueMap.add  
-    let extend_apply u ty m =
-      (* TODO: This is *extremely* inefficient *)
-      let to_apply = UniqueMap.of_seq (List.to_seq [(u, ty)]) in
-      UniqueMap.add u ty (UniqueMap.map (apply to_apply) m)
 end
 
 
@@ -369,19 +367,22 @@ let rec occurs u = Ty.collect monoid_or begin function
       | _ -> false
       end
 
-let solve_unify : loc -> ty -> ty -> Subst.t =
-  fun loc original_ty1 original_ty2 ->
+type unify_state = {
+  (* This uses a 'ref' instead of a mutable field to allow the
+     possibility of adding immutable fields later *)
+  subst : ty UniqueMap.t ref
+}
+
+let bind : unify_state -> Unique.t -> name -> ty -> unit =
+  fun state u name ty ->
+    trace_subst (pretty_type (Unif (u, name)) ^ " := " ^ pretty_type ty);
+    state.subst := UniqueMap.add u ty (UniqueMap.map (replace_unif u ty) !(state.subst)) 
+
+let solve_unify : loc -> unify_state -> ty -> ty -> unit =
+  fun loc state original_ty1 original_ty2 ->
     trace_unify (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2);
 
     let rec go ty1 ty2 = 
-      (* TODO: Do this more efficiently *)
-      let rec go_list tys1 tys2 = match tys1, tys2 with
-        | ty1 :: tys1, ty2 :: tys2 ->
-          let subst = go ty1 ty2 in
-          Subst.merge subst (go_list (List.map (Subst.apply subst) tys1) (List.map (Subst.apply subst) tys2))
-        | [], [] -> Subst.empty
-        | tys1, tys2 -> panic __LOC__ ("solve_unify -> go_list: Differently sized type lists")
-      in
       (** `remaining_cont` is called with the remaining fields from both rows,
         that is the fields that are not part of the other row. 
         Closed rows will generally error on this, but unif rows might continue 
@@ -397,11 +398,11 @@ let solve_unify : loc -> ty -> ty -> Subst.t =
                keep it around for `remaining_cont` *)
             | None -> go_rows ((field1, ty1) :: remaining1) (fields1, fields2)
             | Some ((field2, ty2), fields2) ->
-              let subst = go ty1 ty2 in
-              Subst.merge subst (go_rows remaining1 (List.map (fun (x, ty) -> (x, Subst.apply subst ty)) fields1, (List.map (fun (x, ty) -> (x, Subst.apply subst ty)) fields2)))
+              go ty1 ty2;
+              go_rows remaining1 (fields1, fields2)
             end
           | [], remaining2 -> match remaining1, remaining2 with
-            | [], [] -> Subst.empty
+            | [], [] -> ()
             | _ -> remaining_cont remaining1 remaining2
         in
         go_rows [] (Array.to_list fields1, Array.to_list fields2)
@@ -411,64 +412,81 @@ let solve_unify : loc -> ty -> ty -> Subst.t =
         begin match ty with
         (* Ignore 'a ~ a' constraints. These are mostly harmless,
            but might hang the type checker if they become part of the substitution *)
-        | Unif (u2, _) when u2 = u -> Subst.empty
+        | Unif (u2, _) when u2 = u -> ()
         | _ -> 
           if occurs u ty then
             raise (TypeError (loc, OccursCheck(u, name, ty, original_ty1, original_ty2)))
-          else
-            trace_subst (pretty_type (Unif (u, name)) ^ " := " ^ pretty_type ty);
-            Subst.extend u ty Subst.empty 
+          else begin 
+            match UniqueMap.find_opt u !(state.subst) with
+            (* TODO: This can change the order of constraints which might lead to 
+               significantly worse error messages *)
+            | Some subst_ty -> go subst_ty ty
+            | None -> bind state u name ty
         end
+      end
       | Fun (dom1, cod1), Fun (dom2, cod2) ->
         if List.compare_lengths dom1 dom2 != 0 then
           raise (TypeError (loc, WrongNumberOfArgs(dom1, dom2, original_ty1, original_ty2)))
         else begin
-          let subst = go_list dom1 dom2 in
-          Subst.merge subst (go (Subst.apply subst cod1) (Subst.apply subst cod2))
+          List.iter2 go dom1 dom2;
+          go cod1 cod2
         end
       | Tuple tys1, Tuple tys2 when Array.length tys1 = Array.length tys2 ->
-        go_list (Array.to_list tys1) (Array.to_list tys2)
+        List.iter2 go (Array.to_list tys1) (Array.to_list tys2)
       | List ty1, List ty2 -> go ty1 ty2
       | Promise ty1, Promise ty2 -> go ty1 ty2
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), (original_ty1, original_ty2))))
-      | (Number, Number) | (Bool, Bool) | (String, String) -> Subst.empty
-      | Var a, Var b when a = b -> Subst.empty
+      | (Number, Number) | (Bool, Bool) | (String, String) -> ()
       | Record (RowClosed fields1), Record (RowClosed fields2) ->
         unify_rows fields1 fields2 (fun remaining1 remaining2 -> 
           raise (TypeError (loc, MissingRowFields (remaining1, remaining2, original_ty1, original_ty2))))
       | Record (RowUnif (fields1, (u, name))), Record (RowClosed fields2) ->
-        unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
-          match remaining1 with
-          | [] -> Subst.extend u (Record (RowClosed (Array.of_list remaining2))) Subst.empty
-          | _ -> raise (TypeError (loc, MissingRowFields (remaining1, [], original_ty1, original_ty2)))
+        begin match UniqueMap.find_opt u !(state.subst) with
+        | Some subst_ty -> go (replace_unif u subst_ty ty1) ty2
+        | None -> 
+          unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
+            match remaining1 with
+            | [] -> bind state u name (Record (RowClosed (Array.of_list remaining2)))
+            | _ -> raise (TypeError (loc, MissingRowFields (remaining1, [], original_ty1, original_ty2)))
+          end
         end
       | Record (RowClosed fields1), Record (RowUnif (fields2, (u, name))) ->
-        unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
-          match remaining2 with
-          | [] -> Subst.extend u (Record (RowClosed (Array.of_list remaining1))) Subst.empty
-          | _ -> raise (TypeError (loc, MissingRowFields ([], remaining2, original_ty1, original_ty2)))
+        begin match UniqueMap.find_opt u !(state.subst) with
+        | Some subst_ty -> go ty1 (replace_unif u subst_ty ty2) 
+        | None -> 
+          unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
+            match remaining2 with
+            | [] -> bind state u name (Record (RowClosed (Array.of_list remaining1)))
+            | _ -> raise (TypeError (loc, MissingRowFields ([], remaining2, original_ty1, original_ty2)))
+          end
         end
       | Record (RowUnif (fields1, (u1, name1))), Record (RowUnif (fields2, (u2, name2))) ->
-        unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
-          let new_u, new_name = fresh_unif_raw_with "µ" in
-          Subst.extend_apply u1 (Record (RowUnif (Array.of_list remaining2, (new_u, new_name))))
-          (Subst.extend_apply u2 (Record (RowUnif (Array.of_list remaining1, (new_u, new_name))))
-          Subst.empty)
+        begin match UniqueMap.find_opt u1 !(state.subst) with
+        | Some subst_ty -> go (replace_unif u1 subst_ty ty1) ty2
+        | None -> match UniqueMap.find_opt u2 !(state.subst) with
+          | Some subst_ty -> go ty1 (replace_unif u2 subst_ty ty2)
+          | None ->
+            unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
+              let new_u, new_name = fresh_unif_raw_with "µ" in
+              bind state u1 name1 (Record (RowUnif (Array.of_list remaining2, (new_u, new_name))));
+              bind state u2 name2 (Record (RowUnif (Array.of_list remaining1, (new_u, new_name))))
+          end
         end
       | (Record (RowVar _), _ | _, Record (RowVar _)) -> 
         panic __LOC__ "Uninstantiated variable row found during unification"
+      | Var _, _ | _, Var _ -> panic __LOC__ "Uninstantiated type variable found during unification"
       | _ -> raise (TypeError (loc, UnableToUnify ((ty1, ty2), (original_ty1, original_ty2))))
     in
     go original_ty1 original_ty2
 
 let solve_constraints : ty_constraint list -> Subst.t =
-  let rec go subst = function
-    | [] -> subst
-    | Unify (loc, ty1, ty2) :: constrs -> 
-      let subst = Subst.merge (solve_unify loc (Subst.apply subst ty1) (Subst.apply subst ty2)) subst in
-      go subst constrs
-  in
-  go (Subst.empty)
+  fun constraints ->
+  let unify_state = { subst = ref UniqueMap.empty } in
+  List.iter (function
+    | Unify (loc, ty1, ty2) -> 
+      solve_unify loc unify_state ty1 ty2
+  ) constraints;
+  Subst.of_map !(unify_state.subst)  
 
 let free_unifs : ty -> UnifSet.t =
   Ty.collect (monoid_set (module UnifSet)) begin function

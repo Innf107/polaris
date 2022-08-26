@@ -5,7 +5,7 @@ module VarMap = Map.Make (Name)
 
 module EnvMap = Map.Make (String)
 
-module RecordVImpl = Map.Make (String)
+module RecordVImpl = Multimap.Make (String)
 
 (* `eval_env` unfortunately has to be defined outside of `Eval.Make`,
    since `value` depends on it. *)
@@ -16,8 +16,6 @@ type eval_env = {
 ; call_trace : loc list
 ; last_status : int ref
 }
-(* TODO: Add list (map?) of overridden environment variables. This should probably be a *mutable* list, since
-   env vars should be dynamically scoped (Should they?) *)
 
 and value =
   | StringV of string
@@ -280,9 +278,9 @@ end) = struct
     | Subscript (loc, map_expr, key) ->
       begin match eval_expr env map_expr with
       | RecordV map -> 
-        begin match RecordVImpl.find_opt key map with
-        | Some value -> value
-        | None -> raise (EvalError.MapDoesNotContain (map, key, loc :: env.call_trace))
+        begin match RecordVImpl.find key map with
+        | (value :: _) -> value
+        | [] -> raise (EvalError.MapDoesNotContain (map, key, loc :: env.call_trace))
         end
       | value -> raise (EvalError.TryingToLookupInNonMap (value, key, loc :: env.call_trace))
       end
@@ -291,9 +289,9 @@ end) = struct
       begin match eval_expr env map_expr with
       | RecordV map -> 
         begin match eval_expr env key_expr with
-        | StringV key -> begin match RecordVImpl.find_opt key map with
-                         | Some value -> value
-                         | None -> NullV
+        | StringV key -> begin match RecordVImpl.find key map with
+                         | value :: _ -> value
+                         | [] -> NullV
                          end
         | value -> raise (EvalError.InvalidMapKey (value, map, loc :: env.call_trace))
         end
@@ -340,7 +338,7 @@ end) = struct
       let v2 = eval_expr env e2 in
       begin match v1, v2 with
       | ListV xs, ListV ys -> ListV (xs @ ys)
-      | RecordV xs, RecordV ys -> RecordV (RecordVImpl.union (fun _ _ y -> Some y) xs ys)
+      | RecordV xs, RecordV ys -> RecordV (RecordVImpl.union xs ys)
       | StringV s1, StringV s2 -> StringV (s1 ^ s2)
       | StringV s1, NumV _ -> StringV(s1 ^ Value.pretty v2)
       | NumV _, StringV s2 -> StringV(Value.pretty v1 ^ s2)
@@ -589,7 +587,6 @@ end) = struct
         | Left expr -> (eval_expr env expr, env)
         | Right value -> (value, env))
 
-  (* TODO: This should probably be tail recursive if possible (probably via CPS) *)
   and eval_list_comp env loc result_expr = function
     | Renamed.FilterClause expr :: comps -> 
       begin match eval_expr env expr with

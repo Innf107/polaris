@@ -49,12 +49,14 @@ module Subst : sig
   val empty : t
 
   val extend : Unique.t -> ty -> t -> t
+  val extend_apply : Unique.t -> ty -> t -> t
   
   val merge : t -> t -> t
 
   val concat : t list -> t
 
   val apply : t -> ty -> ty
+
 end = struct
   type t = ty UniqueMap.t 
 
@@ -75,6 +77,10 @@ end = struct
     end
 
     let extend = UniqueMap.add  
+    let extend_apply u ty m =
+      (* TODO: This is *extremely* inefficient *)
+      let to_apply = UniqueMap.of_seq (List.to_seq [(u, ty)]) in
+      UniqueMap.add u ty (UniqueMap.map (apply to_apply) m)
 end
 
 
@@ -82,9 +88,13 @@ let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
     env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
 
-let fresh_unif_raw () =
+let fresh_unif_raw_with raw_name =
   let index = Unique.fresh() in
-  index, Name.{ name = "α"; index }
+  index, Name.{ name = raw_name; index }
+    
+let fresh_unif_raw () =
+  fresh_unif_raw_with "α"
+
 let fresh_unif () = 
   let index, name = fresh_unif_raw () in
   Unif (index, name)
@@ -426,6 +436,27 @@ let solve_unify : loc -> ty -> ty -> Subst.t =
       | Record (RowClosed fields1), Record (RowClosed fields2) ->
         unify_rows fields1 fields2 (fun remaining1 remaining2 -> 
           raise (TypeError (loc, MissingRowFields (remaining1, remaining2, original_ty1, original_ty2))))
+      | Record (RowUnif (fields1, (u, name))), Record (RowClosed fields2) ->
+        unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
+          match remaining1 with
+          | [] -> Subst.extend u (Record (RowClosed (Array.of_list remaining2))) Subst.empty
+          | _ -> raise (TypeError (loc, MissingRowFields (remaining1, [], original_ty1, original_ty2)))
+        end
+      | Record (RowClosed fields1), Record (RowUnif (fields2, (u, name))) ->
+        unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
+          match remaining2 with
+          | [] -> Subst.extend u (Record (RowClosed (Array.of_list remaining1))) Subst.empty
+          | _ -> raise (TypeError (loc, MissingRowFields ([], remaining2, original_ty1, original_ty2)))
+        end
+      | Record (RowUnif (fields1, (u1, name1))), Record (RowUnif (fields2, (u2, name2))) ->
+        unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
+          let new_u, new_name = fresh_unif_raw_with "µ" in
+          Subst.extend_apply u1 (Record (RowUnif (Array.of_list remaining2, (new_u, new_name))))
+          (Subst.extend_apply u2 (Record (RowUnif (Array.of_list remaining1, (new_u, new_name))))
+          Subst.empty)
+        end
+      | (Record (RowVar _), _ | _, Record (RowVar _)) -> 
+        panic __LOC__ "Uninstantiated variable row found during unification"
       | _ -> raise (TypeError (loc, UnableToUnify ((ty1, ty2), (original_ty1, original_ty2))))
     in
     go original_ty1 original_ty2
@@ -453,12 +484,15 @@ let free_unifs : ty -> UnifSet.t =
     since explicit type signatures are not yet supported.  *)
 let generalize : ty -> ty =
   fun ty -> 
-    UnifSet.fold 
+    let ty' = UnifSet.fold 
       (fun (u, name) r -> 
         let name = Name.refresh name in
         Forall(name, replace_unif u (Var name) r)) 
       (free_unifs ty) 
       ty
+    in
+    trace_subst ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty');
+    ty'
     
 let typecheck_top_level : global_env -> expr -> global_env =
   fun global_env expr ->

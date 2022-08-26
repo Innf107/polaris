@@ -284,7 +284,27 @@ end) = struct
         end
       | value -> raise (EvalError.TryingToLookupInNonMap (value, key, loc :: env.call_trace))
       end
-    | RecordUpdate _ | RecordExtension _ -> todo __LOC__ (* TODO: Update RecordVImpl to allow duplicate keys *)
+    | RecordUpdate (loc, expr, update_exprs) -> 
+      begin match eval_expr env expr with
+      | RecordV vals -> 
+        (* See note [Left to Right evaluation] *)
+        let update_vals = List.map (fun (k, expr) -> (k, eval_expr env expr)) update_exprs in
+        let add_val m (k, v) = RecordVImpl.update k (function 
+          | (_::vs) -> v::vs
+          | [] -> panic __LOC__ "Empty value list in record update"
+        ) m 
+        in
+        RecordV (List.fold_left add_val vals update_vals)
+      | value -> panic __LOC__ ("Non-record value in record update: " ^ Value.pretty value)
+      end
+    | RecordExtension (loc, expr, ext_exprs) -> 
+      begin match eval_expr env expr with
+      | RecordV vals ->
+        (* See note [Left to Right evaluation] *)
+        let update_vals = Seq.map (fun (k, expr) -> (k, eval_expr env expr)) (List.to_seq ext_exprs) in
+        RecordV (RecordVImpl.add_seq update_vals vals)
+      | value -> panic __LOC__ ("Non-record value in record update: " ^ Value.pretty value)
+      end
     | DynLookup (loc, map_expr, key_expr) ->
       begin match eval_expr env map_expr with
       | RecordV map -> 

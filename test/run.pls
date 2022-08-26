@@ -52,7 +52,7 @@ for(files, \file -> {
         if result == expectedError then {
             !echo "-e" ("\e[32m[" ~ file ~ "](error): PASSED\e[0m")
         } else {
-            !echo "-e" ("\e[31m[" ~ file ~ "]: FAILED!\n"
+            !echo "-e" ("\e[31m[" ~ file ~ "](error): FAILED!\n"
                     ~ "    EXPECTED: '" ~ expectedError ~ "'\n"
                     ~ "      ACTUAL: '" ~ result ~ "'\e[0m")
             errors := errors + 1

@@ -25,9 +25,7 @@ let fail_usage : 'a. string -> 'a =
     exit 1
 
 let fatal_error (message : string) = 
-  print_endline "~~~~~~~~~~~~~~ERROR~~~~~~~~~~~~~~";
   print_endline message;
-  print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
   exit 1
 
 let warning (message : string) =

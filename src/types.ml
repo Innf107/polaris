@@ -482,10 +482,10 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
 let solve_constraints : ty_constraint list -> Subst.t =
   fun constraints ->
   let unify_state = { subst = ref UniqueMap.empty } in
-  List.iter (function
+  List.iter begin function
     | Unify (loc, ty1, ty2) -> 
       solve_unify loc unify_state ty1 ty2
-  ) constraints;
+    end constraints;
   Subst.of_map !(unify_state.subst)  
 
 let free_unifs : ty -> UnifSet.t =

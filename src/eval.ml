@@ -111,7 +111,7 @@ module Value = struct
     | TupleV vals -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty vals)) ^ ")"
     | RecordV kvs -> 
       let kv_list = List.of_seq (RecordVImpl.to_seq kvs) in
-      "#{" ^ String.concat ", " (List.map (fun (k, v) -> k ^ " = " ^ pretty v) kv_list) ^ "}"
+      "#{ " ^ String.concat ", " (List.map (fun (k, v) -> k ^ " = " ^ pretty v) kv_list) ^ " }"
     | PromiseV p ->
       match Promise.peek p with
       | Finished value -> "<promise: " ^ pretty value ^ ">"

@@ -194,7 +194,17 @@ let rec infer : local_env -> expr -> ty =
       let (u, u_name) = fresh_unif_raw () in
       check env (Record (RowUnif ([|name, val_ty|], (u, u_name)))) expr;
       val_ty
-    | RecordUpdate _ | RecordExtension _ -> todo __LOC__
+    | RecordUpdate (_, expr, field_updates) ->
+      let update_tys = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_updates) in
+      let unif_raw = fresh_unif_raw () in
+      let record_ty = (Record (RowUnif (update_tys, unif_raw))) in
+      check env record_ty expr;
+      record_ty      
+    | RecordExtension (_, expr, field_exts) ->
+      let field_tys = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_exts) in
+      let (u, u_name) = fresh_unif_raw () in
+      check env (Unif (u, u_name)) expr;
+      Record (RowUnif (field_tys, (u, u_name)))
     | DynLookup _ -> todo __LOC__
     | Add (_, expr1, expr2) | Sub (_, expr1, expr2) | Mul (_, expr1, expr2) | Div (_, expr1, expr2) ->
       check env Number expr1;

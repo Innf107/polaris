@@ -246,7 +246,7 @@ let rec infer : local_env -> expr -> ty =
       check env res_ty el;
       res_ty
     | Seq (_, exprs) -> infer_seq env exprs
-    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
+    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
     | Let (_, p, e1, e2) ->
       let ty, env_trans = infer_pattern env p in
       (* Lets are non-recursive, so we use the *unaltered* environment *)
@@ -344,6 +344,7 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
          some kind of 'ToString' typeclass. For now we require the expr to be an exact string though *)
       check env String expr;
       Fun.id
+    | LetModuleSeq(loc, name, expr) -> todo __LOC__
     | ProgCall (loc, prog, args) ->
       List.iter (check env String) args;
       Fun.id
@@ -360,7 +361,7 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
 and infer_seq : local_env -> expr list -> ty =
   fun env exprs -> match exprs with
     | [] -> Tuple [||]
-    | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ as expr] ->
+    | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ as expr] ->
       (* If the last expression in an expression block is a
          LetSeq* expresion, we don't need to carry the environment transformations,
          but we do have to make sure to check the expression with `infer_seq_expr`, 
@@ -373,7 +374,7 @@ and infer_seq : local_env -> expr list -> ty =
       let env_trans = infer_seq_expr env expr in
       infer_seq (env_trans env) exprs
 
-let rec occurs u = Ty.collect monoid_or begin function
+let occurs u = Ty.collect monoid_or begin function
       | Unif (u2, _) -> Unique.equal u u2
       | _ -> false
       end

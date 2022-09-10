@@ -60,6 +60,9 @@ module Token = struct
   | AS
   | WITH
   | EXTEND
+  | MODULE
+  | IMPORT
+  | EXPORT
 
   let pretty = function
   | IDENT i -> "IDENT(" ^ i ^ ")"
@@ -118,6 +121,9 @@ module Token = struct
   | AS -> "AS"
   | WITH -> "WITH"
   | EXTEND -> "EXTEND"
+  | MODULE -> "MODULE"
+  | IMPORT -> "IMPORT"
+  | EXPORT -> "EXPORT"
 
   let to_string = pretty
 
@@ -204,12 +210,29 @@ let header_options =
    *> sep_by_trailing (some (token SEMI)) option_def
   <*  token RBRACE 
 
-let header = (fun u d opts -> { usage = u; description = d; options = Option.value ~default:[] opts })
-  <$> optional (token USAGE *> token COLON *> string_)       (* usage *)
+let export_item =
+  (fun x -> ExportVal x) <$> ident_
+
+let export_list =
+      token EXPORT
+   *> token LBRACE
+   *> many export_item
+  <*  token RBRACE
+let header = (fun exports u d opts -> { exports = Option.value ~default:[] exports; usage = u; description = d; options = Option.value ~default:[] opts })
+  <$> optional export_list
+  <*  many (token SEMI)
+  <*> optional (token USAGE *> token COLON *> string_)       (* usage *)
   <*  many (token SEMI)
   <*> optional (token DESCRIPTION *> token COLON *> string_) (* description *)
   <*  many (token SEMI)
   <*> optional header_options                               (* options *)
+
+let mod_expr = 
+  ((fun loc (path, loc_end) -> Import (Loc.merge loc loc_end, path))
+    <$> token IMPORT
+    <*> string)
+  <|> ((fun (x, loc) -> ModVar(loc, x))
+    <$> ident)
 
 let rec pattern stream = begin
   chainl1 pattern1 (let* loc = token PIPE in pure (fun p1 p2 -> OrPat(loc, p1, p2)))                          (* p | p *)
@@ -361,6 +384,11 @@ and expr_leaf stream = begin
     <*> sep_by_trailing (some (token SEMI))
         ((fun x y -> (x, y)) <$> pattern <* token ARROW <*> expr)
     <*>  token RBRACE)
+  <|> ((fun ls x mexpr -> LetModuleSeq (Loc.merge ls (MExpr.get_loc mexpr), x, mexpr))
+    <$> token MODULE
+    <*> ident_
+    <*  token EQUALS
+    <*> mod_expr)
   end stream
 
 and list_comp_clauses stream = begin

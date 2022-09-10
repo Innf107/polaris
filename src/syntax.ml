@@ -124,6 +124,21 @@ struct
     | NumPat of loc * float
     | OrPat of loc * pattern * pattern
 
+  type module_expr =
+    | Import of loc * string
+    | ModVar of loc * name
+
+  module MExpr = struct
+    type t = module_expr
+
+    let pretty = function
+      | Import (_, path) -> "import \"" ^ path ^ "\""
+      | ModVar (_, var) -> Name.pretty var
+
+    let get_loc = function
+      | Import (loc, _) | ModVar (loc, _) -> loc
+  end
+
   type expr =
     (* Lambda calculus *)
     | Var of loc * name                     (* x *)
@@ -185,6 +200,8 @@ struct
     | Await of loc * expr                   (* await e*)
     (* Pattern matching *)
     | Match of loc * expr * (pattern * expr) list
+    (* Modules *)
+    | LetModuleSeq of loc * name * module_expr
 
   and list_comp_clause =
     | DrawClause of pattern * expr (* p <- e *)
@@ -202,11 +219,14 @@ struct
   ; description: string option
   }
 
+  type export_item = ExportVal of name
+
   type header = {
       usage: string option
     ; description: string option
     ; options: flag_def list
-    }
+    ; exports: export_item list
+  }
 
   let rec pretty_type = function
     | Forall (var, ty) -> "∀" ^ Name.pretty var ^ ". " ^ pretty_type ty
@@ -300,6 +320,8 @@ struct
       "match " ^ pretty expr ^ " {"
       ^ "\n    " ^ String.concat ("\n    ") (List.map (fun (p, e) -> pretty_pattern p ^ " -> " ^ pretty e) pats)
       ^ "\n}"
+    | LetModuleSeq (_, name, mexpr) ->
+      "module " ^ Name.pretty name ^ " = " ^ MExpr.pretty mexpr
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
@@ -314,7 +336,7 @@ struct
     | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | LetEnvSeq(loc, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
-    | Async(loc, _) | Await(loc, _) | Match(loc, _, _)
+    | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _)
     -> loc
 
   let get_pattern_loc = function

@@ -454,7 +454,7 @@ end) = struct
         eval_expr env e3
 
     | Seq (_, exprs) -> eval_seq env exprs
-    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ -> raise (Panic "let assignment found outside of sequence expression")
+    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
     | Let (loc, pat, e1, e2) ->
       let scrut = eval_expr env e1 in
@@ -562,6 +562,8 @@ end) = struct
     | LetEnvSeq (loc, x, e) :: exprs ->
       let env' = insert_env_var loc x (eval_expr env e) env in
       eval_seq_cont env' exprs cont
+    | LetModuleSeq (loc, x, me) :: exprs ->
+      todo __LOC__
     (* Single program calls are just evaluated like pipes *)
     | ProgCall (loc, _, _) as expr :: exprs ->
       eval_seq_cont env (Pipe (loc, [expr]) :: exprs) cont

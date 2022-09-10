@@ -155,6 +155,7 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
             ) branches 
         in
         Match(loc, expr', branches')
+    | LetModuleSeq _ -> todo __LOC__
 
 and rename_seq_state (scope : RenameScope.t) (exprs : Parsed.expr list) : Renamed.expr list * RenameScope.t = let open RenameScope in
     match exprs with
@@ -207,6 +208,9 @@ let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.
     ; description = flag_def.description
     }, scope
 
+(* This is annoying. We have to rename the export list *after* renaming everything else,
+   since this will refer to entries defined later in the file *)
+let rename_exports scope = todo __LOC__ 
 
 let rename_header (scope : RenameScope.t) (header : Parsed.header): Renamed.header * RenameScope.t =
     let rec go scope = function
@@ -219,6 +223,7 @@ let rename_header (scope : RenameScope.t) (header : Parsed.header): Renamed.head
     let options, scope = go scope header.options in
     { usage = header.usage
     ; description = header.description
+    ; exports = rename_exports header.exports
     ; options
     }, scope
 

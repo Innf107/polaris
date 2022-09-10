@@ -327,9 +327,7 @@ and expr_leaf stream = begin
       match exprs with
       | [e] -> pure e
       | _ -> pure (TupleLit (Loc.merge ls le, exprs)))  
-  <|> ((fun ls ps e -> Lambda(Loc.merge ls (get_loc e), ps, e))                                                                       (* \(p, .., p) -> e *)
-    <$> token LAMBDA <*> token LPAREN *> sep_by_trailing (token COMMA) pattern <* token RPAREN <* token ARROW <*> expr)                                                                                                                         (* ( e, .., e ) *)
-  <|> ((fun ls p e -> Lambda(Loc.merge ls (get_loc e), [p], e)) <$> token LAMBDA <*> pattern <* token ARROW <*> expr)                 (* \p -> e *)
+  <|> ((fun ls ps e -> Lambda(Loc.merge ls (get_loc e), ps, e)) <$> token LAMBDA <*> many pattern <* token ARROW <*> expr)                 (* \p .. p -> e *)
   <|> ((fun ls p e1 e2 -> Let(Loc.merge ls (get_loc e2), p, e1, e2))                                                                  (* let x = e in e *)
     <$> token LET <*> pattern <* token EQUALS <*> expr <* token IN <*> expr)
   <|> ((fun ls (x, _) e1 e2 -> LetEnv(Loc.merge ls (get_loc e2), x, e1, e2))                                                                  (* let x = e in e *)

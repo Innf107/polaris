@@ -219,7 +219,7 @@ struct
   ; description: string option
   }
 
-  type export_item = ExportVal of name
+  type export_item = ExportVal of loc * name
 
   type header = {
       usage: string option

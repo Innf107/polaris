@@ -3,9 +3,9 @@ open Syntax.Renamed
 open Util
 open Classes
 
-let tc_category, trace_tc = Trace.make ~flag:"types" ~prefix:"Types" 
-let unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
-let subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix: "Subst"
+let _tc_category, trace_tc = Trace.make ~flag:"types" ~prefix:"Types" 
+let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
+let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix: "Subst"
 
 type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                                  (* ^           ^ full original types *)

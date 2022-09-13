@@ -211,12 +211,12 @@ let header_options =
   <*  token RBRACE 
 
 let export_item =
-  (fun x -> ExportVal x) <$> ident_
+  (fun (x, loc) -> ExportVal (loc, x)) <$> ident
 
 let export_list =
       token EXPORT
    *> token LBRACE
-   *> many export_item
+   *> sep_by_trailing (token COMMA *> many (token SEMI)) (export_item <* many (token SEMI))
   <*  token RBRACE
 let header = (fun exports u d opts -> { exports = Option.value ~default:[] exports; usage = u; description = d; options = Option.value ~default:[] opts })
   <$> optional export_list

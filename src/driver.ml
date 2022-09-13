@@ -99,8 +99,8 @@ and Driver : DriverI = struct
     end
     else ();
 
-    let renamed_header, new_scope = Rename.rename_header scope header in 
-    let renamed, new_scope = Rename.rename_seq_state new_scope ast in
+
+    let renamed_header, renamed, new_scope = Rename.rename_scope scope header ast in 
     if options.print_renamed then begin
       print_endline "~~~~~~~~Renamed AST~~~~~~~";
       print_endline (Renamed.pretty_list renamed);

@@ -60,6 +60,7 @@ let handle_errors print_fun f =
   | Sys_error msg -> print_fun ("System error: " ^ msg)
   (* RenameError *)
   | VarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Variable not found: '" ^ x ^ "'")
+  | ModuleVarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Module not found: '" ^ x ^ "'")
   | LetSeqInNonSeq (expr, loc) -> print_fun (
         Loc.pretty loc ^ ": Let expression without 'in' found outside a sequence expression.\n"
       ^ "    Expression: " ^ Parsed.pretty expr

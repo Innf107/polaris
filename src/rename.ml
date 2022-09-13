@@ -5,24 +5,34 @@ module RenameMap = Map.Make(String)
 
 module RenameError = struct
     exception VarNotFound of string * loc
+    exception ModuleVarNotFound of string * loc
     exception LetSeqInNonSeq of Parsed.expr * loc
 end
 
 module RenameScope = struct
     open RenameMap
-    type t = { variables: name RenameMap.t }
+    type t = { variables: name RenameMap.t; module_vars: name RenameMap.t }
 
     let empty : t =
-        { variables = RenameMap.empty }
+        { variables = RenameMap.empty; module_vars = RenameMap.empty }
 
     let insert_var (old : string) (renamed : name) (scope : t) : t =
         { scope with variables = add old renamed scope.variables }
     
-    let lookup_var (scope : t) (loc : loc) (var : string) : 'name =
+    let insert_mod_var (old : string) (renamed : name) (scope : t) : t =
+        { scope with module_vars = add old renamed scope.module_vars }
+
+    let lookup_var (scope : t) (loc : loc) (var : string) : name =
         try 
             find var scope.variables 
         with
             Not_found -> raise (RenameError.VarNotFound (var, loc))
+
+    let lookup_mod_var (scope : t) (loc : loc) (var : string) : name =
+        try
+            find var scope.variables
+        with
+            Not_found -> raise (RenameError.ModuleVarNotFound (var, loc))
 end
 
 let fresh_var = Name.fresh
@@ -53,6 +63,11 @@ let rename_patterns scope pats =
         let pat', pat_trans = rename_pattern scope pat in
         (pat' :: pats', fun s -> pat_trans (trans s))
     end) pats ([], fun x -> x)
+
+let rename_mod_expr : RenameScope.t -> Parsed.module_expr -> Renamed.module_expr =
+    fun scope -> function
+    | ModVar (loc, mod_var) -> ModVar(loc, RenameScope.lookup_mod_var scope loc mod_var)
+    | Import (loc, path) -> todo __LOC__
 
 let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
     match expr with 
@@ -117,7 +132,8 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
 
     | Seq (loc, es) -> Seq (loc, rename_seq scope es)
 
-    | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _) | LetEnvSeq (loc, _, _) -> raise (RenameError.LetSeqInNonSeq (expr, loc))
+    | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _) | LetEnvSeq (loc, _, _) 
+    | LetModuleSeq (loc, _, _) -> raise (RenameError.LetSeqInNonSeq (expr, loc))
 
     | Let (loc, p, e1, e2) ->
         let p', scope_trans = rename_pattern scope p in
@@ -155,7 +171,6 @@ let rec rename_expr (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr =
             ) branches 
         in
         Match(loc, expr', branches')
-    | LetModuleSeq _ -> todo __LOC__
 
 and rename_seq_state (scope : RenameScope.t) (exprs : Parsed.expr list) : Renamed.expr list * RenameScope.t = let open RenameScope in
     match exprs with
@@ -175,8 +190,17 @@ and rename_seq_state (scope : RenameScope.t) (exprs : Parsed.expr list) : Rename
         let exprs', res_scope = rename_seq_state scope' exprs in
         (LetRecSeq(loc, x', patterns', e') :: exprs', res_scope)
     | LetEnvSeq (loc, x, e) :: exprs ->
+        let e = rename_expr scope e in
         let exprs, scope = rename_seq_state scope exprs in
-        LetEnvSeq (loc, x, rename_expr scope e) :: exprs, scope
+        LetEnvSeq (loc, x, e) :: exprs, scope
+    | LetModuleSeq (loc, x, mod_expr) :: exprs ->
+        let x' = fresh_var x in
+        (* Module expressions are also non-recursive. Right now this is obviously the most
+           sensible choice, but if we add functors, we might want to relax this restriction in the future *)
+        let mod_expr = rename_mod_expr scope mod_expr in
+        let scope = insert_mod_var x x' scope in
+        let exprs, scope = rename_seq_state scope exprs in
+        LetModuleSeq (loc, x', mod_expr) :: exprs, scope
     | (e :: exprs) -> 
         let e' = rename_expr scope e in
         let exprs', res_state = rename_seq_state scope exprs in
@@ -208,11 +232,13 @@ let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.
     ; description = flag_def.description
     }, scope
 
-(* This is annoying. We have to rename the export list *after* renaming everything else,
-   since this will refer to entries defined later in the file *)
-let rename_exports scope = todo __LOC__ 
+let rename_exports : RenameScope.t -> Parsed.export_item list -> Renamed.export_item list = 
+    fun scope -> List.map begin function
+        (Parsed.ExportVal (loc, name)) -> Renamed.ExportVal (loc, RenameScope.lookup_var scope loc name)
+    end
+    
 
-let rename_header (scope : RenameScope.t) (header : Parsed.header): Renamed.header * RenameScope.t =
+let rename_scope (scope : RenameScope.t) (header : Parsed.header) (exprs : Parsed.expr list): Renamed.header * Renamed.expr list * RenameScope.t =
     let rec go scope = function
     | (flag_def::defs) ->
         let flag_def, scope = rename_option scope flag_def in
@@ -220,13 +246,18 @@ let rename_header (scope : RenameScope.t) (header : Parsed.header): Renamed.head
         flag_def :: defs, scope
     | [] -> [], scope
     in
-    let options, scope = go scope header.options in
+    let options, scope = go RenameScope.empty header.options in
+
+    (* We need to rename the body before finishing the header, since
+       the export list depends on names bound in the body *)
+    let exprs', scope_after_body = rename_seq_state scope exprs in
+
     { usage = header.usage
     ; description = header.description
-    ; exports = rename_exports header.exports
+    ; exports = rename_exports scope_after_body header.exports
     ; options
-    }, scope
+    }, exprs', scope_after_body
 
-let rename (header : Parsed.header) (exprs : Parsed.expr list): Renamed.header * Renamed.expr list =
-    let headers', env = rename_header RenameScope.empty header in 
-    headers', rename_seq env exprs    
+let rename header exprs = 
+    let (header', exprs', _) = rename_scope RenameScope.empty header exprs in
+    header', exprs'

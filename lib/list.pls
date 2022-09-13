@@ -1,5 +1,35 @@
 # Utility functions operating on lists
+export {
+    foldr,
+    foldl,
+    
+    map,
+    filter,
 
+    zip,
+    zipWith,
+    indexed,
+
+    find,
+    lookupWith,
+    lookup,
+    
+    sum,
+    product,
+
+    for,
+    forConcurrent,
+
+    fst,
+    snd,
+
+    length,
+
+    reverse,
+
+    partition,
+    sort,
+}
 
 # O(n)
 let foldr(f, z, xs) = match xs {
@@ -124,36 +154,3 @@ let sort(xs) = match xs {
         [smaller, larger] -> sort(smaller) ~ [x] ~ sort(larger)
     }
 }
-
-#{
-    foldr: foldr,
-    foldl: foldl,
-    
-    map: map,
-    filter: filter,
-
-    zip: zip,
-    zipWith: zipWith,
-    indexed: indexed,
-
-    find: find,
-    lookupWith: lookupWith,
-    lookup: lookup,
-    
-    sum: sum,
-    product: product,
-
-    for: for,
-    forConcurrent: forConcurrent,
-
-    fst: fst,
-    snd: snd,
-
-    length: length,
-
-    reverse: reverse,
-
-    partition: partition,
-    sort: sort,
-}
-

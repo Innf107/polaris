@@ -746,15 +746,15 @@ end) = struct
                   | [StringV arg_str] ->
                     begin match int_of_string_opt (String.trim arg_str) with
                     |  Some(int_val) -> NumV (float_of_int int_val)
-                    |  None -> NullV
+                    |  None -> raise (PrimOpArgumentError ("parseInt", args, "Expected a string containing an integer literal", loc :: env.call_trace))
                     end
-                  | _ -> raise (PrimOpArgumentError ("parseInt", args, "Expected a strings", loc :: env.call_trace))
+                  | _ -> raise (PrimOpArgumentError ("parseInt", args, "Expected a string", loc :: env.call_trace))
                   end
     | "parseNum" -> begin match args with
                   | [StringV arg_str] ->
                     begin match float_of_string_opt (String.trim arg_str) with
                     | Some(float_val) -> NumV float_val
-                    | None -> NullV
+                    | None -> raise (PrimOpArgumentError ("parseNum", args, "Expected a string containing a numeric literal", loc :: env.call_trace))
                     end
                   | _ -> raise (PrimOpArgumentError ("parseNum", args, "Expected a strings", loc :: env.call_trace))
                   end

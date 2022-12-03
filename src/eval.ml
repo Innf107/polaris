@@ -672,6 +672,20 @@ end) = struct
 
                   | _ -> raise (PrimOpArgumentError ("regexpMatch", args, "Expected (string, string)", loc :: env.call_trace))
                   end
+    | "regexpMatchGroups" -> begin match args with
+                  | [StringV pattern; StringV arg] ->
+                    let regexp = Re.Pcre.regexp pattern in
+                    begin try
+                      let results = Re.all regexp arg in
+                      ListV (List.map 
+                              (fun group -> ListV (Array.to_list (Array.map (fun x -> StringV x) (Re.Group.all group))))
+                              results)
+                    with
+                    | Not_found -> ListV []
+                    end
+
+                  | _ -> raise (PrimOpArgumentError ("regexpMatchGroups", args, "Expected (string, string)", loc :: env.call_trace))
+                  end
     | "regexpTransform" -> begin match args with
                   | [StringV pattern; transformClos; StringV str_v] ->
                       let regexp = Re.Pcre.regexp pattern in

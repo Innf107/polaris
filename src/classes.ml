@@ -17,6 +17,10 @@ let mconcat : type a. (module Monoid with type t = a) -> a list -> a =
         let (module M) = monoid in
         List.fold_left M.append M.empty
 
+let fold : type m. (module Monoid with type t = m) -> ('b -> m) -> 'b list -> m =
+    fun monoid f list -> 
+        mconcat monoid (List.map f list)
+
 
 let monoid_list : type a. (module Monoid with type t = a list) =
     let module ListM = struct

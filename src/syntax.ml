@@ -139,6 +139,9 @@ struct
       | Import (loc, _) | ModVar (loc, _) -> loc
   end
 
+  type binop = Add | Sub | Mul | Div | Concat | Equals | NotEquals
+             | LE | GE | LT | GT | Or | And
+
   type expr =
     (* Lambda calculus *)
     | Var of loc * name                     (* x *)
@@ -160,20 +163,7 @@ struct
 
     | DynLookup of loc * expr * expr        (* e[e] *)
     (* Common Operations *)
-    | Add of loc * expr * expr              (* e + e *)
-    | Sub of loc * expr * expr              (* e - e *)
-    | Mul of loc * expr * expr              (* e * e *)
-    | Div of loc * expr * expr              (* e / e *)
-    | Concat of loc * expr * expr           (* e ~ e*)
-    | Equals of loc * expr * expr           (* e == e *)
-    | NotEquals of loc * expr * expr        (* e != e *)
-    | LE of loc * expr * expr               (* e <= e *)
-    | GE of loc * expr * expr               (* e >= e *)
-    | LT of loc * expr * expr               (* e <  e *)
-    | GT of loc * expr * expr               (* e >  e *)
-
-    | Or of loc * expr * expr               (* e || e *)
-    | And of loc * expr * expr              (* e && e *)
+    | BinOp of loc * expr * binop * expr    (* e ° e*)
     | Not of loc * expr                     (* not e *)
 
     | Range of loc * expr * expr            (* [e .. e] *)
@@ -206,6 +196,47 @@ struct
   and list_comp_clause =
     | DrawClause of pattern * expr (* p <- e *)
     | FilterClause of expr            (* e *)
+
+  module Expr = struct
+    let collect : type a. (module Monoid with type t = a) -> (expr -> a) -> expr -> a =
+      fun monoid get expr ->
+        let (module M) = monoid in
+        let rec go expr = 
+          let result = get expr in
+          let remaining = match expr with
+          | Var _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
+          | UnitLit _ | NullLit _ -> M.empty
+          | App(_, fexpr, arg_exprs) -> M.append (go fexpr) (fold monoid go arg_exprs) 
+          | Lambda(_, _, expr) -> go expr
+          | ListLit(_, exprs) -> fold monoid go exprs
+          | TupleLit(_, exprs) -> fold monoid go exprs
+          | RecordLit(_, fields) -> fold monoid (fun (_, expr) -> go expr) fields
+          | Subscript(_, expr, field) -> go expr
+          | RecordUpdate(_, rec_expr, updates) -> M.append (go rec_expr) (fold monoid (fun (_, expr) -> go expr) updates)
+          | RecordExtension(_, rec_expr, exts) -> M.append (go rec_expr) (fold monoid (fun (_, expr) -> go expr) exts)
+          | DynLookup(_, expr1, expr2) -> M.append (go expr1) (go expr2)
+          | BinOp(_, expr1, _, expr2) 
+            -> M.append (go expr1) (go expr2)
+          | Not(_, expr) -> go expr
+          | Range(_, expr1, expr2) -> M.append (go expr1) (go expr2)
+          | ListComp(_, expr, clauses) -> todo __LOC__
+          | If(_, condition, then_expr, else_expr) -> M.append (go condition) (M.append (go then_expr) (go else_expr))
+          | Seq(_, exprs) -> fold monoid go exprs
+          | LetSeq(_, _, expr) | LetRecSeq(_, _, _, expr) | LetEnvSeq(_, _, expr) -> go expr
+          | Let(_, _, bind_expr, rest_expr) | LetRec(_, _, _, bind_expr, rest_expr) | LetEnv(_, _, bind_expr, rest_expr)
+            -> M.append (go bind_expr) (go rest_expr)
+          | Assign(_, _, expr) -> go expr
+          | ProgCall(_, _, arg_exprs) -> fold monoid go arg_exprs
+          | Pipe(_, exprs) -> fold monoid go exprs
+          | Async (_, expr) -> go expr
+          | Await (_, expr) -> go expr
+          | Match(_, scrut_expr, branch_exprs) -> M.append (go scrut_expr) (fold monoid (fun (_, expr) -> go expr) branch_exprs)
+          | LetModuleSeq _ -> M.empty
+          in
+          M.append result remaining
+        in
+        go expr
+  end
 
   type flag_args =
     | Varargs of name
@@ -273,21 +304,21 @@ struct
 
     | DynLookup (_, mexpr, kexpr) -> "(" ^ pretty mexpr ^ ")[" ^ pretty kexpr ^ "]"
 
-    | Add (_, e1, e2)     -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
-    | Sub (_, e1, e2)     -> "(" ^ pretty e1 ^ " - " ^ pretty e2 ^ ")"
-    | Mul (_, e1, e2)     -> "(" ^ pretty e1 ^ " * " ^ pretty e2 ^ ")"
-    | Div (_, e1, e2)     -> "(" ^ pretty e1 ^ " / " ^ pretty e2 ^ ")"
-    | Concat (_, e1, e2)  -> "(" ^ pretty e1 ^ " .. " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, Add, e2)     -> "(" ^ pretty e1 ^ " + " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, Sub, e2)     -> "(" ^ pretty e1 ^ " - " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, Mul, e2)     -> "(" ^ pretty e1 ^ " * " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, Div, e2)     -> "(" ^ pretty e1 ^ " / " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, Concat, e2)  -> "(" ^ pretty e1 ^ " .. " ^ pretty e2 ^ ")"
 
-    | Equals (_, e1, e2) -> "(" ^ pretty e1 ^ " == " ^ pretty e2 ^ ")"
-    | NotEquals (_, e1, e2) -> "(" ^ pretty e1 ^ " != " ^ pretty e2 ^ ")"
-    | LE (_, e1, e2)     -> "(" ^ pretty e1 ^ " <= " ^ pretty e2 ^ ")"
-    | GE (_, e1, e2)     -> "(" ^ pretty e1 ^ " >= " ^ pretty e2 ^ ")"
-    | LT (_, e1, e2)     -> "(" ^ pretty e1 ^ " <  " ^ pretty e2 ^ ")"
-    | GT (_, e1, e2)     -> "(" ^ pretty e1 ^ " >  " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, Equals, e2) -> "(" ^ pretty e1 ^ " == " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, NotEquals, e2) -> "(" ^ pretty e1 ^ " != " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, LE, e2)     -> "(" ^ pretty e1 ^ " <= " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, GE, e2)     -> "(" ^ pretty e1 ^ " >= " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, LT, e2)     -> "(" ^ pretty e1 ^ " <  " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, GT, e2)     -> "(" ^ pretty e1 ^ " >  " ^ pretty e2 ^ ")"
 
-    | Or (_, e1, e2)     -> "(" ^ pretty e1 ^ " || " ^ pretty e2 ^ ")"
-    | And (_, e1, e2)    -> "(" ^ pretty e1 ^ " && " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, Or, e2)     -> "(" ^ pretty e1 ^ " || " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, And, e2)    -> "(" ^ pretty e1 ^ " && " ^ pretty e2 ^ ")"
     | Not (_, e)         -> "(not " ^ pretty e ^ ")"
 
     | Range(_, e1, e2) -> "[" ^ pretty e1 ^ " .. " ^ pretty e2 ^ "]"
@@ -330,9 +361,7 @@ struct
     | Var (loc, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
     | Subscript(loc, _, _) | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
-    | Add(loc, _, _) | Sub(loc, _, _) | Mul(loc, _, _) 
-    | Div(loc, _ , _) | Concat(loc, _, _) | Equals(loc, _, _) | NotEquals(loc, _, _) | LE(loc, _, _) 
-    | GE(loc, _, _) | LT(loc, _, _) | GT(loc, _, _) | Or(loc, _, _) | And(loc, _, _) | Not(loc, _)
+    | BinOp(loc, _, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | LetEnvSeq(loc, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
@@ -371,6 +400,9 @@ module Name = struct
   
 end
 
+module NameMap = Map.Make(Name)
+
+
 module Parsed = Make (struct
   type t = string
 
@@ -378,3 +410,7 @@ module Parsed = Make (struct
 end)
 
 module Renamed = Make (Name)
+
+type module_exports = {
+  exported_items: Renamed.ty NameMap.t
+}

@@ -56,6 +56,7 @@ let handle_errors print_fun f =
   try 
     f ()
   with 
+  | Util.Panic msg -> print_fun ("PANIC! The 'impossible' happened (This is a bug, please report it!):\n" ^ msg)
   | ParseError (loc, msg) -> print_fun ("Parse Error at " ^ Loc.pretty loc ^ ": " ^ msg)
   | Sys_error msg -> print_fun ("System error: " ^ msg)
   (* RenameError *)

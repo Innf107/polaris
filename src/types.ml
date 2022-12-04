@@ -206,25 +206,25 @@ let rec infer : local_env -> expr -> ty =
       check env (Unif (u, u_name)) expr;
       Record (RowUnif (field_tys, (u, u_name)))
     | DynLookup _ -> todo __LOC__
-    | Add (_, expr1, expr2) | Sub (_, expr1, expr2) | Mul (_, expr1, expr2) | Div (_, expr1, expr2) ->
+    | BinOp (_, expr1, (Add | Sub | Mul | Div), expr2) ->
       check env Number expr1;
       check env Number expr2;
       Number
-    | Concat (_, expr1, expr2) ->
+    | BinOp (_, expr1, Concat, expr2) ->
       (* TODO: Generalize this to use type classes once they are implemented. 
          Ideally, concat expressions should really just desugar to a type class method *)
       check env String expr1;
       check env String expr2;
       String
-    | Equals (_, expr1, expr2) | NotEquals (_, expr1, expr2) ->
+    | BinOp (_, expr1, (Equals | NotEquals), expr2) ->
       let ty1 = infer env expr1 in
       check env ty1 expr2;
       Bool
-    | LE (_, expr1, expr2) | GE (_, expr1, expr2) | LT (_, expr1, expr2) | GT (_, expr1, expr2) ->
+    | BinOp (_, expr1, (LE | GE | LT | GT), expr2) ->
       check env Number expr1;
       check env Number expr2;
       Bool
-    | Or (_, expr1, expr2) | And (_, expr1, expr2) ->
+    | BinOp (_, expr1, (Or | And), expr2) ->
       check env Bool expr1;
       check env Bool expr2;
       Bool

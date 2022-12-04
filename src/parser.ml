@@ -264,8 +264,8 @@ end stream
 
 and expr1 stream = begin
   let op = 
-      (let* loc = token OR in pure (fun e1 e2 -> Or(loc, e1, e2)))
-  <|> (let* loc = token AND in pure (fun e1 e2 -> And(loc, e1, e2))) 
+      (let* loc = token OR in pure (fun e1 e2 -> BinOp (loc, e1, Or, e2)))
+  <|> (let* loc = token AND in pure (fun e1 e2 -> BinOp (loc, e1, And, e2))) 
   in
   chainl1 expr2 op
 end stream
@@ -277,29 +277,29 @@ end stream
 
 and expr2 stream = begin
   let op = 
-      (let* loc = token BANGEQUALS in pure (fun e1 e2 -> NotEquals(loc, e1, e2)))
-  <|> (let* loc = token DOUBLEEQUALS in pure (fun e1 e2 -> Equals(loc, e1, e2))) 
-  <|> (let* loc = token LT in pure (fun e1 e2 -> LT(loc, e1, e2))) 
-  <|> (let* loc = token GT in pure (fun e1 e2 -> GT(loc, e1, e2)))
-  <|> (let* loc = token LE in pure (fun e1 e2 -> LE(loc, e1, e2))) 
-  <|> (let* loc = token GE in pure (fun e1 e2 -> GE(loc, e1, e2))) 
+      (let* loc = token BANGEQUALS in pure (fun e1 e2 -> BinOp (loc, e1, NotEquals, e2)))
+  <|> (let* loc = token DOUBLEEQUALS in pure (fun e1 e2 -> BinOp (loc, e1, Equals, e2))) 
+  <|> (let* loc = token LT in pure (fun e1 e2 -> BinOp (loc, e1, LT, e2))) 
+  <|> (let* loc = token GT in pure (fun e1 e2 -> BinOp (loc, e1, GT, e2)))
+  <|> (let* loc = token LE in pure (fun e1 e2 -> BinOp (loc, e1, LE, e2))) 
+  <|> (let* loc = token GE in pure (fun e1 e2 -> BinOp (loc, e1, GE, e2))) 
   in
   chainl1 expr3 op
 end stream
   
 and expr3 stream = begin
   let op = 
-      (let* loc = token PLUS in pure (fun e1 e2 -> Add(loc, e1, e2)))
-  <|> (let* loc = token MINUS in pure (fun e1 e2 -> Sub(loc, e1, e2))) 
-  <|> (let* loc = token TILDE in pure (fun e1 e2 -> Concat(loc, e1, e2))) 
+      (let* loc = token PLUS in pure (fun e1 e2 -> BinOp (loc, e1, Add, e2)))
+  <|> (let* loc = token MINUS in pure (fun e1 e2 -> BinOp (loc, e1, Sub, e2))) 
+  <|> (let* loc = token TILDE in pure (fun e1 e2 -> BinOp (loc, e1, Concat, e2))) 
   in
   chainl1 expr4 op
 end stream
 
 and expr4 stream = begin
   let op = 
-      (let* loc = token STAR in pure (fun e1 e2 -> Mul(loc, e1, e2)))
-  <|> (let* loc = token SLASH in pure (fun e1 e2 -> Div(loc, e1, e2))) 
+      (let* loc = token STAR in pure (fun e1 e2 -> BinOp (loc, e1, Mul, e2)))
+  <|> (let* loc = token SLASH in pure (fun e1 e2 -> BinOp (loc, e1, Div, e2))) 
   in
   chainl1 expr5 op
 end stream

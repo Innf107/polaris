@@ -61,7 +61,7 @@ module rec EvalInst : EvalI = Eval.Make(struct
 end)
 and Driver : DriverI = struct
 
-  let parse_and_rename (options : driver_options) (lexbuf : Lexing.lexbuf) (scope : RenameScope.t) : Renamed.header * Renamed.expr list * RenameScope.t =
+  let parse_rename_typecheck (options : driver_options) (lexbuf : Lexing.lexbuf) (scope : RenameScope.t) : Renamed.header * Renamed.expr list * RenameScope.t =
     Lexing.set_filename lexbuf options.filename;
     
     if options.print_tokens then
@@ -99,22 +99,25 @@ and Driver : DriverI = struct
     end
     else ();
 
+    let import_map = Util.todo __LOC__ in
 
-    let renamed_header, renamed, new_scope = Rename.rename_scope scope header ast in 
+    let renamed_header, renamed, new_scope = Rename.rename_scope import_map scope header ast in 
     if options.print_renamed then begin
       print_endline "~~~~~~~~Renamed AST~~~~~~~";
       print_endline (Renamed.pretty_list renamed);
       print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~"
     end
     else ();
+
+    (* Typechecking will probably return some more complex results later *)
+    Types.typecheck renamed;
+
     renamed_header, renamed, new_scope
 
 
   let run_env (options : driver_options) (lexbuf : Lexing.lexbuf) (env : eval_env) (scope : RenameScope.t) : value * eval_env * RenameScope.t = 
-    let renamed_header, renamed, new_scope = parse_and_rename options lexbuf scope in
+    let renamed_header, renamed, new_scope = parse_rename_typecheck options lexbuf scope in
     
-    Types.typecheck renamed;
-
     let env = EvalInst.eval_header env renamed_header in
     let res, new_env = EvalInst.eval_seq_state env renamed in
     res, new_env, new_scope

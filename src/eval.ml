@@ -328,31 +328,31 @@ end) = struct
       | value -> raise (EvalError.TryingToLookupDynamicInNonMap (value, loc :: env.call_trace))
       end
 
-    | Add (loc, e1, e2) -> 
+    | BinOp (loc, e1, Add, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to add " ^ Value.pretty v1 ^ " and " ^ Value.pretty v2 in
       NumV (as_num context (loc :: env.call_trace) v1 +. as_num context (loc :: env.call_trace) v2)
-    | Sub (loc, e1, e2) -> 
+    | BinOp (loc, e1, Sub, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to subtract " ^ Value.pretty v2 ^ " from " ^ Value.pretty v1 in
       NumV (as_num context (loc :: env.call_trace) v1 -. as_num context (loc :: env.call_trace) v2)
-    | Mul (loc, e1, e2) -> 
+    | BinOp (loc, e1, Mul, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to multiply " ^ Value.pretty v1 ^ " and " ^ Value.pretty v2 in
       NumV (as_num context (loc :: env.call_trace) v1 *. as_num context (loc :: env.call_trace) v2)
-    | Div (loc, e1, e2) -> 
+    | BinOp (loc, e1, Div, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to divide " ^ Value.pretty v1 ^ " by " ^ Value.pretty v2 in
       NumV (as_num context (loc :: env.call_trace) v1 /. as_num context (loc :: env.call_trace) v2)
-    | Concat (loc, e1, e2) ->
+    | BinOp (loc, e1, Concat, e2) ->
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
@@ -365,43 +365,43 @@ end) = struct
       | _, _ -> raise (EvalError.InvalidOperatorArgs("~", [v1; v2], loc :: env.call_trace))
       end 
 
-    | Equals (_, e1, e2) -> 
+    | BinOp (_, e1, Equals, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       BoolV (val_eq v1 v2)
-    | NotEquals (_, e1, e2) -> 
+    | BinOp (_, e1, NotEquals, e2) -> 
         (* See Note [left-to-right evaluation] *)
         let v1 = eval_expr env e1 in
         let v2 = eval_expr env e2 in
         BoolV (not (val_eq v1 v2))
 
-    | LE (loc, e1, e2) -> 
+    | BinOp (loc, e1, LE, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to compute " ^ Value.pretty v1 ^ " <= " ^ Value.pretty v2 in
       BoolV (as_num context (loc :: env.call_trace) v1 <= as_num context (loc :: env.call_trace) v2)
-    | GE (loc, e1, e2) -> 
+    | BinOp (loc, e1, GE, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to compute " ^ Value.pretty v1 ^ " >= " ^ Value.pretty v2 in
       BoolV (as_num context (loc :: env.call_trace) v1 >= as_num context (loc :: env.call_trace) v2)
-    | LT (loc, e1, e2) -> 
+    | BinOp (loc, e1, LT, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to compute " ^ Value.pretty v1 ^ " < " ^ Value.pretty v2 in
       BoolV (as_num context (loc :: env.call_trace) v1 < as_num context (loc :: env.call_trace) v2)
-    | GT (loc, e1, e2) -> 
+    | BinOp (loc, e1, GT, e2) -> 
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr env e1 in
       let v2 = eval_expr env e2 in
       let context = "Trying to compute " ^ Value.pretty v1 ^ " > " ^ Value.pretty v2 in
       BoolV (as_num context (loc :: env.call_trace) v1 > as_num context (loc :: env.call_trace) v2)
     
-    | Or(loc, e1, e2) ->
+    | BinOp (loc, e1, Or, e2) ->
       begin match eval_expr env e1 with
       | BoolV true -> BoolV true
       | BoolV false -> 
@@ -412,7 +412,7 @@ end) = struct
         end
       | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the first argument of an || expression", loc :: env.call_trace))
       end
-    | And(loc, e1, e2) ->
+    | BinOp (loc, e1, And, e2) ->
         begin match eval_expr env e1 with
         | BoolV false -> BoolV false
         | BoolV true -> 

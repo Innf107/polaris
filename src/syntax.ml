@@ -137,7 +137,21 @@ struct
 
     let get_loc = function
       | Import (loc, _) | ModVar (loc, _) -> loc
-  end
+
+    let collect : type a. (module Monoid with type t = a) -> (t -> a) -> t -> a =
+      fun monoid get mexpr ->
+        let (module M) = monoid in
+        let rec go mexpr =
+          let result = get mexpr in
+          let remaining = match mexpr with
+            | Import _ | ModVar _ -> M.empty in
+          M.append result remaining
+        in 
+        go mexpr
+
+    let collect_list : 'a. (t -> 'a list) -> t -> 'a list =
+      fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
+    end
 
   type binop = Add | Sub | Mul | Div | Concat | Equals | NotEquals
              | LE | GE | LT | GT | Or | And
@@ -236,6 +250,10 @@ struct
           M.append result remaining
         in
         go expr
+
+    let collect_list = 
+      fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
+
   end
 
   type flag_args =
@@ -400,8 +418,8 @@ module Name = struct
   
 end
 
+module StringMap = Map.Make(String)
 module NameMap = Map.Make(Name)
-
 
 module Parsed = Make (struct
   type t = string
@@ -412,5 +430,6 @@ end)
 module Renamed = Make (Name)
 
 type module_exports = {
-  exported_items: Renamed.ty NameMap.t
+  exported_names : name StringMap.t;
+  exported_types : Renamed.ty NameMap.t;
 }

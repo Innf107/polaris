@@ -12,6 +12,13 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
 
 exception TypeError of loc * type_error
 
+
+type global_env = {
+  var_types : ty NameMap.t
+}
+
+
+
 (* Might throw 'TypeError' *)
-val typecheck : expr list -> unit
+val typecheck : expr list -> global_env
 

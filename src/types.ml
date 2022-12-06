@@ -18,7 +18,6 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
 
 exception TypeError of loc * type_error
 
-module VarTypeMap = Map.Make(Name)
 module UniqueMap = Map.Make(Unique)
 module UnifSet = Set.Make(struct
   type t = Unique.t * name
@@ -28,11 +27,11 @@ end)
 type ty_constraint = Unify of loc * ty * ty
 
 type global_env = {
-  var_types : ty VarTypeMap.t
+  var_types : ty NameMap.t
 }
 
 type local_env = {
-  local_types : ty VarTypeMap.t;
+  local_types : ty NameMap.t;
   constraints : ty_constraint Difflist.t ref;
 }
 
@@ -98,7 +97,7 @@ let fresh_unif () =
   Unif (index, name)
 
 let insert_var : name -> ty -> local_env -> local_env =
-  fun x ty env -> { env with local_types = VarTypeMap.add x ty env.local_types }
+  fun x ty env -> { env with local_types = NameMap.add x ty env.local_types }
 
 let replace_tvar : name -> ty -> ty -> ty =
   fun var replacement -> Ty.transform begin function
@@ -153,7 +152,7 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
 let rec infer : local_env -> expr -> ty =
   fun env expr -> match expr with
     | Var (loc, x) -> 
-      begin match VarTypeMap.find_opt x env.local_types with
+      begin match NameMap.find_opt x env.local_types with
       | Some ty -> instantiate ty
       | None -> panic __LOC__ ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")
       end
@@ -260,7 +259,7 @@ let rec infer : local_env -> expr -> ty =
       check env String e1;
       infer env e2
     | Assign (loc, var, expr) ->
-      let var_ty = match VarTypeMap.find_opt var env.local_types with
+      let var_ty = match NameMap.find_opt var env.local_types with
         | Some ty -> ty
         | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound variable in typechecker (assignment): '" ^ Name.pretty var ^ "'")
       in
@@ -535,25 +534,24 @@ let typecheck_top_level : global_env -> expr -> global_env =
         We then extract those, throw away the collected constraints (they're part of the real local_env anyway)
         and add the bindings to the global environment
     *)
-    let temp_local_env = local_env_trans { local_types = VarTypeMap.empty; constraints = local_env.constraints } in
+    let temp_local_env = local_env_trans { local_types = NameMap.empty; constraints = local_env.constraints } in
 
     let subst = solve_constraints (Difflist.to_list !(local_env.constraints)) in
 
     let global_env = { 
       global_env with 
         var_types = 
-          VarTypeMap.union (fun _ _ x -> Some x) 
+          NameMap.union (fun _ _ x -> Some x) 
             (global_env.var_types) 
-            (VarTypeMap.map (generalize << Subst.apply subst) temp_local_env.local_types) 
+            (NameMap.map (generalize << Subst.apply subst) temp_local_env.local_types) 
       } in
     global_env
 
 let typecheck exprs = 
   let prim_types = 
-    VarTypeMap.of_seq (Seq.map (fun (name, ty) -> ({ name; index=Name.primop_index}, ty)) 
+    NameMap.of_seq (Seq.map (fun (name, ty) -> ({ name; index=Name.primop_index}, ty)) 
       (Primops.PrimOpMap.to_seq Primops.primops))
   in
   (* TODO: Include types for imports and options variables *)
   let global_env = { var_types = prim_types } in
-  let _ = List.fold_left (fun env e -> typecheck_top_level env e) global_env exprs in
-  ()
+  List.fold_left (fun env e -> typecheck_top_level env e) global_env exprs 

@@ -57,6 +57,7 @@ let handle_errors print_fun f =
     f ()
   with 
   | Util.Panic msg -> print_fun ("PANIC! The 'impossible' happened (This is a bug, please report it!):\n" ^ msg)
+  | Util.TODO loc -> print_fun ("PANIC! Unresolved compiler TODO at '" ^ loc ^ "'.\nIf you see this, please report it and tell the author to finish their things before releasing them!")
   | ParseError (loc, msg) -> print_fun ("Parse Error at " ^ Loc.pretty loc ^ ": " ^ msg)
   | Sys_error msg -> print_fun ("System error: " ^ msg)
   (* RenameError *)

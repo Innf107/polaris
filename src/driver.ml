@@ -61,7 +61,11 @@ module rec EvalInst : EvalI = Eval.Make(struct
 end)
 and Driver : DriverI = struct
 
-  let parse_rename_typecheck (options : driver_options) (lexbuf : Lexing.lexbuf) (scope : RenameScope.t) : Renamed.header * Renamed.expr list * RenameScope.t =
+  let rec parse_rename_typecheck : driver_options 
+                                -> Lexing.lexbuf
+                                -> RenameScope.t
+                                -> Renamed.header * Renamed.expr list * RenameScope.t * Types.global_env
+  = fun options lexbuf scope ->
     Lexing.set_filename lexbuf options.filename;
     
     if options.print_tokens then
@@ -99,7 +103,15 @@ and Driver : DriverI = struct
     end
     else ();
 
-    let import_map = Util.todo __LOC__ in
+    let imported_files = List.concat_map (Modules.extract_import_paths) ast in
+
+    let items_for_exports = List.map (fun file -> 
+        (file, parse_rename_typecheck options (Lexing.from_channel (open_in file)) RenameScope.empty)
+      ) imported_files in
+
+    let import_map = FilePathMap.of_seq
+        (Seq.map (fun (file, (header, ast, scope, env)) -> (file, Modules.build_export_map header ast scope env)) 
+        (List.to_seq items_for_exports)) in
 
     let renamed_header, renamed, new_scope = Rename.rename_scope import_map scope header ast in 
     if options.print_renamed then begin
@@ -110,13 +122,13 @@ and Driver : DriverI = struct
     else ();
 
     (* Typechecking will probably return some more complex results later *)
-    Types.typecheck renamed;
+    let type_env = Types.typecheck renamed in
 
-    renamed_header, renamed, new_scope
+    renamed_header, renamed, new_scope, type_env
 
 
   let run_env (options : driver_options) (lexbuf : Lexing.lexbuf) (env : eval_env) (scope : RenameScope.t) : value * eval_env * RenameScope.t = 
-    let renamed_header, renamed, new_scope = parse_rename_typecheck options lexbuf scope in
+    let renamed_header, renamed, new_scope, _new_ty_env = parse_rename_typecheck options lexbuf scope in
     
     let env = EvalInst.eval_header env renamed_header in
     let res, new_env = EvalInst.eval_seq_state env renamed in

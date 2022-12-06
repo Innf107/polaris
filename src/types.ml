@@ -193,6 +193,7 @@ let rec infer : local_env -> expr -> ty =
       let (u, u_name) = fresh_unif_raw () in
       check env (Record (RowUnif ([|name, val_ty|], (u, u_name)))) expr;
       val_ty
+    | ModSubscript (_, mod_name, key_name) -> todo __LOC__
     | RecordUpdate (_, expr, field_updates) ->
       let update_tys = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_updates) in
       let unif_raw = fresh_unif_raw () in

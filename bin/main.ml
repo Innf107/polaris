@@ -63,6 +63,8 @@ let handle_errors print_fun f =
   (* RenameError *)
   | VarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Variable not found: '" ^ x ^ "'")
   | ModuleVarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Module not found: '" ^ x ^ "'")
+  | SubscriptVarNotFound (x, loc) -> 
+    print_fun (Loc.pretty loc ^ ": Variable or module not found: '" ^ x ^ "'")
   | LetSeqInNonSeq (expr, loc) -> print_fun (
         Loc.pretty loc ^ ": Let expression without 'in' found outside a sequence expression.\n"
       ^ "    Expression: " ^ Parsed.pretty expr

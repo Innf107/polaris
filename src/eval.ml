@@ -284,6 +284,7 @@ end) = struct
         end
       | value -> raise (EvalError.TryingToLookupInNonMap (value, key, loc :: env.call_trace))
       end
+    | ModSubscript _ -> todo __LOC__
     | RecordUpdate (loc, expr, update_exprs) -> 
       begin match eval_expr env expr with
       | RecordV vals -> 

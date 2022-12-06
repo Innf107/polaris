@@ -4,13 +4,17 @@ open Util
 type loc = Athena.loc
 module Loc = Athena.Loc
 
-module Make (Name : sig
-  type t
+module Make (Exts : sig
+  type name
 
-  val pretty : t -> string
+  type mod_subscript_ext
+  val mod_subscript_loc : mod_subscript_ext -> loc
+
+  val pretty_name : name -> string
 end) =
 struct
-  type name = Name.t
+  type name = Exts.name
+  let pretty_name = Exts.pretty_name
 
   type ty =
     | Forall of name * ty
@@ -133,7 +137,7 @@ struct
 
     let pretty = function
       | Import (_, path) -> "import \"" ^ path ^ "\""
-      | ModVar (_, var) -> Name.pretty var
+      | ModVar (_, var) -> Exts.pretty_name var
 
     let get_loc = function
       | Import (loc, _) | ModVar (loc, _) -> loc
@@ -172,6 +176,7 @@ struct
     (* Records *)
     | RecordLit of loc * (string * expr) list  (* #{x₁: e₁, .., xₙ: eₙ}*)
     | Subscript of loc * expr * string      (* e.x *)
+    | ModSubscript of Exts.mod_subscript_ext * name * name     (* M.x *)
     | RecordUpdate of loc * expr * (string * expr) list (* #{r with x₁: e₁, .., xₙ: eₙ} *)
     | RecordExtension of loc * expr * (string * expr) list (* #{r extend x₁: e₁, .., xₙ: eₙ} *)
 
@@ -219,7 +224,7 @@ struct
           let result = get expr in
           let remaining = match expr with
           | Var _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
-          | UnitLit _ | NullLit _ -> M.empty
+          | UnitLit _ | NullLit _ | ModSubscript _ -> M.empty
           | App(_, fexpr, arg_exprs) -> M.append (go fexpr) (fold monoid go arg_exprs) 
           | Lambda(_, _, expr) -> go expr
           | ListLit(_, exprs) -> fold monoid go exprs
@@ -278,10 +283,10 @@ struct
   }
 
   let rec pretty_type = function
-    | Forall (var, ty) -> "∀" ^ Name.pretty var ^ ". " ^ pretty_type ty
+    | Forall (var, ty) -> "∀" ^ pretty_name var ^ ". " ^ pretty_type ty
     | Fun (args, res) -> "(" ^ String.concat ", " (List.map pretty_type args) ^ ") -> " ^ pretty_type res
-    | Var var -> Name.pretty var
-    | Unif (u, name) -> Name.pretty name ^ "$" ^ Unique.display u
+    | Var var -> pretty_name var
+    | Unif (u, name) -> pretty_name name ^ "$" ^ Unique.display u
     | Number -> "Number"
     | Bool -> "Bool"
     | String -> "String"
@@ -290,10 +295,10 @@ struct
     | Promise ty -> "Promise(" ^ pretty_type ty ^ ")"
     | Record (RowClosed fields) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ "}"
     | Record (RowUnif (fields, (u, name))) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Unif (u, name)) ^ "}"
-    | Record (RowVar (fields, name)) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ Name.pretty name ^ "}"
+    | Record (RowVar (fields, name)) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_name name ^ "}"
 
   let rec pretty_pattern = function
-    | VarPat (_, x) -> Name.pretty x
+    | VarPat (_, x) -> pretty_name x
     | ConsPat (_, x, xs) -> "(" ^ pretty_pattern x ^ ") : (" ^ pretty_pattern xs ^ ")"
     | ListPat (_, pats) -> "[" ^ String.concat ", " (List.map pretty_pattern pats) ^ "]"
     | TuplePat (_, pats) -> "(" ^ String.concat ", " (List.map pretty_pattern pats) ^ ")"
@@ -301,7 +306,7 @@ struct
     | OrPat (_, p1, p2) -> "(" ^ pretty_pattern p1 ^ " | " ^ pretty_pattern p2 ^ ")"
 
   let rec pretty = function
-    | Var (_, x) -> Name.pretty x
+    | Var (_, x) -> pretty_name x
     | App (_, f, args) ->
         pretty f ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")"
     | Lambda (_, params, e) ->
@@ -317,6 +322,7 @@ struct
     | TupleLit (_, exprs) -> "(" ^ String.concat ", " (List.map pretty exprs) ^ ")"
     | RecordLit (_, kvs) -> "#{" ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
     | Subscript (_, expr, key) -> "(" ^ pretty expr ^ ")." ^ key
+    | ModSubscript (_, mod_name, key_name) -> pretty_name mod_name ^ "." ^ pretty_name key_name
     | RecordUpdate (_, expr, kvs) -> "#{" ^ pretty expr ^ " with " ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
     | RecordExtension (_, expr, kvs) -> "#{" ^ pretty expr ^ " extend " ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
 
@@ -351,13 +357,13 @@ struct
 
     | Seq (_, exprs) -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
     | LetSeq (_, x, e) -> "let " ^ pretty_pattern x ^ " = " ^ pretty e
-    | LetRecSeq (_, x, xs, e) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e
+    | LetRecSeq (_, x, xs, e) -> "let rec " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e
     | LetEnvSeq (_, x, e) -> "let $" ^ x ^ " = " ^ pretty e
     | Let (_, x, e1, e2) ->
         "let " ^ pretty_pattern x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
-    | LetRec (_, x, xs, e1, e2) -> "let rec " ^ Name.pretty x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
+    | LetRec (_, x, xs, e1, e2) -> "let rec " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
     | LetEnv (_, x, e1, e2) -> "let $" ^ x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
-    | Assign (_, x, e) -> Name.pretty x ^ " = " ^ pretty e
+    | Assign (_, x, e) -> pretty_name x ^ " = " ^ pretty e
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
@@ -370,7 +376,7 @@ struct
       ^ "\n    " ^ String.concat ("\n    ") (List.map (fun (p, e) -> pretty_pattern p ^ " -> " ^ pretty e) pats)
       ^ "\n}"
     | LetModuleSeq (_, name, mexpr) ->
-      "module " ^ Name.pretty name ^ " = " ^ MExpr.pretty mexpr
+      "module " ^ pretty_name name ^ " = " ^ MExpr.pretty mexpr
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
@@ -385,6 +391,7 @@ struct
     | LetRec(loc, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _)
     -> loc
+    | ModSubscript (ext, _, _) -> Exts.mod_subscript_loc ext
 
   let get_pattern_loc = function
     | VarPat (loc, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
@@ -422,12 +429,21 @@ module StringMap = Map.Make(String)
 module NameMap = Map.Make(Name)
 
 module Parsed = Make (struct
-  type t = string
+  type name = string
+  type mod_subscript_ext = void
+  let mod_subscript_loc = absurd
 
-  let pretty (x : t) = x
+  let pretty_name (x : name) = x
 end)
 
-module Renamed = Make (Name)
+module Renamed = Make (struct
+  type name = Name.t
+
+  type mod_subscript_ext = loc
+  let mod_subscript_loc loc = loc
+  
+  let pretty_name = Name.pretty
+end)
 
 type module_exports = {
   exported_names : name StringMap.t;

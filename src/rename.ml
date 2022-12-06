@@ -8,14 +8,15 @@ module FilePathMap = Map.Make(String)
 module RenameError = struct
     exception VarNotFound of string * loc
     exception ModuleVarNotFound of string * loc
+    exception SubscriptVarNotFound of string * loc
     exception LetSeqInNonSeq of Parsed.expr * loc
 end
 
-module RenameScope = struct
+module  RenameScope = struct
     open RenameMap
     type t = { 
         variables: name RenameMap.t;
-        module_vars: name RenameMap.t;
+        module_vars: (name * t) RenameMap.t;
     }
 
     let empty : t = { 
@@ -26,8 +27,8 @@ module RenameScope = struct
     let insert_var (old : string) (renamed : name) (scope : t) : t =
         { scope with variables = add old renamed scope.variables }
     
-    let insert_mod_var (old : string) (renamed : name) (scope : t) : t =
-        { scope with module_vars = add old renamed scope.module_vars }
+    let insert_mod_var (old : string) (renamed : name) (contents : t) (scope : t) : t =
+        { scope with module_vars = add old (renamed, contents) scope.module_vars }
 
     let lookup_var (scope : t) (loc : loc) (var : string) : name =
         try 
@@ -35,9 +36,9 @@ module RenameScope = struct
         with
             Not_found -> raise (RenameError.VarNotFound (var, loc))
 
-    let lookup_mod_var (scope : t) (loc : loc) (var : string) : name =
+    let lookup_mod_var (scope : t) (loc : loc) (var : string) : name * t =
         try
-            find var scope.variables
+            find var scope.module_vars
         with
             Not_found -> raise (RenameError.ModuleVarNotFound (var, loc))
 end
@@ -71,12 +72,24 @@ let rename_patterns scope pats =
         (pat' :: pats', fun s -> pat_trans (trans s))
     end) pats ([], fun x -> x)
 
-let rename_mod_expr : module_exports FilePathMap.t -> RenameScope.t -> Parsed.module_expr -> Renamed.module_expr =
-    fun exports scope -> function
-    | ModVar (loc, mod_var) -> ModVar(loc, RenameScope.lookup_mod_var scope loc mod_var)
+let rename_mod_expr : module_exports FilePathMap.t 
+                   -> RenameScope.t 
+                   -> Parsed.module_expr 
+                   -> Renamed.module_expr * RenameScope.t
+= fun exports scope -> function
+    | ModVar (loc, mod_var) -> 
+        let name, contents = RenameScope.lookup_mod_var scope loc mod_var in
+        ModVar(loc, name), contents
     | Import (loc, path) -> match FilePathMap.find_opt path exports with
         | None -> panic __LOC__ ("import path not found in renamer: '" ^ path ^ "'")
-        | Some mexports -> todo __LOC__
+        | Some mod_exports ->
+            let scope = 
+                StringMap.fold 
+                    (fun name renamed r -> RenameScope.insert_var name renamed  r) 
+                    mod_exports.exported_names 
+                    RenameScope.empty
+            in
+            Import (loc, path), scope
 
 let rename_binop : Parsed.binop -> Renamed.binop =
     function
@@ -115,8 +128,21 @@ let rec rename_expr (exports : module_exports FilePathMap.t) (scope : RenameScop
     | TupleLit (loc, exprs) -> TupleLit (loc, List.map (rename_expr exports scope) exprs)
     | RecordLit (loc, kvs) -> RecordLit (loc, List.map (fun (k, e) -> (k, rename_expr exports scope e)) kvs)
 
-    (* TODO: Add a generic SubscriptName case that might either be a module or expression subscript *)
+    (* TODO: What about nested module subscripts? *)
+    | Subscript (loc, Var (var_loc, name), key) ->
+        begin match RenameScope.lookup_var scope var_loc name with
+        | exception (RenameError.VarNotFound _) -> 
+            begin match RenameScope.lookup_mod_var scope var_loc name with
+            | exception (RenameError.ModuleVarNotFound _) -> raise (RenameError.SubscriptVarNotFound (name, loc))
+            | (renamed, module_export_scope) ->
+                (* TODO: Include the fact that this is looked up in another module in the error message! *)
+                let key_name = RenameScope.lookup_var module_export_scope loc key in
+                ModSubscript (loc, renamed, key_name)
+            end
+        | new_name -> Subscript (loc, Var (var_loc, new_name), key)
+        end
     | Subscript (loc, expr, key) -> Subscript (loc, rename_expr exports scope expr, key)
+    | ModSubscript (void, _, _) -> absurd void
     | RecordUpdate (loc, expr, kvs) -> RecordUpdate (loc, rename_expr exports scope expr, List.map (fun (x, expr) -> (x, rename_expr exports scope expr)) kvs)
     | RecordExtension (loc, expr, kvs) -> RecordExtension (loc, rename_expr exports scope expr, List.map (fun (x, expr) -> (x, rename_expr exports scope expr)) kvs)
     | DynLookup (loc, mexpr, kexpr) -> DynLookup (loc, rename_expr exports scope mexpr, rename_expr exports scope kexpr)
@@ -210,8 +236,8 @@ and rename_seq_state (exports : module_exports FilePathMap.t) (scope : RenameSco
         let x' = fresh_var x in
         (* Module expressions are also non-recursive. Right now this is obviously the most
            sensible choice, but if we add functors, we might want to relax this restriction in the future *)
-        let mod_expr = rename_mod_expr exports scope mod_expr in
-        let scope = insert_mod_var x x' scope in
+        let mod_expr, contents = rename_mod_expr exports scope mod_expr in
+        let scope = insert_mod_var x x' contents scope in
         let exprs, scope = rename_seq_state exports scope exprs in
         LetModuleSeq (loc, x', mod_expr) :: exprs, scope
     | (e :: exprs) -> 

@@ -1,0 +1,11 @@
+(library
+ (name trees_that_grow)
+ (kind ppx_rewriter)
+ (libraries ppxlib)
+ (preprocess (pps ppxlib.metaquot)))
+
+(env
+  (dev
+    (flags 
+      (:standard -warn-error -A -w -27 -w -33 -warn-error +8)
+    )))

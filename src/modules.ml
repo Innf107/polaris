@@ -23,7 +23,7 @@ let build_export_map header exprs rename_scope global_env =
       (name_entry, ty_entry)
   in
   let exported_names_seq, exported_types_seq = Seq.split (Seq.map export_item_to_map_entry Renamed.(List.to_seq header.exports)) in
-  { exported_names = StringMap.of_seq exported_names_seq; exported_types = NameMap.of_seq exported_types_seq }
+  Renamed.{ exported_names = StringMap.of_seq exported_names_seq; exported_types = NameMap.of_seq exported_types_seq }
 
 
 

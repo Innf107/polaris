@@ -116,6 +116,12 @@ let rec instantiate : ty -> ty =
     instantiate (replace_tvar tv unif ty)
   | ty -> ty
 
+let eval_module_env : module_expr -> global_env =
+  function
+  | ModVar (loc, var) -> todo __LOC__
+  | Import (_, path) -> todo __LOC__
+
+
 let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
   fun env pat -> match pat with
     | VarPat (_, x) ->
@@ -344,7 +350,9 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
          some kind of 'ToString' typeclass. For now we require the expr to be an exact string though *)
       check env String expr;
       Fun.id
-    | LetModuleSeq(loc, name, expr) -> todo __LOC__
+    | LetModuleSeq(loc, name, mod_expr) ->
+      let module_env = eval_module_env mod_expr in
+      todo __LOC__
     | ProgCall (loc, prog, args) ->
       List.iter (check env String) args;
       Fun.id

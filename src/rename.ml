@@ -89,7 +89,7 @@ let rename_mod_expr : module_exports FilePathMap.t
                     mod_exports.exported_names 
                     RenameScope.empty
             in
-            Import (loc, path), scope
+            Import ((loc, mod_exports), path), scope
 
 let rename_binop : Parsed.binop -> Renamed.binop =
     function

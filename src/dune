@@ -2,10 +2,12 @@
  (name polaris)
  (libraries
   athena
+  trees_that_grow
   bestline 
   unix
   re
-  threads))
+  threads)
+ (preprocess (pps trees_that_grow)))
 
 (env
   (dev

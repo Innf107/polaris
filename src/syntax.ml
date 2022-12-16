@@ -4,18 +4,37 @@ open Util
 type loc = Athena.loc
 module Loc = Athena.Loc
 
-module Make (Exts : sig
-  type name
+module StringMap = Map.Make(String)
 
-  type mod_subscript_ext
-  val mod_subscript_loc : mod_subscript_ext -> loc
+type name = { name : string; index : Unique.t }
 
-  val pretty_name : name -> string
-end) =
-struct
-  type name = Exts.name
-  let pretty_name = Exts.pretty_name
+module Name = struct
+  type t = name
 
+  let original_name (name : t) = name.name
+
+  let pretty (name : t) = name.name ^ "_" ^ Unique.display name.index
+
+  let primop_index = Unique.fresh ()
+
+  (* Comparisons are purely based on the name index
+     and therefore have no actual meaning.
+     We have to make sure to compare primops by their name though!
+  *)
+  let compare (x : t) (y : t) : int = 
+    if x.index = primop_index && y.index = primop_index then
+      String.compare x.name y.name 
+    else
+      Unique.compare x.index y.index
+
+  let fresh (name : string) = { name; index = Unique.fresh () }
+  let refresh (name : t) = { name with index = Unique.fresh() }
+  
+end
+
+module NameMap = Map.Make(Name)
+
+module Template = struct
   type ty =
     | Forall of name * ty
     | Fun of ty list * ty
@@ -128,8 +147,12 @@ struct
     | NumPat of loc * float
     | OrPat of loc * pattern * pattern
 
+  type module_exports = {
+      exported_names : name StringMap.t;
+      exported_types : ty NameMap.t;
+    }
   type module_expr =
-    | Import of loc * string
+    | Import of import_ext * string
     | ModVar of loc * name
 
   module MExpr = struct
@@ -137,10 +160,11 @@ struct
 
     let pretty = function
       | Import (_, path) -> "import \"" ^ path ^ "\""
-      | ModVar (_, var) -> Exts.pretty_name var
+      | ModVar (_, var) -> pretty_name var
 
     let get_loc = function
-      | Import (loc, _) | ModVar (loc, _) -> loc
+      | ModVar (loc, _) -> loc
+      | Import (ext, _) -> import_ext_loc ext
 
     let collect : type a. (module Monoid with type t = a) -> (t -> a) -> t -> a =
       fun monoid get mexpr ->
@@ -176,7 +200,7 @@ struct
     (* Records *)
     | RecordLit of loc * (string * expr) list  (* #{x₁: e₁, .., xₙ: eₙ}*)
     | Subscript of loc * expr * string      (* e.x *)
-    | ModSubscript of Exts.mod_subscript_ext * name * name     (* M.x *)
+    | ModSubscript of mod_subscript_ext * name * name     (* M.x *)
     | RecordUpdate of loc * expr * (string * expr) list (* #{r with x₁: e₁, .., xₙ: eₙ} *)
     | RecordExtension of loc * expr * (string * expr) list (* #{r extend x₁: e₁, .., xₙ: eₙ} *)
 
@@ -391,61 +415,36 @@ struct
     | LetRec(loc, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _)
     -> loc
-    | ModSubscript (ext, _, _) -> Exts.mod_subscript_loc ext
+    | ModSubscript (ext, _, _) -> mod_subscript_loc ext
 
   let get_pattern_loc = function
     | VarPat (loc, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
     | NumPat (loc, _) | OrPat (loc, _, _) 
     -> loc
-end
+end [@@ttg_template]
 
-type name = { name : string; index : Unique.t }
 
-module Name = struct
-  type t = name
-
-  let original_name (name : t) = name.name
-
-  let pretty (name : t) = name.name ^ "_" ^ Unique.display name.index
-
-  let primop_index = Unique.fresh ()
-
-  (* Comparisons are purely based on the name index
-     and therefore have no actual meaning.
-     We have to make sure to compare primops by their name though!
-  *)
-  let compare (x : t) (y : t) : int = 
-    if x.index = primop_index && y.index = primop_index then
-      String.compare x.name y.name 
-    else
-      Unique.compare x.index y.index
-
-  let fresh (name : string) = { name; index = Unique.fresh () }
-  let refresh (name : t) = { name with index = Unique.fresh() }
-  
-end
-
-module StringMap = Map.Make(String)
-module NameMap = Map.Make(Name)
-
-module Parsed = Make (struct
+module Parsed = Template (struct
   type name = string
   type mod_subscript_ext = void
   let mod_subscript_loc = absurd
 
-  let pretty_name (x : name) = x
-end)
+  let pretty_name x = x
 
-module Renamed = Make (struct
+  type import_ext = loc
+  let import_ext_loc x = x
+end) [@@ttg_pass]
+
+module Renamed = Template (struct
   type name = Name.t
 
   type mod_subscript_ext = loc
   let mod_subscript_loc loc = loc
   
   let pretty_name = Name.pretty
-end)
 
-type module_exports = {
-  exported_names : name StringMap.t;
-  exported_types : Renamed.ty NameMap.t;
-}
+  type import_ext = loc * module_exports
+  let import_ext_loc (loc, _) = loc
+end) [@@ttg_pass]
+
+type module_exports = Renamed.module_exports

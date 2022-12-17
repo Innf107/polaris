@@ -69,6 +69,8 @@ let handle_errors print_fun f =
         Loc.pretty loc ^ ": Let expression without 'in' found outside a sequence expression.\n"
       ^ "    Expression: " ^ Parsed.pretty expr
       )
+  | SubModuleNotFound (name, loc) ->
+    print_fun (Loc.pretty loc ^ ": Module does not contain a submodule named '" ^ name ^ "'")
   (* EvalError *)
   | DynamicVarNotFound (x, loc::locs) -> print_fun (
         Loc.pretty loc ^ ": Variable not found during execution: '" ^ Name.pretty x ^ "'\n"

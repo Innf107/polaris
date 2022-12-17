@@ -118,11 +118,11 @@ let rec instantiate : ty -> ty =
     instantiate (replace_tvar tv unif ty)
   | ty -> ty
 
-let eval_module_env : local_env -> module_expr -> global_env =
+let rec eval_module_env : local_env -> module_expr -> global_env =
   fun env -> function
   | ModVar (loc, var) -> 
     begin match NameMap.find_opt var env.module_var_contents with
-    | None -> panic __LOC__ ("Module variable not found in typechecker: '" ^ Name.pretty var ^ "'. This should have been caught earlier")
+    | None -> panic __LOC__ (Loc.pretty loc ^ ": Module variable not found in typechecker: '" ^ Name.pretty var ^ "'. This should have been caught earlier!")
     | Some contents -> contents
     end
   | Import ((_, mod_exports), path) -> 
@@ -130,6 +130,11 @@ let eval_module_env : local_env -> module_expr -> global_env =
       (* TODO: Allow modules to export other modules and include them here *)
       module_var_contents = NameMap.empty;
     }
+  | SubModule (loc, mod_expr, name) ->
+    let parent_env = eval_module_env env mod_expr in
+    match NameMap.find_opt name parent_env.module_var_contents with
+    | None -> panic __LOC__ (Loc.pretty loc ^ ": Submodule not found in typechecker: '" ^ Name.pretty name ^ "'. This should have been caught earlier!")
+    | Some contents -> contents
 
 
 let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =

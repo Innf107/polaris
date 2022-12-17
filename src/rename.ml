@@ -10,9 +10,10 @@ module RenameError = struct
     exception ModuleVarNotFound of string * loc
     exception SubscriptVarNotFound of string * loc
     exception LetSeqInNonSeq of Parsed.expr * loc
+    exception SubModuleNotFound of string * loc
 end
 
-module  RenameScope = struct
+module RenameScope = struct
     open RenameMap
     type t = { 
         variables: name RenameMap.t;
@@ -72,7 +73,7 @@ let rename_patterns scope pats =
         (pat' :: pats', fun s -> pat_trans (trans s))
     end) pats ([], fun x -> x)
 
-let rename_mod_expr : module_exports FilePathMap.t 
+let rec rename_mod_expr : module_exports FilePathMap.t 
                    -> RenameScope.t 
                    -> Parsed.module_expr 
                    -> Renamed.module_expr * RenameScope.t
@@ -80,7 +81,7 @@ let rename_mod_expr : module_exports FilePathMap.t
     | ModVar (loc, mod_var) -> 
         let name, contents = RenameScope.lookup_mod_var scope loc mod_var in
         ModVar(loc, name), contents
-    | Import (loc, path) -> match FilePathMap.find_opt path exports with
+    | Import (loc, path) -> begin match FilePathMap.find_opt path exports with
         | None -> panic __LOC__ ("import path not found in renamer: '" ^ path ^ "'")
         | Some mod_exports ->
             let scope = 
@@ -90,6 +91,14 @@ let rename_mod_expr : module_exports FilePathMap.t
                     RenameScope.empty
             in
             Import ((loc, mod_exports), path), scope
+        end
+    | SubModule (loc, mod_expr, field) ->
+        let mod_expr', contents = rename_mod_expr exports scope mod_expr in
+        let field', sub_contents = match StringMap.find_opt field contents.module_vars with
+        | None -> raise (RenameError.SubModuleNotFound (field, loc))
+        | Some (field', sub_contents) -> field', sub_contents                                     
+        in
+        SubModule (loc, mod_expr', field'), sub_contents
 
 let rename_binop : Parsed.binop -> Renamed.binop =
     function

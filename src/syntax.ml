@@ -154,16 +154,18 @@ module Template = struct
   type module_expr =
     | Import of import_ext * string
     | ModVar of loc * name
+    | SubModule of loc * module_expr * name
 
   module MExpr = struct
     type t = module_expr
 
-    let pretty = function
+    let rec pretty = function
       | Import (_, path) -> "import \"" ^ path ^ "\""
       | ModVar (_, var) -> pretty_name var
+      | SubModule (_, mod_expr, name) -> pretty mod_expr ^ "." ^ pretty_name name
 
     let get_loc = function
-      | ModVar (loc, _) -> loc
+      | ModVar (loc, _) | SubModule (loc, _, _) -> loc
       | Import (ext, _) -> import_ext_loc ext
 
     let collect : type a. (module Monoid with type t = a) -> (t -> a) -> t -> a =
@@ -172,7 +174,9 @@ module Template = struct
         let rec go mexpr =
           let result = get mexpr in
           let remaining = match mexpr with
-            | Import _ | ModVar _ -> M.empty in
+            | Import _ | ModVar _ -> M.empty 
+            | SubModule (_, mod_expr, _) -> go mod_expr
+          in
           M.append result remaining
         in 
         go mexpr

@@ -14,9 +14,9 @@ exception TypeError of loc * type_error
 
 
 type global_env = {
-  var_types : ty NameMap.t
+  var_types : ty NameMap.t;
+  module_var_contents : global_env NameMap.t;
 }
-
 
 
 (* Might throw 'TypeError' *)

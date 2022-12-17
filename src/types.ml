@@ -27,12 +27,14 @@ end)
 type ty_constraint = Unify of loc * ty * ty
 
 type global_env = {
-  var_types : ty NameMap.t
+  var_types : ty NameMap.t;
+  module_var_contents : global_env NameMap.t;
 }
 
 type local_env = {
   local_types : ty NameMap.t;
   constraints : ty_constraint Difflist.t ref;
+  module_var_contents : global_env NameMap.t
 }
 
 
@@ -116,10 +118,18 @@ let rec instantiate : ty -> ty =
     instantiate (replace_tvar tv unif ty)
   | ty -> ty
 
-let eval_module_env : module_expr -> global_env =
-  function
-  | ModVar (loc, var) -> todo __LOC__
-  | Import (_, path) -> todo __LOC__
+let eval_module_env : local_env -> module_expr -> global_env =
+  fun env -> function
+  | ModVar (loc, var) -> 
+    begin match NameMap.find_opt var env.module_var_contents with
+    | None -> panic __LOC__ ("Module variable not found in typechecker: '" ^ Name.pretty var ^ "'. This should have been caught earlier")
+    | Some contents -> contents
+    end
+  | Import ((_, mod_exports), path) -> 
+    { var_types = mod_exports.exported_types;
+      (* TODO: Allow modules to export other modules and include them here *)
+      module_var_contents = NameMap.empty;
+    }
 
 
 let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
@@ -199,7 +209,14 @@ let rec infer : local_env -> expr -> ty =
       let (u, u_name) = fresh_unif_raw () in
       check env (Record (RowUnif ([|name, val_ty|], (u, u_name)))) expr;
       val_ty
-    | ModSubscript (_, mod_name, key_name) -> todo __LOC__
+    | ModSubscript (_, mod_name, key_name) ->
+      begin match NameMap.find_opt mod_name env.module_var_contents with
+      | None -> panic __LOC__ ("Module not found while typechecking: '" ^ Name.pretty mod_name ^ "'. This should have been caught earlier!")
+      | Some mod_env -> begin match NameMap.find_opt key_name mod_env.var_types with
+        | None -> panic __LOC__ ("Module does not contain variable: '" ^ Name.pretty key_name ^ "'. This should have been caught earlier!")
+        | Some ty -> ty
+        end
+      end
     | RecordUpdate (_, expr, field_updates) ->
       let update_tys = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_updates) in
       let unif_raw = fresh_unif_raw () in
@@ -351,8 +368,10 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
       check env String expr;
       Fun.id
     | LetModuleSeq(loc, name, mod_expr) ->
-      let module_env = eval_module_env mod_expr in
-      todo __LOC__
+      let module_env = eval_module_env env mod_expr in
+      (* TODO: This should *not* be merged with the current environment,
+         since we still want modules to be qualified (at least by default) *)
+      fun env -> { env with module_var_contents = NameMap.add name module_env env.module_var_contents }
     | ProgCall (loc, prog, args) ->
       List.iter (check env String) args;
       Fun.id
@@ -518,7 +537,7 @@ let free_unifs : ty -> UnifSet.t =
    How the heck does that work in a constraint based typechecker? *)
 (** Generalizes a given type by turning residual unification variables into
     forall-bound type variables.
-    This is the *only* way to introduce forall tyeps right now, 
+    This is the *only* way to introduce forall types right now, 
     since explicit type signatures are not yet supported.  *)
 let generalize : ty -> ty =
   fun ty -> 
@@ -534,7 +553,11 @@ let generalize : ty -> ty =
     
 let typecheck_top_level : global_env -> expr -> global_env =
   fun global_env expr ->
-    let local_env = { local_types = global_env.var_types; constraints = ref Difflist.empty } in
+    let local_env = 
+      { local_types = global_env.var_types;
+        module_var_contents = global_env.module_var_contents;
+        constraints = ref Difflist.empty;
+      } in
     
     let local_env_trans = infer_seq_expr local_env expr in
     
@@ -543,7 +566,11 @@ let typecheck_top_level : global_env -> expr -> global_env =
         We then extract those, throw away the collected constraints (they're part of the real local_env anyway)
         and add the bindings to the global environment
     *)
-    let temp_local_env = local_env_trans { local_types = NameMap.empty; constraints = local_env.constraints } in
+    let temp_local_env = local_env_trans { 
+      local_types = NameMap.empty;
+      module_var_contents = NameMap.empty;
+      constraints = local_env.constraints; 
+    } in
 
     let subst = solve_constraints (Difflist.to_list !(local_env.constraints)) in
 
@@ -552,7 +579,11 @@ let typecheck_top_level : global_env -> expr -> global_env =
         var_types = 
           NameMap.union (fun _ _ x -> Some x) 
             (global_env.var_types) 
-            (NameMap.map (generalize << Subst.apply subst) temp_local_env.local_types) 
+            (NameMap.map (generalize << Subst.apply subst) temp_local_env.local_types);
+        module_var_contents =
+          NameMap.union (fun _ _ x -> Some x)
+            (global_env.module_var_contents)
+            temp_local_env.module_var_contents
       } in
     global_env
 
@@ -562,5 +593,6 @@ let typecheck exprs =
       (Primops.PrimOpMap.to_seq Primops.primops))
   in
   (* TODO: Include types for imports and options variables *)
-  let global_env = { var_types = prim_types } in
+  (* TODO: Maybe primops should be part of an implicitly imported module? *)
+  let global_env = { var_types = prim_types; module_var_contents = NameMap.empty } in
   List.fold_left (fun env e -> typecheck_top_level env e) global_env exprs 

@@ -125,7 +125,7 @@ let rec eval_module_env : local_env -> module_expr -> global_env =
     | None -> panic __LOC__ (Loc.pretty loc ^ ": Module variable not found in typechecker: '" ^ Name.pretty var ^ "'. This should have been caught earlier!")
     | Some contents -> contents
     end
-  | Import ((_, mod_exports), path) -> 
+  | Import ((_, mod_exports, _), path) -> 
     { var_types = mod_exports.exported_types;
       (* TODO: Allow modules to export other modules and include them here *)
       module_var_contents = NameMap.empty;

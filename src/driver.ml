@@ -110,7 +110,7 @@ and Driver : DriverI = struct
       ) imported_files in
 
     let import_map = FilePathMap.of_seq
-        (Seq.map (fun (file, (header, ast, scope, env)) -> (file, Modules.build_export_map header ast scope env)) 
+        (Seq.map (fun (file, (header, ast, scope, env)) -> (file, (Modules.build_export_map header ast scope env, ast))) 
         (List.to_seq items_for_exports)) in
 
     let renamed_header, renamed, new_scope = Rename.rename_scope import_map scope header ast in 
@@ -121,7 +121,6 @@ and Driver : DriverI = struct
     end
     else ();
 
-    (* Typechecking will probably return some more complex results later *)
     let type_env = Types.typecheck renamed in
 
     renamed_header, renamed, new_scope, type_env

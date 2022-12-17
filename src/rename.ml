@@ -73,7 +73,7 @@ let rename_patterns scope pats =
         (pat' :: pats', fun s -> pat_trans (trans s))
     end) pats ([], fun x -> x)
 
-let rec rename_mod_expr : module_exports FilePathMap.t 
+let rec rename_mod_expr : (module_exports * Renamed.expr list) FilePathMap.t
                    -> RenameScope.t 
                    -> Parsed.module_expr 
                    -> Renamed.module_expr * RenameScope.t
@@ -83,14 +83,14 @@ let rec rename_mod_expr : module_exports FilePathMap.t
         ModVar(loc, name), contents
     | Import (loc, path) -> begin match FilePathMap.find_opt path exports with
         | None -> panic __LOC__ ("import path not found in renamer: '" ^ path ^ "'")
-        | Some mod_exports ->
+        | Some (mod_exports, body) ->
             let scope = 
                 StringMap.fold 
                     (fun name renamed r -> RenameScope.insert_var name renamed  r) 
                     mod_exports.exported_names 
                     RenameScope.empty
             in
-            Import ((loc, mod_exports), path), scope
+            Import ((loc, mod_exports, body), path), scope
         end
     | SubModule (loc, mod_expr, field) ->
         let mod_expr', contents = rename_mod_expr exports scope mod_expr in
@@ -116,7 +116,7 @@ let rename_binop : Parsed.binop -> Renamed.binop =
     | Or -> Or
     | And -> And
 
-let rec rename_expr (exports : module_exports FilePathMap.t) (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
+let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.t) (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
     match expr with 
     | Var (loc, var_name) ->
         if Primops.is_primop var_name
@@ -219,7 +219,7 @@ let rec rename_expr (exports : module_exports FilePathMap.t) (scope : RenameScop
         in
         Match(loc, expr', branches')
 
-and rename_seq_state (exports : module_exports FilePathMap.t) (scope : RenameScope.t) (exprs : Parsed.expr list) : Renamed.expr list * RenameScope.t = 
+and rename_seq_state (exports : (module_exports * Renamed.expr list) FilePathMap.t) (scope : RenameScope.t) (exprs : Parsed.expr list) : Renamed.expr list * RenameScope.t = 
     let open RenameScope in
     match exprs with
     | (LetSeq (loc, p, e) :: exprs) -> 
@@ -286,7 +286,7 @@ let rename_exports : RenameScope.t -> Parsed.export_item list -> Renamed.export_
     end
     
 
-let rename_scope (exports : module_exports FilePathMap.t) (scope : RenameScope.t) (header : Parsed.header) (exprs : Parsed.expr list): Renamed.header * Renamed.expr list * RenameScope.t =
+let rename_scope (exports : (module_exports * Renamed.expr list) FilePathMap.t) (scope : RenameScope.t) (header : Parsed.header) (exprs : Parsed.expr list): Renamed.header * Renamed.expr list * RenameScope.t =
     let rec go scope = function
     | (flag_def::defs) ->
         let flag_def, scope = rename_option scope flag_def in

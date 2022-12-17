@@ -1,4 +1,5 @@
 open Syntax
+open Syntax.Renamed
 open Util
 
 module VarMap = Map.Make (Name)
@@ -15,6 +16,12 @@ type eval_env = {
 ; argv : string list 
 ; call_trace : loc list
 ; last_status : int ref
+; module_vars : runtime_module VarMap.t
+}
+
+and runtime_module = {
+  mod_vars : value ref VarMap.t
+; modules : runtime_module VarMap.t
 }
 
 and value =
@@ -150,6 +157,10 @@ end) = struct
       | UnitV | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ 
         -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
 
+  let insert_module_var : name -> runtime_module -> eval_env -> eval_env =
+    fun var module_value env ->
+      { env with module_vars = VarMap.add var module_value env.module_vars }
+
   let full_env_vars : eval_env -> string array =
     fun env ->
       Array.append
@@ -244,8 +255,26 @@ end) = struct
     let trans = match_pat pat arg locs in
     fun s -> match_params pats args locs (trans s)
 
+  let rec eval_mod_expr env = function
+  | Import ((loc, _, body), _) -> 
+      (* TODO This ignores the header for now. I hope this is fine? *)
+      let _, module_env = eval_seq_state (empty_eval_env env.argv) body in
+      { modules = module_env.module_vars; 
+        mod_vars = module_env.vars;
+      }
+  | ModVar (loc, var) -> 
+    begin match VarMap.find_opt var env.module_vars with
+    | None -> panic __LOC__ (Loc.pretty loc ^ ": Module variable not found at runtime: '" ^ Name.pretty var ^ "'. This should have been caught way earlier!")
+    | Some runtime_module -> runtime_module
+    end
+  | SubModule (loc, mod_expr, name) -> 
+    let runtime_module = eval_mod_expr env mod_expr in
+    begin match VarMap.find_opt name runtime_module.modules with
+    | None -> panic __LOC__ (Loc.pretty loc ^ ": Submodule not found at runtime: '" ^ Name.pretty name ^ "'. This should have been caught way earlier!")
+    | Some runtime_module -> runtime_module
+    end
 
-  let rec eval_expr (env : eval_env) (expr : Renamed.expr) : value =
+  and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
     let open Renamed in
     match expr with
     | Var (loc, x) ->
@@ -284,7 +313,15 @@ end) = struct
         end
       | value -> raise (EvalError.TryingToLookupInNonMap (value, key, loc :: env.call_trace))
       end
-    | ModSubscript _ -> todo __LOC__
+    | ModSubscript (loc, mod_name, name) ->
+      let runtime_module = match VarMap.find_opt mod_name env.module_vars with
+        | None -> panic __LOC__ (Loc.pretty loc ^ ": Module variable not found at runtime: '" ^ Name.pretty mod_name ^ "'. This should have been caught earlier!")
+        | Some runtime_module -> runtime_module
+      in
+      begin match VarMap.find_opt name runtime_module.mod_vars with
+      | None -> panic __LOC__ (Loc.pretty loc ^ ": Module member not found at runtime: '" ^ Name.pretty name ^ "'. This should have been caught earlier!")
+      | Some reference -> !reference
+      end
     | RecordUpdate (loc, expr, update_exprs) -> 
       begin match eval_expr env expr with
       | RecordV vals -> 
@@ -564,7 +601,9 @@ end) = struct
       let env' = insert_env_var loc x (eval_expr env e) env in
       eval_seq_cont env' exprs cont
     | LetModuleSeq (loc, x, me) :: exprs ->
-      todo __LOC__
+      let module_val = eval_mod_expr env me in
+      let env = insert_module_var x module_val env in
+      eval_seq_cont env exprs cont
     (* Single program calls are just evaluated like pipes *)
     | ProgCall (loc, _, _) as expr :: exprs ->
       eval_seq_cont env (Pipe (loc, [expr]) :: exprs) cont
@@ -833,12 +872,13 @@ end) = struct
       raise (EvalError.NonProgCallInPipe (expr, Renamed.get_loc expr :: env.call_trace))
     | [] -> []
 
-  let empty_eval_env (argv: string list): eval_env = {
+  and empty_eval_env (argv: string list): eval_env = {
     vars = VarMap.empty;
     env_vars = EnvMap.empty;
     argv = argv;
     call_trace = [];
     last_status = ref 0;
+    module_vars = VarMap.empty
   }
 
   let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs

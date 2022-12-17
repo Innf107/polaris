@@ -25,10 +25,8 @@ let files = lines(!find categories "-name" "*.pls")
 
 let errors = 0
 
-# Build polaris synchronously first, since dune does not properly support concurrent builds.
-# We have to use 'exec' with '--help', since dune cannot build executables
 if useDune then
-    !dune "exec" "--" "polaris" "--help"
+    !dune "build"
 else
     ()
 
@@ -38,7 +36,8 @@ for(files, \file -> {
 
     let result = 
         if useDune then 
-            !dune "exec" "polaris" "--" file args
+            # dune produces .exe files, even on linux
+            !_build/default/bin/main.exe file args
         else
             !polaris file args
     

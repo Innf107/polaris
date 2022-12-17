@@ -151,44 +151,16 @@ module Template = struct
       exported_names : name StringMap.t;
       exported_types : ty NameMap.t;
     }
+
+  type binop = Add | Sub | Mul | Div | Concat | Equals | NotEquals
+    | LE | GE | LT | GT | Or | And
+
   type module_expr =
     | Import of import_ext * string
     | ModVar of loc * name
     | SubModule of loc * module_expr * name
 
-  module MExpr = struct
-    type t = module_expr
-
-    let rec pretty = function
-      | Import (_, path) -> "import \"" ^ path ^ "\""
-      | ModVar (_, var) -> pretty_name var
-      | SubModule (_, mod_expr, name) -> pretty mod_expr ^ "." ^ pretty_name name
-
-    let get_loc = function
-      | ModVar (loc, _) | SubModule (loc, _, _) -> loc
-      | Import (ext, _) -> import_ext_loc ext
-
-    let collect : type a. (module Monoid with type t = a) -> (t -> a) -> t -> a =
-      fun monoid get mexpr ->
-        let (module M) = monoid in
-        let rec go mexpr =
-          let result = get mexpr in
-          let remaining = match mexpr with
-            | Import _ | ModVar _ -> M.empty 
-            | SubModule (_, mod_expr, _) -> go mod_expr
-          in
-          M.append result remaining
-        in 
-        go mexpr
-
-    let collect_list : 'a. (t -> 'a list) -> t -> 'a list =
-      fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
-    end
-
-  type binop = Add | Sub | Mul | Div | Concat | Equals | NotEquals
-             | LE | GE | LT | GT | Or | And
-
-  type expr =
+  and expr =
     (* Lambda calculus *)
     | Var of loc * name                     (* x *)
     | App of loc * expr * expr list         (* e (e₁, .., eₙ) *)
@@ -243,6 +215,36 @@ module Template = struct
   and list_comp_clause =
     | DrawClause of pattern * expr (* p <- e *)
     | FilterClause of expr            (* e *)
+
+  module MExpr = struct
+      type t = module_expr
+  
+      let rec pretty = function
+        | Import (_, path) -> "import \"" ^ path ^ "\""
+        | ModVar (_, var) -> pretty_name var
+        | SubModule (_, mod_expr, name) -> pretty mod_expr ^ "." ^ pretty_name name
+  
+      let get_loc = function
+        | ModVar (loc, _) | SubModule (loc, _, _) -> loc
+        | Import (ext, _) -> import_ext_loc ext
+  
+      let collect : type a. (module Monoid with type t = a) -> (t -> a) -> t -> a =
+        fun monoid get mexpr ->
+          let (module M) = monoid in
+          let rec go mexpr =
+            let result = get mexpr in
+            let remaining = match mexpr with
+              | Import _ | ModVar _ -> M.empty 
+              | SubModule (_, mod_expr, _) -> go mod_expr
+            in
+            M.append result remaining
+          in 
+          go mexpr
+  
+      let collect_list : 'a. (t -> 'a list) -> t -> 'a list =
+        fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
+      end
+  
 
   module Expr = struct
     let collect : type a. (module Monoid with type t = a) -> (expr -> a) -> expr -> a =
@@ -447,8 +449,8 @@ module Renamed = Template (struct
   
   let pretty_name = Name.pretty
 
-  type import_ext = loc * module_exports
-  let import_ext_loc (loc, _) = loc
+  type import_ext = loc * module_exports * expr list
+  let import_ext_loc (loc, _, _) = loc
 end) [@@ttg_pass]
 
 type module_exports = Renamed.module_exports

@@ -268,7 +268,12 @@ module Template = struct
             -> M.append (go expr1) (go expr2)
           | Not(_, expr) -> go expr
           | Range(_, expr1, expr2) -> M.append (go expr1) (go expr2)
-          | ListComp(_, expr, clauses) -> todo __LOC__
+          | ListComp(_, expr, clauses) -> 
+            let go_clause = function
+              | DrawClause (_pat, expr) -> go expr
+              | FilterClause expr -> go expr
+            in
+            M.append (go expr) (fold monoid go_clause clauses)
           | If(_, condition, then_expr, else_expr) -> M.append (go condition) (M.append (go then_expr) (go else_expr))
           | Seq(_, exprs) -> fold monoid go exprs
           | LetSeq(_, _, expr) | LetRecSeq(_, _, _, expr) | LetEnvSeq(_, _, expr) -> go expr

@@ -82,7 +82,7 @@ let rec rename_mod_expr : (module_exports * Renamed.expr list) FilePathMap.t
         let name, contents = RenameScope.lookup_mod_var scope loc mod_var in
         ModVar(loc, name), contents
     | Import (loc, path) -> begin match FilePathMap.find_opt path exports with
-        | None -> panic __LOC__ ("import path not found in renamer: '" ^ path ^ "'")
+        | None -> panic __LOC__ ("import path not found in renamer: '" ^ path ^ "'.\nImports: [" ^ String.concat ", " (List.map fst (FilePathMap.bindings exports)) ^ "]")
         | Some (mod_exports, body) ->
             let scope = 
                 StringMap.fold 

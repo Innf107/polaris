@@ -83,3 +83,11 @@ let rec extract : ('a -> bool) -> 'a list -> ('a * 'a list) option =
       | Some (y, ys) -> Some(y, x::ys)
 
 let (<<) f g x = f (g x)
+
+
+let path_relative_to : string -> string -> string =
+  fun base_file path ->
+    if Filename.is_relative path then
+      Filename.concat (Filename.dirname base_file) path
+    else
+      path

@@ -103,10 +103,12 @@ and Driver : DriverI = struct
     end
     else ();
 
-    let imported_files = List.concat_map (Modules.extract_import_paths) ast in
+    (* TODO: I don't think options.argv[0] is the path of the script yet? *)
+    let imported_files = List.map (fun x -> (x, Util.path_relative_to (List.hd options.argv) x)) 
+                         (List.concat_map (Modules.extract_import_paths) ast) in
 
-    let items_for_exports = List.map (fun file -> 
-        (file, parse_rename_typecheck options (Lexing.from_channel (open_in file)) RenameScope.empty)
+    let items_for_exports = List.map (fun (filename, path) -> 
+        (filename, parse_rename_typecheck options (Lexing.from_channel (open_in path)) RenameScope.empty)
       ) imported_files in
 
     let import_map = FilePathMap.of_seq

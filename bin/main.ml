@@ -281,7 +281,7 @@ let run_file (options : run_options) (filepath : string) (args : string list) =
       Driver.run_env 
         driver_options 
         (Lexing.from_channel (open_in filepath))
-        (EvalInst.empty_eval_env driver_options.argv)
+        (Eval.empty_eval_env driver_options.argv)
         Rename.RenameScope.empty
     in
     if options.interactive then
@@ -291,7 +291,7 @@ let run_file (options : run_options) (filepath : string) (args : string list) =
 
 let run_repl options = 
   let argv = [""] in
-  run_repl_with Rename.RenameScope.empty (EvalInst.empty_eval_env argv) options
+  run_repl_with Rename.RenameScope.empty (Eval.empty_eval_env argv) options
 
 let parse_args () : run_options * string list =
   let default_options : run_options = {

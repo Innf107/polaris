@@ -11,7 +11,6 @@ let primops = PrimOpMap.of_seq (List.to_seq [
   "head", forall (fun a -> [List a] -->a);
   "tail", forall (fun a -> [List a] --> List a);
   "cons", forall (fun a -> [a; List a] --> List a);
-  "require", Tuple [||]; (* TODO: require doesn't work with static types *)
   "lines", [String] --> List String;
   "split", [String; String] --> List String;
   "replace", [String; String; String] --> String;

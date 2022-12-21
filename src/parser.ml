@@ -230,7 +230,9 @@ let header = (fun exports u d opts -> { exports = Option.value ~default:[] expor
 let mod_expr = 
   ((fun loc (path, loc_end) -> Import (Loc.merge loc loc_end, path))
     <$> token IMPORT
-    <*> string)
+    <*  token LPAREN
+    <*> string
+    <*  token RPAREN)
   <|> ((fun (x, loc) -> ModVar(loc, x))
     <$> ident)
 

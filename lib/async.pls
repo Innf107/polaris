@@ -1,19 +1,19 @@
+export {    
+    # Combining promises
+    all,
 
-let all(promises) = async [(await x) | x <- promises];
+    # Monadic operations
+    pure,
+    bind
+}
 
-let pure(x) = async x;
+
+let all(promises) = async [(await x) | x <- promises]
+
+let pure(x) = async x
 
 # Monadic bind
 let bind(promise, cont) = async {
-    let x = await promise;
-    await cont(x);
-};
-
-#{
-    # Combining promises
-    all: all,
-
-    # Monadic operations
-    pure: pure,
-    bind: bind,
+    let x = await promise
+    await cont(x)
 }

@@ -1,5 +1,8 @@
 # System functions
-
+export {
+    rand,
+    randomInt
+}
 
 # Generate an arbitrary random integer.
 # This is exactly equivalent to bash's $RANDOM (because that is how it is implemented)
@@ -10,10 +13,5 @@ let randomInt(min, max) = {
     let maxBound = max - min + 1;
     min + parseInt(!bash "-c" ("echo $(( $RANDOM % " ~ toString(maxBound) ~ " ))"))
 };
-
-#{  
-    rand: rand,
-    randomInt: randomInt,
-}
 
 

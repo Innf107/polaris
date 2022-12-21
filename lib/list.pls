@@ -9,11 +9,9 @@ export {
     zip,
     zipWith,
     indexed,
-
-    find,
-    lookupWith,
-    lookup,
     
+    # find,
+
     sum,
     product,
 
@@ -44,15 +42,18 @@ let foldl(f, z, xs) = match xs {
     (x : xs) -> foldl(f, f(z, x), xs)
 }
 
+# O(length(xs))
+let append(xs, ys) = foldr(cons, ys, xs)
+
 # O(n)
-let map(f, xs) = foldr(\(x, r) -> [f(x)] ~ r, [], xs)
+let map(f, xs) = foldr(\x r -> cons(f(x), r), [], xs)
 
 # O(n)
 let filter(f, xs) = match xs {
     [] -> []
     (x : xs) -> 
         if f(x) then
-            [x] ~ filter(f, xs)
+            cons(x, filter(f, xs))
         else
             filter(f, xs)
 }
@@ -60,58 +61,44 @@ let filter(f, xs) = match xs {
 # O(min(n, m))
 let zipWith(f, xs, ys) = match [xs, ys] {
     [[], _] | [_, []]-> []
-    [x : xs, y : ys] -> [f(x, y)] ~ zipWith(f, xs, ys)
+    [x : xs, y : ys] -> cons(f(x, y), zipWith(f, xs, ys))
 }
 
 # O(min(n, m))
-let zip(xs, ys) = zipWith(\(x, y) -> [x, y], xs, ys);
+let zip(xs, ys) = zipWith(\x y -> (x, y), xs, ys);
 
 # O(n)
 let indexed(xs) = {
     let go(ix, xs) = match xs {
         [] -> []
-        (x : xs) -> [[x, ix]] ~ go(ix + 1, xs)
+        (x : xs) -> cons((x, ix), go(ix + 1, xs))
     }
     go(0, xs)
 }
 
-# Returns the first item `x` in the list, such that `pred(x) = true`
-# or `null`, if no such item exists.
+# Find needs Maybes which cannot be implemented right now
 # O(n), tail recursive
-let find(pred, xs) = match xs {
-    [] -> null
-    x : xs -> 
-        if pred(x) then
-            x
-        else
-            find(pred, xs)
-}
+# let find(pred, xs) = match xs {
+#     [] -> null
+#     x : xs -> 
+#         if pred(x) then
+#             x
+#         else
+#             find(pred, xs)
+# }
 
 # O(1)
-let fst(t) = head(t)
+let fst((x, y)) = x
 
 # O(1)
-let snd(t) = head(tail(t))
-
-# Takes a list of pair and retuns the second element of the first
-# pair `p`, where `pred(fst(p)) = true` or null, if no such pair exists.
-# O(n), tail recursive
-let lookupWith(pred, xs) =
-    let result = find(\t -> pred(fst(t)), xs) in
-    if result == null then
-        null
-    else
-        snd(result);
-
-# O(n), tail recursive
-let lookup(k, xs) = lookupWith(\x -> x == k, xs);
+let snd((x, y)) = y
 
 # Specialized folds
 
 # O(n), tail recursive
-let sum(xs) = foldl(\(r, x) -> r + x, 0, xs);
+let sum(xs) = foldl(\r x -> r + x, 0, xs);
 # O(n), tail recursive
-let product(xs) = foldl(\(r, x) -> r * x, 1, xs);
+let product(xs) = foldl(\r x -> r * x, 1, xs);
 
 
 # O(n), tail recursive
@@ -131,18 +118,18 @@ let forConcurrent(xs, f) = {
 }
 
 
-let length(xs) = foldl(\(r, _) -> r + 1, 0, xs)
+let length(xs) = foldl(\r _ -> r + 1, 0, xs)
 
-let reverse(xs) = foldl(\(xs, x) -> cons(x, xs), [], xs)
+let reverse(xs) = foldl(\xs x -> cons(x, xs), [], xs)
 
 let partition(pred, xs) = {
     let go(passed, failed, xs) = match xs {
         [] -> [passed, failed]
         (x : xs) -> 
             if pred(x) then
-                go([x] ~ passed, failed, xs)
+                go(cons(x, passed), failed, xs)
             else
-                go(passed, [x] ~ failed, xs)
+                go(passed, cons(x, failed), xs)
     }
     go([], [], xs)
 }
@@ -151,6 +138,6 @@ let sort(xs) = match xs {
     [] -> []
     # TODO: Write with let destructuring
     (x : xs) -> match partition(\y -> y < x, xs) {
-        [smaller, larger] -> sort(smaller) ~ [x] ~ sort(larger)
+        [smaller, larger] -> append(sort(smaller), cons(x, sort(larger)))
     }
 }

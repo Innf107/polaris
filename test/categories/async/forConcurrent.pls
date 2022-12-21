@@ -1,11 +1,13 @@
 # EXPECT: true
 
-let List = require("list.pls");
+module List = import("../../../lib/list.pls");
+
+let _ = List.forConcurrent + 0
 
 let startTime = parseInt(!date "+%s");
 
 List.forConcurrent([0 .. 100], \x -> {
-    !sleep 1;
+    !sleep "1";
 });
 
 let endTime = parseInt(!date "+%s");

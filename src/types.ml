@@ -406,8 +406,15 @@ and infer_seq : local_env -> expr list -> ty =
       let env_trans = infer_seq_expr env expr in
       infer_seq (env_trans env) exprs
 
-let occurs u = Ty.collect monoid_or begin function
-      | Unif (u2, _) -> Unique.equal u u2
+let rec occurs subst u = Ty.collect monoid_or begin function
+      | Unif (u2, _) -> 
+        if Unique.equal u u2 then
+          true
+        else
+          begin match UniqueMap.find_opt u2 !subst with
+          | None -> false
+          | Some ty -> occurs subst u ty
+          end
       | _ -> false
       end
 
@@ -427,6 +434,7 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
     trace_unify (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2);
 
     let rec go ty1 ty2 = 
+      trace_unify ("[go]:" ^ pretty_type ty1 ^ " ~ " ^ pretty_type ty2);
       (* `remaining_cont` is called with the remaining fields from both rows,
         that is the fields that are not part of the other row. 
         Closed rows will generally error on this, but unif rows might continue 
@@ -458,13 +466,14 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
            but might hang the type checker if they become part of the substitution *)
         | Unif (u2, _) when u2 = u -> ()
         | _ -> 
-          if occurs u ty then
+          if occurs state.subst u ty then
             raise (TypeError (loc, OccursCheck(u, name, ty, original_ty1, original_ty2)))
           else begin 
             match UniqueMap.find_opt u !(state.subst) with
             (* TODO: This can change the order of constraints which might lead to 
                significantly worse error messages *)
-            | Some subst_ty -> go subst_ty ty
+            | Some subst_ty -> 
+              go subst_ty ty
             | None -> bind state u name ty
         end
       end

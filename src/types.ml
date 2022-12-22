@@ -219,7 +219,7 @@ let rec infer : local_env -> expr -> ty =
       | None -> panic __LOC__ ("Module not found while typechecking: '" ^ Name.pretty mod_name ^ "'. This should have been caught earlier!")
       | Some mod_env -> begin match NameMap.find_opt key_name mod_env.var_types with
         | None -> panic __LOC__ ("Module does not contain variable: '" ^ Name.pretty key_name ^ "'. This should have been caught earlier!")
-        | Some ty -> ty
+        | Some ty -> instantiate ty
         end
       end
     | RecordUpdate (_, expr, field_updates) ->
@@ -424,6 +424,9 @@ type unify_state = {
   subst : ty UniqueMap.t ref
 }
 
+let partial_apply state ty =
+  Subst.apply (Subst.of_map !(state.subst)) ty
+
 let bind : unify_state -> Unique.t -> name -> ty -> unit =
   fun state u name ty ->
     trace_subst (pretty_type (Unif (u, name)) ^ " := " ^ pretty_type ty);
@@ -434,7 +437,6 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
     trace_unify (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2);
 
     let rec go ty1 ty2 = 
-      trace_unify ("[go]:" ^ pretty_type ty1 ^ " ~ " ^ pretty_type ty2);
       (* `remaining_cont` is called with the remaining fields from both rows,
         that is the fields that are not part of the other row. 
         Closed rows will generally error on this, but unif rows might continue 
@@ -461,20 +463,25 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
       in
       match ty1, ty2 with
       | Unif (u, name), ty | ty, Unif (u, name) -> 
-        begin match ty with
-        (* Ignore 'a ~ a' constraints. These are mostly harmless,
-           but might hang the type checker if they become part of the substitution *)
-        | Unif (u2, _) when u2 = u -> ()
-        | _ -> 
-          if occurs state.subst u ty then
-            raise (TypeError (loc, OccursCheck(u, name, ty, original_ty1, original_ty2)))
-          else begin 
-            match UniqueMap.find_opt u !(state.subst) with
-            (* TODO: This can change the order of constraints which might lead to 
-               significantly worse error messages *)
-            | Some subst_ty -> 
-              go subst_ty ty
+        begin match UniqueMap.find_opt u !(state.subst) with
+        | Some subst_ty -> go subst_ty ty
+        | None ->
+          begin match ty with
+          (* Ignore 'a ~ a' constraints. These are mostly harmless,
+            but might hang the type checker if they become part of the substitution 
+          *)
+          | Unif (u2, _) when u = u2 -> ()
+          | Unif (u2, _) -> 
+            begin match UniqueMap.find_opt u2 !(state.subst) with
+            | Some subst_ty -> go (Unif (u, name)) subst_ty
             | None -> bind state u name ty
+            end
+          | _ -> 
+            if occurs state.subst u ty then
+              raise (TypeError (loc, OccursCheck(u, name, partial_apply state ty, partial_apply state original_ty1, partial_apply state original_ty2)))
+            else begin
+              bind state u name ty
+          end
         end
       end
       | Fun (dom1, cod1), Fun (dom2, cod2) ->

@@ -608,12 +608,33 @@ let typecheck_top_level : global_env -> expr -> global_env =
       } in
     global_env
 
-let typecheck exprs = 
+let typecheck_header header env =
+  let insert_global_var var ty env =
+    { env with var_types = NameMap.add var ty env.var_types }
+  in
+
+  let add_var_content env flag_def =
+
+    match flag_def.args with
+    | Varargs name ->
+      insert_global_var name (List(String)) env
+    | Switch name ->
+      insert_global_var name Bool env
+    | Named names ->
+      List.fold_left (fun env name -> insert_global_var name String env) env names
+    | NamedDefault names_and_values ->
+      List.fold_left (fun env (name, _) -> insert_global_var name String env) env names_and_values
+  in
+  List.fold_left add_var_content env header.options
+
+let typecheck header exprs = 
   let prim_types = 
     NameMap.of_seq (Seq.map (fun (name, ty) -> ({ name; index=Name.primop_index}, ty)) 
       (Primops.PrimOpMap.to_seq Primops.primops))
   in
-  (* TODO: Include types for imports and options variables *)
   (* TODO: Maybe primops should be part of an implicitly imported module? *)
   let global_env = { var_types = prim_types; module_var_contents = NameMap.empty } in
+
+  let global_env = typecheck_header header global_env in
+
   List.fold_left (fun env e -> typecheck_top_level env e) global_env exprs 

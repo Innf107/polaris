@@ -77,7 +77,7 @@ let rec parse_rename_typecheck : driver_options
   end
   else ();
 
-  let type_env = Types.typecheck renamed in
+  let type_env = Types.typecheck renamed_header renamed in
 
   renamed_header, renamed, new_scope, type_env
 

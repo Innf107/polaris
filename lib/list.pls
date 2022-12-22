@@ -32,36 +32,36 @@ export {
 # O(n)
 let foldr(f, z, xs) = match xs {
     [] -> z
-    (x : xs) -> f(x, foldr(f, z, xs))
+    (x :: xs) -> f(x, foldr(f, z, xs))
 }
     
 
 # O(n), tail recursive
 let foldl(f, z, xs) = match xs {
     [] -> z
-    (x : xs) -> foldl(f, f(z, x), xs)
+    (x :: xs) -> foldl(f, f(z, x), xs)
 }
 
 # O(length(xs))
-let append(xs, ys) = foldr(cons, ys, xs)
+let append(xs, ys) = foldr(\x xs -> x :: xs, ys, xs)
 
 # O(n)
-let map(f, xs) = foldr(\x r -> cons(f(x), r), [], xs)
+let map(f, xs) = foldr(\x r -> f(x) :: r, [], xs)
 
 # O(n)
 let filter(f, xs) = match xs {
     [] -> []
-    (x : xs) -> 
+    (x :: xs) -> 
         if f(x) then
-            cons(x, filter(f, xs))
+            x :: filter(f, xs)
         else
             filter(f, xs)
 }
 
 # O(min(n, m))
-let zipWith(f, xs, ys) = match [xs, ys] {
-    [[], _] | [_, []]-> []
-    [x : xs, y : ys] -> cons(f(x, y), zipWith(f, xs, ys))
+let zipWith(f, xs, ys) = match (xs, ys) {
+    ([], _) | (_, [])-> []
+    (x :: xs, y :: ys) -> f(x, y) :: zipWith(f, xs, ys)
 }
 
 # O(min(n, m))
@@ -71,7 +71,7 @@ let zip(xs, ys) = zipWith(\x y -> (x, y), xs, ys);
 let indexed(xs) = {
     let go(ix, xs) = match xs {
         [] -> []
-        (x : xs) -> cons((x, ix), go(ix + 1, xs))
+        (x :: xs) -> (x, ix) :: go(ix + 1, xs)
     }
     go(0, xs)
 }
@@ -104,7 +104,7 @@ let product(xs) = foldl(\r x -> r * x, 1, xs);
 # O(n), tail recursive
 let for(xs, f) = match xs {
     [] -> ()
-    (x : xs) -> {
+    (x :: xs) -> {
         f(x)
         for(xs, f)
     }
@@ -120,16 +120,16 @@ let forConcurrent(xs, f) = {
 
 let length(xs) = foldl(\r _ -> r + 1, 0, xs)
 
-let reverse(xs) = foldl(\xs x -> cons(x, xs), [], xs)
+let reverse(xs) = foldl(\xs x -> x :: xs, [], xs)
 
 let partition(pred, xs) = {
     let go(passed, failed, xs) = match xs {
-        [] -> [passed, failed]
-        (x : xs) -> 
+        [] -> (passed, failed)
+        (x :: xs) -> 
             if pred(x) then
-                go(cons(x, passed), failed, xs)
+                go(x :: passed, failed, xs)
             else
-                go(passed, cons(x, failed), xs)
+                go(passed, x :: failed, xs)
     }
     go([], [], xs)
 }
@@ -137,7 +137,5 @@ let partition(pred, xs) = {
 let sort(xs) = match xs {
     [] -> []
     # TODO: Write with let destructuring
-    (x : xs) -> match partition(\y -> y < x, xs) {
-        [smaller, larger] -> append(sort(smaller), cons(x, sort(larger)))
-    }
+    (x :: xs) -> let (smaller, larger) = partition(\y -> y < x, xs) in append(sort(smaller), (x :: sort(larger)))
 }

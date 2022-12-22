@@ -186,6 +186,7 @@ let op_token lexbuf = let open Parser in function
 | "<-" -> LARROW
 | "," -> COMMA
 | ";" -> SEMI
+| "::" -> DOUBLECOLON
 | ":" -> COLON
 | "+" -> PLUS
 | "*" -> STAR

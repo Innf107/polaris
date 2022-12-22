@@ -26,6 +26,7 @@ let equal_token : token -> token -> bool = (=)
 %token COMMA ","
 %token SEMI ";"
 %token COLON ":"
+%token DOUBLECOLON "::"
 %token LPAREN "("
 %token RPAREN ")"
 %token HASHLBRACE "#{"
@@ -156,28 +157,36 @@ binop2:
     | ">"  { GT }
     | ">=" { GE }
 
+// IMPORTANT: These are *RIGHT* associative (unlike most other binops)
 expr3:
-    | expr3 binop3 expr4 { BinOp(loc $startpos $endpos, $1, $2, $3) }
+    | expr4 binop3 expr3 { BinOp(loc $startpos $endpos, $1, $2, $3) }
     | expr4 { $1 }
 
 binop3:
-    | "+" { Add }
-    | "-" { Sub }
     | "~" { Concat }
+    | "::" { Cons }
 
 expr4:
     | expr4 binop4 expr5 { BinOp(loc $startpos $endpos, $1, $2, $3) }
     | expr5 { $1 }
 
 binop4:
+    | "+" { Add }
+    | "-" { Sub }
+
+expr5:
+    | expr5 binop5 expr6 { BinOp(loc $startpos $endpos, $1, $2, $3) }
+    | expr6 { $1 }
+
+binop5:
     | "*" { Mul }
     | "/" { Div }
 
-expr5:
+expr6:
     | IDENT ":=" expr { Assign(loc $startpos $endpos, $1, $3) }
-    | expr5 "." IDENT { Subscript(loc $startpos $endpos, $1, $3) }
-    | expr5 "[" expr "]" { DynLookup(loc $startpos $endpos, $1, $3) }
-    | expr5 "(" sep_trailing(COMMA, expr) ")" { App(loc $startpos $endpos, $1, $3) }
+    | expr6 "." IDENT { Subscript(loc $startpos $endpos, $1, $3) }
+    | expr6 "[" expr "]" { DynLookup(loc $startpos $endpos, $1, $3) }
+    | expr6 "(" sep_trailing(COMMA, expr) ")" { App(loc $startpos $endpos, $1, $3) }
     | expr_leaf { $1 }
 
 expr_leaf:
@@ -233,7 +242,7 @@ pattern:
     | pattern1 { $1 }
 
 pattern1:
-    | pattern_leaf ":" pattern1 { ConsPat(loc $startpos $endpos, $1, $3) }
+    | pattern_leaf "::" pattern1 { ConsPat(loc $startpos $endpos, $1, $3) }
     | pattern_leaf { $1 }
 
 pattern_leaf:

@@ -8,9 +8,6 @@ let forall (cont : ty -> ty) = let a = Name.fresh "a" in Forall (a, cont (Var a)
 
 let primops = PrimOpMap.of_seq (List.to_seq [
   "print", forall (fun a -> [a] --> Tuple [||]);
-  "head", forall (fun a -> [List a] -->a);
-  "tail", forall (fun a -> [List a] --> List a);
-  "cons", forall (fun a -> [a; List a] --> List a);
   "lines", [String] --> List String;
   "split", [String; String] --> List String;
   "replace", [String; String; String] --> String;

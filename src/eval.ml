@@ -386,6 +386,14 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
     let v2 = eval_expr env e2 in
     let context = "Trying to divide " ^ Value.pretty v1 ^ " by " ^ Value.pretty v2 in
     NumV (as_num context (loc :: env.call_trace) v1 /. as_num context (loc :: env.call_trace) v2)
+  | BinOp (loc, e1, Cons, e2) ->
+    let v1 = eval_expr env e1 in
+    let v2 = eval_expr env e2 in
+    begin match v2 with
+    | ListV values -> ListV (v1 :: values)
+    | _ -> raise (EvalError.InvalidOperatorArgs("::", [v1; v2], loc :: env.call_trace))
+    end
+
   | BinOp (loc, e1, Concat, e2) ->
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in

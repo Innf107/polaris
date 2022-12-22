@@ -16,6 +16,7 @@ let pretty_token = function
 | COMMA -> "COMMA" 
 | SEMI  -> "SEMI"
 | COLON -> "COLON"
+| DOUBLECOLON -> "DOUBLECOLON"
 | LPAREN -> "LPAREN" 
 | RPAREN -> "RPAREN" 
 | HASHLBRACE -> "HASHLBRACE" 

@@ -107,6 +107,7 @@ let rename_binop : Parsed.binop -> Renamed.binop =
     | Mul -> Mul
     | Div -> Div
     | Concat -> Concat
+    | Cons -> Cons
     | Equals -> Equals
     | NotEquals -> NotEquals
     | LE -> LE

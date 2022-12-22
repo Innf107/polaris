@@ -244,6 +244,10 @@ let rec infer : local_env -> expr -> ty =
       check env String expr1;
       check env String expr2;
       String
+    | BinOp (_, expr1, Cons, expr2) ->
+      let ty1 = infer env expr1 in
+      check env (List ty1) expr2;
+      List ty1
     | BinOp (_, expr1, (Equals | NotEquals), expr2) ->
       let ty1 = infer env expr1 in
       check env ty1 expr2;

@@ -151,8 +151,9 @@ module Template = struct
       exported_types : ty NameMap.t;
     }
 
-  type binop = Add | Sub | Mul | Div | Concat | Equals | NotEquals
-    | LE | GE | LT | GT | Or | And
+  type binop = 
+    | Add | Sub | Mul | Div | Concat | Cons | Equals | NotEquals
+    | LE | GE | LT | GT | Or | And 
 
   type module_expr =
     | Import of import_ext * string
@@ -333,7 +334,7 @@ module Template = struct
 
   let rec pretty_pattern = function
     | VarPat (_, x) -> pretty_name x
-    | ConsPat (_, x, xs) -> "(" ^ pretty_pattern x ^ ") : (" ^ pretty_pattern xs ^ ")"
+    | ConsPat (_, x, xs) -> "(" ^ pretty_pattern x ^ ") :: (" ^ pretty_pattern xs ^ ")"
     | ListPat (_, pats) -> "[" ^ String.concat ", " (List.map pretty_pattern pats) ^ "]"
     | TuplePat (_, pats) -> "(" ^ String.concat ", " (List.map pretty_pattern pats) ^ ")"
     | NumPat (_, f) -> Float.to_string f
@@ -367,6 +368,7 @@ module Template = struct
     | BinOp (_, e1, Mul, e2)     -> "(" ^ pretty e1 ^ " * " ^ pretty e2 ^ ")"
     | BinOp (_, e1, Div, e2)     -> "(" ^ pretty e1 ^ " / " ^ pretty e2 ^ ")"
     | BinOp (_, e1, Concat, e2)  -> "(" ^ pretty e1 ^ " .. " ^ pretty e2 ^ ")"
+    | BinOp (_, e1, Cons, e2)    -> "(" ^ pretty e1 ^ " :: " ^ pretty e2 ^ ")"
 
     | BinOp (_, e1, Equals, e2) -> "(" ^ pretty e1 ^ " == " ^ pretty e2 ^ ")"
     | BinOp (_, e1, NotEquals, e2) -> "(" ^ pretty e1 ^ " != " ^ pretty e2 ^ ")"

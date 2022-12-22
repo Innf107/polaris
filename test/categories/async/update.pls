@@ -1,6 +1,6 @@
 # EXPECT: 205
 
-let List = require("list.pls");
+module List = import("../../../lib/list.pls");
 
 let x = 5;
 

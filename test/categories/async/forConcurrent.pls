@@ -2,8 +2,6 @@
 
 module List = import("../../../lib/list.pls");
 
-let _ = List.forConcurrent + 0
-
 let startTime = parseInt(!date "+%s");
 
 List.forConcurrent([0 .. 100], \x -> {

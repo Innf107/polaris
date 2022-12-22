@@ -1,5 +1,5 @@
 # EXPECT: 5
 
-let List = require("list.pls")
+module List = import("../../../lib/list.pls")
 
 print(List.length([1,2,3,4,5]))

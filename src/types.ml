@@ -486,7 +486,12 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
       end
       | Fun (dom1, cod1), Fun (dom2, cod2) ->
         if List.compare_lengths dom1 dom2 != 0 then
-          raise (TypeError (loc, WrongNumberOfArgs(dom1, dom2, original_ty1, original_ty2)))
+          raise (TypeError (loc, 
+            WrongNumberOfArgs(
+              List.map (partial_apply state) dom1,  
+              List.map (partial_apply state) dom2, 
+              partial_apply state original_ty1, 
+              partial_apply state original_ty2)))
         else begin
           List.iter2 go dom1 dom2;
           go cod1 cod2
@@ -554,8 +559,6 @@ let free_unifs : ty -> UnifSet.t =
     | _ -> UnifSet.empty 
     end
 
-(* TODO: What about local let generalization? 
-   How the heck does that work in a constraint based typechecker? *)
 (** Generalizes a given type by turning residual unification variables into
     forall-bound type variables.
     This is the *only* way to introduce forall types right now, 

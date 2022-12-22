@@ -8,7 +8,7 @@ export {
 }
 
 
-let all(promises) = async [(await x) | x <- promises]
+let all(promises) = async [(await x) | let x <- promises]
 
 let pure(x) = async x
 

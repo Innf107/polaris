@@ -1,6 +1,5 @@
 open Util
 open Lexing
-open Parser
 
 type lex_error =
   | InvalidOperator of Syntax.loc * string
@@ -30,7 +29,7 @@ type lex_kind =
   | InEnv of string
   | InNumber of string
   | InDecimal of string
-  | Defer of Token.t list
+  | Defer of Parser.token list
   | LeadingWhitespace
 
 type lex_state = {
@@ -78,7 +77,7 @@ let set_state indentation_state state lexbuf =
     lexbuf.lex_start_pos <- lexbuf.lex_curr_pos
 
 let get_loc (lexbuf : lexbuf) : Syntax.loc =
-  Syntax.Loc.from_pos (lexbuf.lex_curr_p) (lexbuf.lex_curr_p)
+  Loc.from_pos (lexbuf.lex_curr_p) (lexbuf.lex_curr_p)
 
 let open_block state = 
   state.indentation_level <- Opening :: state.indentation_level
@@ -91,7 +90,7 @@ let close_block state =
   | [] | [_] -> raise (Panic "Lexer.close_block: More blocks closed than opened")
   | _ :: lvls -> state.indentation_level <- lvls
 
-let insert_semi (continue : unit -> Token.t) state indentation =
+let insert_semi (continue : unit -> Parser.token) state indentation =
   match state.indentation_level with
   | (Opening :: lvls) ->
     state.indentation_level <- Found indentation :: lvls;
@@ -146,7 +145,7 @@ let is_paren = function
   | '(' | ')' | '[' | ']' | '{' | '}' -> true
   | _ -> false
 
-let as_paren state = let open Token in function
+let as_paren state = let open Parser in function
   | '(' -> LPAREN
   | ')' -> RPAREN 
   | '[' -> LBRACKET
@@ -159,7 +158,7 @@ let as_paren state = let open Token in function
     RBRACE
   | c -> raise (Panic ("Lexer.as_paren: Invalid paren: '" ^ string_of_char c ^ "'"))
 
-let ident_token = let open Token in function
+let ident_token = let open Parser in function
 | "let" -> LET
 | "in" -> IN
 | "if" -> IF
@@ -167,7 +166,6 @@ let ident_token = let open Token in function
 | "else" -> ELSE
 | "true" -> TRUE
 | "false" -> FALSE
-| "null" -> NULL 
 | "async" -> ASYNC
 | "await" -> AWAIT
 | "match" -> MATCH
@@ -183,7 +181,7 @@ let ident_token = let open Token in function
 | "export" -> EXPORT
 | str -> IDENT(str)
 
-let op_token lexbuf = let open Token in function
+let op_token lexbuf = let open Parser in function
 | "->" -> ARROW
 | "<-" -> LARROW
 | "," -> COMMA
@@ -209,7 +207,7 @@ let op_token lexbuf = let open Token in function
 | str -> raise (LexError (InvalidOperator (get_loc lexbuf, str)))
 
 
-let rec token (state : lex_state) (lexbuf : lexbuf): Token.t =
+let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
   let continue () = token state lexbuf in
   match state.lex_kind with
   | Default -> 
@@ -248,7 +246,7 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Token.t =
       continue ()
     | Some(c) when is_paren c ->
       as_paren state c
-    | None -> Token.EOF
+    | None -> Parser.EOF
     | Some(c) -> raise (LexError (InvalidChar (get_loc lexbuf, c)))
     end
   | LeadingHash ->
@@ -261,7 +259,7 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Token.t =
       set_state (LeadingWhitespace) state lexbuf;
       continue ()
     | None ->
-      Token.EOF
+      Parser.EOF
     | _ ->
       set_state (Comment) state lexbuf;
       continue ()
@@ -288,7 +286,7 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Token.t =
     | Some(_) -> 
       continue ()
     | None ->
-      Token.EOF
+      Parser.EOF
     end
   | InIdent(ident) -> begin match peek_char lexbuf with
     | Some(c) when is_ident c ->

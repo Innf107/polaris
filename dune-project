@@ -23,4 +23,5 @@
  (tags
   (topics "to describe" your project)))
 
+(using menhir 2.1)
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project

@@ -4,7 +4,7 @@ module Async = import("../../../lib/async.pls")
 
 let startTime = parseInt(!date "+%s");
 
-let promise = Async.all([(async {!sleep "1"; x}) | x <- [1 .. 30]]);
+let promise = Async.all([(async {!sleep "1"; x}) | let x <- [1 .. 30]]);
 
 let intermediateTime = parseInt(!date "+%s");
 

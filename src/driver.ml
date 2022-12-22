@@ -26,8 +26,8 @@ let rec parse_rename_typecheck : driver_options
     let lex_state = Lexer.new_lex_state () in
     let rec go () =
       match Lexer.token lex_state lexbuf with
-      | Parser.Token.EOF -> exit 0
-      | t -> print_endline (Parser.Token.pretty t); go ()
+      | Parser.EOF -> exit 0
+      | t -> print_endline (Parserutil.pretty_token t); go ()
     in
     go ()
   else
@@ -35,20 +35,14 @@ let rec parse_rename_typecheck : driver_options
 
   let header, ast = 
     let lex_state = Lexer.new_lex_state () in
-    let stream = Athena.Stream.of_iter begin fun () -> 
-      match Lexer.token lex_state lexbuf with 
-      | Parser.Token.EOF -> None 
-      | x -> Some(x, Loc.from_pos lexbuf.lex_start_p lexbuf.lex_curr_p)
-      end
-    in
     match
-      Parser.main stream 
+      Parser.main (Lexer.token lex_state) lexbuf
     with 
-    | Ok res -> res
-    | Error(err) -> 
+    | exception Parser.Error -> 
       let start_pos = lexbuf.lex_start_p in
       let end_pos = lexbuf.lex_curr_p in 
-      raise (ParseError (Loc.from_pos start_pos end_pos, Parser.pretty_error err)) 
+      raise (ParseError (Loc.from_pos start_pos end_pos, "Parse error")) 
+    | res -> res
   in
   if options.print_ast then begin
     print_endline "~~~~~~~~Parsed AST~~~~~~~~";

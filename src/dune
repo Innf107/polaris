@@ -1,13 +1,16 @@
 (library
  (name polaris)
  (libraries
-  athena
+  menhirLib
   trees_that_grow
   bestline 
   unix
   re
   threads)
  (preprocess (pps trees_that_grow)))
+
+(menhir
+ (modules parser))
 
 (env
   (dev

@@ -113,7 +113,7 @@ let for(xs, f) = match xs {
 # Evaluates each argument on a separate thread
 # O(n), tail recursive
 let forConcurrent(xs, f) = {
-    let promises = [(async f(x)) | x <- xs]
+    let promises = [(async f(x)) | let x <- xs]
     for(promises, \p -> await p)
 }
 

@@ -1,8 +1,7 @@
 open Classes
 open Util
 
-type loc = Athena.loc
-module Loc = Athena.Loc
+type loc = Loc.t
 
 module StringMap = Map.Make(String)
 

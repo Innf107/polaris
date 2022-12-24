@@ -58,6 +58,7 @@ let equal_token : token -> token -> bool = (=)
 %token USAGE DESCRIPTION OPTIONS AS
 %token WITH EXTEND
 %token MODULE IMPORT EXPORT
+%token FORALL
 %token EOF
 
 
@@ -242,7 +243,11 @@ pattern:
     | pattern1 { $1 }
 
 pattern1:
-    | pattern_leaf "::" pattern1 { ConsPat(loc $startpos $endpos, $1, $3) }
+    | pattern2 ":" ty { TypePat(loc $startpos $endpos, $1, $3) }
+    | pattern2 { $1 }
+
+pattern2:
+    | pattern_leaf "::" pattern2 { ConsPat(loc $startpos $endpos, $1, $3) }
     | pattern_leaf { $1 }
 
 pattern_leaf:
@@ -257,3 +262,28 @@ mod_expr:
     | IMPORT "(" STRING ")" { Import(loc $startpos $endpos, $3) }
     | IDENT { ModVar(loc $startpos $endpos, $1) }
     | mod_expr "." IDENT { SubModule(loc $startpos $endpos, $1, $3) }
+
+ty:
+    | "(" sep_trailing(COMMA, ty) ")" "->" ty               { Fun ($2, $5) }
+    | ty1 "->" ty                                           { Fun ([$1], $3) }
+    | "(" sep_trailing(COMMA, ty) ")"                       { Tuple(Array.of_list $2) }
+    | FORALL IDENT* "." ty                                  { List.fold_right (fun a r -> Forall(a, r)) $2 $4 }
+    | ty1                                                   { $1 }
+
+ty1:
+    | IDENT                                                 { match $1 with
+                                                                | "Number" -> Number
+                                                                | "Bool" -> Bool
+                                                                | "String" -> String
+                                                                | x -> TyVar(x)
+                                                            }
+    | IDENT "(" ty ")"                                      { match $1 with 
+                                                                | "List" -> List($3) 
+                                                                | "Promise" -> Promise($3)
+                                                                | _ -> Util.panic __LOC__ (Loc.pretty (loc $startpos $endpos) ^ "Type constructors are not yet implemented! (Maybe you just misspelled 'List'?)")
+                                                            }
+    | "{" sep_trailing(COMMA, record_entry) "}"             { Record (RowClosed(Array.of_list $2)) }
+    | "{" sep_trailing(COMMA, record_entry) "|" IDENT "}"   { Record (RowVar(Array.of_list $2, $4)) }
+
+record_entry:
+    IDENT ":" ty { ($1, $3) }

@@ -91,3 +91,11 @@ let path_relative_to : string -> string -> string =
       Filename.concat (Filename.dirname base_file) path
     else
       path
+
+let rec split3 = function
+    | [] -> ([], [], [])
+    | ((x, y, z) :: rest) ->
+      let (xs, ys, zs) = split3 rest in
+      (x :: xs, y :: ys, z :: zs)
+
+let compose funs = List.fold_right (fun t r x -> t (r x)) funs (fun x -> x)

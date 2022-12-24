@@ -105,7 +105,7 @@ let replace_tvar : name -> ty -> ty -> ty =
   fun var replacement -> Ty.transform begin function
     (* We rely on the renamer and generalization to eliminate
        and name shadowing, so we don't need to deal with foralls here *)
-    | Var tv when tv = var -> replacement
+    | TyVar tv when tv = var -> replacement
     | ty -> ty
     end
 
@@ -162,6 +162,10 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
       (* TODO: Make sure both sides bind the same set of variables with the same types *)
       let right_trans = check_pattern env right left_ty in
       left_ty, left_trans << right_trans
+    | TypePat(_, pattern, ty) ->
+      let env_trans = check_pattern env pattern ty in
+      ty, env_trans
+
 
 (* The checking judgement for patterns doesn't actually do anything interesting at the moment. *)
 and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
@@ -543,7 +547,7 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
         end
       | (Record (RowVar _), _ | _, Record (RowVar _)) -> 
         panic __LOC__ "Uninstantiated variable row found during unification"
-      | Var _, _ | _, Var _ -> panic __LOC__ "Uninstantiated type variable found during unification"
+      | TyVar _, _ | _, TyVar _ -> panic __LOC__ "Uninstantiated type variable found during unification"
       | _ -> raise (TypeError (loc, UnableToUnify ((ty1, ty2), (original_ty1, original_ty2))))
     in
     go original_ty1 original_ty2
@@ -572,7 +576,7 @@ let generalize : ty -> ty =
     let ty' = UnifSet.fold 
       (fun (u, name) r -> 
         let name = Name.refresh name in
-        Forall(name, replace_unif u (Var name) r)) 
+        Forall(name, replace_unif u (TyVar name) r)) 
       (free_unifs ty) 
       ty
     in

@@ -37,7 +37,7 @@ module Template = struct
   type ty =
     | Forall of name * ty
     | Fun of ty list * ty
-    | Var of name
+    | TyVar of name
     (* The 'name' is just kept around for error messages but *completely ignored* when typechecking *)
     | Unif of Unique.t * name
     | Number
@@ -81,9 +81,9 @@ module Template = struct
             | Record (RowUnif (fields, (u, name))) ->
               M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (Unif (u, name)))
             | Record (RowVar (fields, var)) ->
-              M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (Var var))
+              M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (TyVar var))
             (* non-recursive cases *)
-            | Var _ | Unif _ | Number | Bool | String  -> M.empty
+            | TyVar _ | Unif _ | Number | Bool | String  -> M.empty
           in
           M.append result remaining
         in
@@ -110,7 +110,7 @@ module Template = struct
           let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
           begin match transform trans (Unif (u, name)) with
           | Unif (u, name) -> Record (RowUnif (fields, (u, name)))
-          | Var var -> Record (RowVar (fields, var))
+          | TyVar var -> Record (RowVar (fields, var))
           | Record (RowClosed fields2) ->
             Record (RowClosed (Array.append fields fields2))
           | Record (RowUnif (fields2, unif)) ->
@@ -121,9 +121,9 @@ module Template = struct
           end
         | Record (RowVar (fields, var)) ->
           let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
-          begin match transform trans (Var var) with
+          begin match transform trans (TyVar var) with
           | Unif (u, name) -> Record (RowUnif (fields, (u, name)))
-          | Var var -> Record (RowVar (fields, var))
+          | TyVar var -> Record (RowVar (fields, var))
           | Record (RowClosed fields2) ->
             Record (RowClosed (Array.append fields fields2))
           | Record (RowUnif (fields2, unif)) ->
@@ -133,7 +133,7 @@ module Template = struct
           | ty -> panic __LOC__ ("Row extension variable replaced with non-row type")
           end
         (* Non-recursive cases *)
-        | (Var _ | Unif _ | Number | Bool | String) as ty -> ty
+        | (TyVar _ | Unif _ | Number | Bool | String) as ty -> ty
         in
         trans transformed
   end
@@ -145,6 +145,7 @@ module Template = struct
     | TuplePat of loc * pattern list
     | NumPat of loc * float
     | OrPat of loc * pattern * pattern
+    | TypePat of loc * pattern * ty
 
   type module_exports = {
       exported_names : name StringMap.t;
@@ -320,7 +321,7 @@ module Template = struct
   let rec pretty_type = function
     | Forall (var, ty) -> "∀" ^ pretty_name var ^ ". " ^ pretty_type ty
     | Fun (args, res) -> "(" ^ String.concat ", " (List.map pretty_type args) ^ ") -> " ^ pretty_type res
-    | Var var -> pretty_name var
+    | TyVar var -> pretty_name var
     | Unif (u, name) -> pretty_name name ^ "$" ^ Unique.display u
     | Number -> "Number"
     | Bool -> "Bool"
@@ -339,6 +340,7 @@ module Template = struct
     | TuplePat (_, pats) -> "(" ^ String.concat ", " (List.map pretty_pattern pats) ^ ")"
     | NumPat (_, f) -> Float.to_string f
     | OrPat (_, p1, p2) -> "(" ^ pretty_pattern p1 ^ " | " ^ pretty_pattern p2 ^ ")"
+    | TypePat (_, pat, ty) -> "(" ^ pretty_pattern pat ^ " : " ^ pretty_type ty ^ ")"
 
   let rec pretty = function
     | Var (_, x) -> pretty_name x
@@ -431,7 +433,7 @@ module Template = struct
 
   let get_pattern_loc = function
     | VarPat (loc, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
-    | NumPat (loc, _) | OrPat (loc, _, _) 
+    | NumPat (loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _)
     -> loc
 end [@@ttg_template]
 

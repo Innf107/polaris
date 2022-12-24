@@ -60,3 +60,4 @@ let pretty_token = function
 | MODULE -> "MODULE"
 | IMPORT -> "IMPORT"
 | EXPORT -> "EXPORT"
+| FORALL -> "FORALL"

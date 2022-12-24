@@ -63,6 +63,7 @@ let handle_errors print_fun f =
   (* RenameError *)
   | VarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Variable not found: '" ^ x ^ "'")
   | ModuleVarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Module not found: '" ^ x ^ "'")
+  | TyVarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Type variable not found: '" ^ x ^ "'")
   | SubscriptVarNotFound (x, loc) -> 
     print_fun (Loc.pretty loc ^ ": Variable or module not found: '" ^ x ^ "'")
   | LetSeqInNonSeq (expr, loc) -> print_fun (
@@ -71,6 +72,8 @@ let handle_errors print_fun f =
       )
   | SubModuleNotFound (name, loc) ->
     print_fun (Loc.pretty loc ^ ": Module does not contain a submodule named '" ^ name ^ "'")
+  | HigherRankType (_ty, loc) ->
+    print_fun (Loc.pretty loc ^ ": Illegal inner forall in type.\n    Polaris does not support higher rank polymorphism")
   (* EvalError *)
   | DynamicVarNotFound (x, loc::locs) -> print_fun (
         Loc.pretty loc ^ ": Variable not found during execution: '" ^ Name.pretty x ^ "'\n"

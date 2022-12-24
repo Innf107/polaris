@@ -1,0 +1,1 @@
+test/categories/types/scoped_tyvars2.pls:3:6 - 3:10: Type variable not found: 'a'

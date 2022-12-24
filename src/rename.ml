@@ -8,9 +8,11 @@ module FilePathMap = Map.Make(String)
 module RenameError = struct
     exception VarNotFound of string * loc
     exception ModuleVarNotFound of string * loc
+    exception TyVarNotFound of string * loc
     exception SubscriptVarNotFound of string * loc
     exception LetSeqInNonSeq of Parsed.expr * loc
     exception SubModuleNotFound of string * loc
+    exception HigherRankType of Parsed.ty * loc
 end
 
 module RenameScope = struct
@@ -18,18 +20,23 @@ module RenameScope = struct
     type t = { 
         variables: name RenameMap.t;
         module_vars: (name * t) RenameMap.t;
+        ty_vars: name RenameMap.t;
     }
 
     let empty : t = { 
             variables = RenameMap.empty; 
             module_vars = RenameMap.empty;
+            ty_vars = RenameMap.empty
         }
 
     let insert_var (old : string) (renamed : name) (scope : t) : t =
         { scope with variables = add old renamed scope.variables }
-    
+
     let insert_mod_var (old : string) (renamed : name) (contents : t) (scope : t) : t =
         { scope with module_vars = add old (renamed, contents) scope.module_vars }
+
+    let insert_type_var (old : string) (renamed : name) (scope : t) : t =
+        { scope with ty_vars = add old renamed scope.ty_vars }    
 
     let lookup_var (scope : t) (loc : loc) (var : string) : name =
         try 
@@ -46,32 +53,102 @@ end
 
 let fresh_var = Name.fresh
 
+let rename_type loc (scope : RenameScope.t) original_type = 
+    let rec go (scope : RenameScope.t) ty = 
+        (* Polaris does not support higher rank, let alone impredicative polymorphism,
+        so top level foralls are the only way to bind type variables and everything else
+        can use its own case *)
+        let rec rename_nonbinding = function
+        | Parsed.Number -> Renamed.Number
+        | Bool -> Bool
+        | String -> String
+        | List(ty) -> List(rename_nonbinding ty)
+        | Promise(ty) -> Promise(rename_nonbinding ty)
+        | Tuple(tys) -> Tuple(Array.map rename_nonbinding tys)
+        | Fun(tys1, ty) -> Fun(List.map rename_nonbinding tys1, rename_nonbinding ty)
+        | Record(row) -> todo __LOC__
+        | TyVar(tv) -> begin match RenameMap.find_opt tv scope.ty_vars with
+            | Some tv' -> TyVar(tv')
+            | None -> raise (RenameError.TyVarNotFound(tv, loc))
+            end
+        | Parsed.Forall _ -> raise (RenameError.HigherRankType(ty, loc))
+        | Unif(_) -> panic __LOC__ ("Unification variable found after parsing. How did this happen wtf?")
+        in
+        match ty with
+        | Parsed.Forall(tv, ty) ->
+            let tv' = fresh_var tv in
+            let scope_trans = RenameScope.insert_type_var tv tv' in
+            let ty', other_trans = go (scope_trans scope) ty in
+            Renamed.Forall(tv', ty'), (fun scope -> scope_trans (other_trans scope))
+        | _ -> rename_nonbinding ty, Fun.id
+    in go scope original_type
+
+
+(* Note [PatternTypeTransformers]
+   rename_pattern returns *two* scope transformers. One for value bindings, as one might expect,
+   and one for type variable bindings.
+   The utility of this second transformer is a bit less obvious. Unlike the value transformer,
+   which specifies how to bind the matched values for the *remaining code*, this one is only
+   relevant for the *definition* of whatever is bound by the pattern (currently only used in let bindings).
+
+   This is necessary so that let bound variables with universally quantified types behave correctly, e.g.
+
+    ```
+    # This should be accepted and the type of x should refer to the type variable bound by f's type
+    let f : forall a. a = \(x : a) -> x
+
+    # This should be rejected
+    let y : a = ...
+    ```
+ *)
 let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in function
     | Parsed.VarPat (loc, var) ->
         let var' = fresh_var var in
-        (Renamed.VarPat (loc, var'), fun scope -> insert_var var var' scope)
+        (Renamed.VarPat (loc, var'), (fun scope -> insert_var var var' scope), fun x -> x)
     | ConsPat (loc, x, xs) ->
-        let x', x_trans = rename_pattern scope x in
-        let xs', xs_trans = rename_pattern scope xs in
-        (ConsPat (loc, x', xs'), fun scope -> xs_trans (x_trans scope))
+        let x', x_trans, x_ty_trans = rename_pattern scope x in
+        let xs', xs_trans, xs_ty_trans = rename_pattern scope xs in
+        ( ConsPat (loc, x', xs')
+        , (fun scope -> xs_trans (x_trans scope))
+        , (fun scope -> xs_ty_trans (x_ty_trans scope))
+        )
     | ListPat (loc, pats) ->
-        let pats', pats_trans = List.split (List.map (rename_pattern scope) pats) in
-        (ListPat (loc, pats'), List.fold_right (fun t r x -> t (r x)) pats_trans (fun x -> x))
+        let pats', pats_trans, pats_ty_trans = Util.split3 (List.map (rename_pattern scope) pats) in
+        ( ListPat (loc, pats')
+        , Util.compose pats_trans
+        , Util.compose pats_ty_trans
+        )
     | TuplePat (loc, pats) ->
-        let pats', pats_trans = List.split (List.map (rename_pattern scope) pats) in
-        (TuplePat (loc, pats'), List.fold_right (fun t r x -> t (r x)) pats_trans (fun x -> x))    
+        let pats', pats_trans, pats_ty_trans = Util.split3 (List.map (rename_pattern scope) pats) in
+        ( TuplePat (loc, pats')
+        , Util.compose pats_trans
+        , Util.compose pats_ty_trans
+        )    
     | NumPat (loc, f) ->
-        (NumPat (loc, f), fun x -> x)
+        (NumPat (loc, f)
+        , (fun x -> x)
+        , (fun x -> x)
+        )
     | OrPat(loc, p1, p2) ->
-        let p1', p1_trans = rename_pattern scope p1 in
-        let p2', p2_trans = rename_pattern scope p2 in
-        (OrPat(loc, p1', p2'), fun scope -> p2_trans (p1_trans scope))
+        let p1', p1_trans, p1_ty_trans = rename_pattern scope p1 in
+        let p2', p2_trans, p2_ty_trans = rename_pattern scope p2 in
+        ( OrPat(loc, p1', p2')
+        , (fun scope -> p2_trans (p1_trans scope))
+        , (fun scope -> p2_ty_trans (p1_ty_trans scope))
+        )
+    | TypePat (loc, p, ty) ->
+        let p', p_trans, p_ty_trans = rename_pattern scope p in
+        let ty', ty_trans = rename_type loc scope ty in
+        ( TypePat (loc, p', ty')
+        , p_trans
+        , (fun scope -> ty_trans (p_ty_trans scope))
+        )
 
 let rename_patterns scope pats =
-    List. fold_right (fun pat (pats', trans) -> begin
-        let pat', pat_trans = rename_pattern scope pat in
-        (pat' :: pats', fun s -> pat_trans (trans s))
-    end) pats ([], fun x -> x)
+    List. fold_right (fun pat (pats', trans, ty_trans) -> begin
+        let pat', pat_trans, pat_ty_trans = rename_pattern scope pat in
+        (pat' :: pats', (fun scope -> pat_trans (trans scope)), fun scope -> pat_ty_trans (ty_trans scope))
+    end) pats ([], (fun x -> x), (fun x -> x))
 
 let rec rename_mod_expr : (module_exports * Renamed.expr list) FilePathMap.t
                    -> RenameScope.t 
@@ -126,7 +203,9 @@ let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.
     | App (loc, f, args) -> App (loc, rename_expr exports scope f, List.map (rename_expr exports scope) args)
     
     | Lambda (loc, xs, e) ->
-        let xs', scope_trans = rename_patterns scope xs in
+        (* We ignore the type transformer since it is only relevant in 'let' bindings. 
+           See Note [PatternTypeTransformers] *)
+        let xs', scope_trans, _ty_trans = rename_patterns scope xs in
         Lambda (loc, xs', rename_expr exports (scope_trans scope) e)
 
     | StringLit (loc, s) -> StringLit (loc, s)
@@ -171,7 +250,14 @@ let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.
             (* The expression is renamed with the previous scope, since
                draw clauses cannot be recursive *)
             let expr' = rename_expr exports scope expr in
-            let pattern', scope_trans = rename_pattern scope pattern in
+            (* We don't need to (and probably shouldn't) use the type transformer here, 
+               (See Note [PatternTypeTransformers]) 
+               Since expressions in draw clauses need to return lists, so the only way that this pattern
+               could bind type variables would be if the list returned by `expr` had type `List(forall a. ...)`.
+
+               This is impossible, since polaris does not support impredicative polymorphism.
+            *)
+            let pattern', scope_trans, _ty_trans = rename_pattern scope pattern in
             rename_comp (scope_trans scope) (DrawClause (pattern', expr') :: renamed_comp_exprs_rev) comps
         in
         rename_comp scope [] comp_exprs
@@ -184,15 +270,20 @@ let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.
     | LetModuleSeq (loc, _, _) -> raise (RenameError.LetSeqInNonSeq (expr, loc))
 
     | Let (loc, p, e1, e2) ->
-        let p', scope_trans = rename_pattern scope p in
-        (* regular lets are non-recursive, so e1 is *not* evaluated in the new scope *)
-        Let (loc, p', rename_expr exports scope e1, rename_expr exports (scope_trans scope) e2)
+        let p', scope_trans, ty_trans = rename_pattern scope p in
+        (* Regular lets are non-recursive, so e1 is *not* evaluated in the new scope with the value transformer applied.
+           Let patterns *can* bind type variables though (See Note [PatternTypeTransformers]), so `e1` needs
+           to be evaluated in a scope where `ty_trans` has been applied.
+
+           At the same time, `e2` should *not* be able to use the type variables bound by `p` *)
+        Let (loc, p', rename_expr exports (ty_trans scope) e1, rename_expr exports (scope_trans scope) e2)
     | LetRec (loc, x, patterns, e1, e2) ->
         let x' = fresh_var x in
-        let patterns', scope_trans = rename_patterns scope patterns in
+        let patterns', scope_trans, _ty_trans = rename_patterns scope patterns in
         let scope' = insert_var x x' scope in
         let inner_scope = scope_trans scope' in
-        (* let rec's *are* recursive *)
+        (* let rec's *are* recursive. The type transformer is part of the *parameters*, so we ignore it here. 
+           (See Note [PatternTypeTransformers]) *)
         LetRec(loc, x', patterns', rename_expr exports inner_scope e1, rename_expr exports scope' e2)
     | LetEnv (loc, x, e1, e2) ->
         LetEnv (loc, x, rename_expr exports scope e1, rename_expr exports scope e2)
@@ -213,7 +304,9 @@ let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.
         let expr' = rename_expr exports scope expr in
         let branches' = List.map (
             fun (pat, expr) -> 
-                let pat', scope_trans = rename_pattern scope pat in
+                (* The type transformer is only useful for the body of a definition so
+                   we ignore it here (See Note [PatternTypeTransformers]) *)
+                let pat', scope_trans, _ty_trans = rename_pattern scope pat in
                 let scope' = scope_trans scope in
                 (pat', rename_expr exports scope' expr)
             ) branches 
@@ -224,17 +317,21 @@ and rename_seq_state (exports : (module_exports * Renamed.expr list) FilePathMap
     let open RenameScope in
     match exprs with
     | (LetSeq (loc, p, e) :: exprs) -> 
-        let p', scope_trans = rename_pattern scope p in
-        (* regular lets are non-recursive, so e' is *not* evaluated in the new scope *)
-        let e' = rename_expr exports scope e in
+        let p', scope_trans, ty_trans = rename_pattern scope p in
+        (* Regular lets are non-recursive, so e' is *not* evaluated in the new scope.
+           We still need to bind type variables in the inner scope though 
+           (See Note [PatternTypeTransformers] and the case for `Let`) *)
+        let e' = rename_expr exports (ty_trans scope) e in
         let exprs', res_scope = rename_seq_state exports (scope_trans scope) exprs in
         (LetSeq (loc, p', e') :: exprs', res_scope)
     | LetRecSeq (loc, x, patterns, e) :: exprs -> 
         let x' = fresh_var x in
-        let patterns', scope_trans = rename_patterns scope patterns in
+        let patterns', scope_trans, ty_trans = rename_patterns scope patterns in
         let scope' = insert_var x x' scope in
-        let inner_scope = scope_trans scope' in
-        (* let rec's *are* recursive! *)
+        let inner_scope = ty_trans (scope_trans scope') in
+        (* Let rec's *are* recursive! We do not want to apply the type transformer since it
+           only concerns the parameters.
+           (See Note [PatternTypeTransformers] and the case for `LetRec`) *)
         let e' = rename_expr exports inner_scope e in
         let exprs', res_scope = rename_seq_state exports scope' exprs in
         (LetRecSeq(loc, x', patterns', e') :: exprs', res_scope)

@@ -179,6 +179,7 @@ let ident_token = let open Parser in function
 | "module" -> MODULE
 | "import" -> IMPORT
 | "export" -> EXPORT
+| "forall" -> FORALL
 | str -> IDENT(str)
 
 let op_token lexbuf = let open Parser in function

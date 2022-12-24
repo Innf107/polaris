@@ -219,6 +219,8 @@ module Template = struct
     | Match of loc * expr * (pattern * expr) list
     (* Modules *)
     | LetModuleSeq of loc * name * module_expr
+    (* Types *)
+    | Ascription of loc * expr * ty
 
   and list_comp_clause =
     | DrawClause of pattern * expr (* p <- e *)
@@ -294,6 +296,7 @@ module Template = struct
           | Await (_, expr) -> go expr
           | Match(_, scrut_expr, branch_exprs) -> M.append (go scrut_expr) (fold monoid (fun (_, expr) -> go expr) branch_exprs)
           | LetModuleSeq _ -> M.empty
+          | Ascription (_, expr, _) -> go expr
           in
           M.append result remaining
         in
@@ -424,6 +427,8 @@ module Template = struct
       ^ "\n}"
     | LetModuleSeq (_, name, mexpr) ->
       "module " ^ pretty_name name ^ " = " ^ MExpr.pretty mexpr
+    | Ascription (_, expr, ty) ->
+      "(" ^ pretty expr ^ " : " ^ pretty_type ty ^ ")"
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
@@ -436,7 +441,7 @@ module Template = struct
     | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | LetEnvSeq(loc, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
-    | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _)
+    | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _)
     -> loc
     | ModSubscript (ext, _, _) -> mod_subscript_loc ext
 

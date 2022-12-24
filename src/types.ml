@@ -110,13 +110,20 @@ let replace_tvar : name -> ty -> ty -> ty =
     end
 
 
-let rec instantiate : ty -> ty =
+let rec instantiate_with_function : ty -> (ty * (ty -> ty)) =
   function
   | Forall (tv, ty) ->
     let unif = Unif (Unique.fresh (), tv) in
     (* TODO: Collect all tyvars first to avoid multiple traversals *)
-    instantiate (replace_tvar tv unif ty)
-  | ty -> ty
+    let replacement_fun = replace_tvar tv unif in
+    let instantiated, inner_replacement_fun = instantiate_with_function (replacement_fun ty) in
+    instantiated, (fun ty -> inner_replacement_fun (replacement_fun ty))
+  | ty -> ty, Fun.id
+
+let instantiate : ty -> ty =
+  fun ty ->
+    let (instaniated, _) = instantiate_with_function ty in
+    instaniated
 
 let rec skolemize : ty -> ty =
   function
@@ -355,6 +362,10 @@ let rec infer : local_env -> expr -> ty =
         check (env_trans env) result_ty expr  
       end;
       result_ty 
+    | Ascription (_, expr, ty) ->
+      check env ty expr;
+      ty
+
 
 and check : local_env -> ty -> expr -> unit =
   fun env expected_ty expr ->

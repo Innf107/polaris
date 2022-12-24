@@ -1,0 +1,4 @@
+test/categories/types/ascription.pls:4:2 - 4:2: Unable to unify types 'Number'
+                    and 'String'
+While trying to unify '(Number) -> Number'
+                  and '(String) -> α_9$9'

@@ -573,6 +573,10 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
       | [] -> raise (EvalError.NonExhaustiveMatch (scrut_val, loc :: env.call_trace))
     in
     go branches
+  | Ascription (_, expr, _) ->
+    (* Ascriptions don't affect the evaluator. 
+       These have been checked by the type checker already *)
+    eval_expr env expr
 
 and eval_app env loc fun_v arg_vals = 
   match fun_v with

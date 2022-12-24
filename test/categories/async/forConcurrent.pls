@@ -6,6 +6,7 @@ let startTime = parseInt(!date "+%s");
 
 List.forConcurrent([0 .. 100], \x -> {
     !sleep "1";
+    ()
 });
 
 let endTime = parseInt(!date "+%s");

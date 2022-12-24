@@ -129,6 +129,7 @@ header:
 
 expr:
     | expr1 "|" pipe_list { Pipe (loc $startpos $endpos, $1 :: $3) }
+    | expr1 ":" ty { Ascription (loc $startpos $endpos, $1, $3) }
     | expr1 { $1 }
 
 

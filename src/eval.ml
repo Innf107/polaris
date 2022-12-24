@@ -209,6 +209,9 @@ let trim_output = function
 let rec match_pat_opt (pat : Renamed.pattern) (scrut : value) : (eval_env -> eval_env) option =
   let (let*) = Option.bind in
   match pat, scrut with
+  (* Type patterns are ignored at runtime. These have already been
+     checked by the typechecker *)
+  | TypePat (_, pat, _), scrut -> match_pat_opt pat scrut
   | VarPat (_, x), scrut ->
     Some(fun env -> fst(insert_var x scrut env))
   | ConsPat(_, p, ps), ListV (v :: vs) ->

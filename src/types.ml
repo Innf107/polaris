@@ -118,6 +118,13 @@ let rec instantiate : ty -> ty =
     instantiate (replace_tvar tv unif ty)
   | ty -> ty
 
+let rec skolemize : ty -> ty =
+  function
+  | Forall (tv, ty) ->
+    let skol = Skol (Unique.fresh (), tv) in
+    skolemize (replace_tvar tv skol ty)
+  | ty -> ty
+
 let rec eval_module_env : local_env -> module_expr -> global_env =
   fun env -> function
   | ModVar (loc, var) -> 
@@ -170,9 +177,17 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
 (* The checking judgement for patterns doesn't actually do anything interesting at the moment. *)
 and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
   fun env pat expected_ty ->
-    let ty, trans = infer_pattern env pat in
-    unify env (get_pattern_loc pat) ty expected_ty;
-    trans
+    match pat with
+    (* We need a special case for var patterns to allow polymorphic type patterns. 
+      (These would be rejected by unification)
+      This is not necessary for any of the other patterns, since these cannot check against
+      polytypes anyway *)
+    | VarPat (_, var) -> 
+      insert_var var expected_ty
+    | _ ->
+      let ty, trans = infer_pattern env pat in
+      unify env (get_pattern_loc pat) ty expected_ty;
+      trans
 
 let rec infer : local_env -> expr -> ty =
   fun env expr -> match expr with
@@ -343,8 +358,9 @@ let rec infer : local_env -> expr -> ty =
 
 and check : local_env -> ty -> expr -> unit =
   fun env expected_ty expr ->
+    let expected_skolem_ty = skolemize expected_ty in
     let ty = infer env expr in
-    unify env (get_loc expr) ty expected_ty
+    unify env (get_loc expr) ty expected_skolem_ty
 
 and infer_list_comp : local_env -> list_comp_clause list -> local_env =
     fun env -> function
@@ -510,6 +526,7 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
       | Promise ty1, Promise ty2 -> go ty1 ty2
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), (original_ty1, original_ty2))))
       | (Number, Number) | (Bool, Bool) | (String, String) -> ()
+      | Skol (u1, _), Skol (u2, _) when Unique.equal u1 u2 -> ()
       | Record (RowClosed fields1), Record (RowClosed fields2) ->
         unify_rows fields1 fields2 (fun remaining1 remaining2 -> 
           raise (TypeError (loc, MissingRowFields (remaining1, remaining2, original_ty1, original_ty2))))

@@ -73,6 +73,7 @@ let rename_type loc (scope : RenameScope.t) original_type =
             end
         | Parsed.Forall _ -> raise (RenameError.HigherRankType(ty, loc))
         | Unif(_) -> panic __LOC__ ("Unification variable found after parsing. How did this happen wtf?")
+        | Skol(_) -> panic __LOC__ ("Skolem found after parsing. How did this happen wtf?")
         in
         match ty with
         | Parsed.Forall(tv, ty) ->

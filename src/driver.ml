@@ -12,6 +12,8 @@ type driver_options = {
 
 exception ParseError of loc * string
 
+type specific_parse_error = Parserprelude.specific_parse_error
+exception SpecificParseError = Parserprelude.SpecificParseError
 
 let polaris_home = Sys.getenv "HOME" ^ "/.polaris"
 

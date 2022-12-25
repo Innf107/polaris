@@ -267,7 +267,7 @@ let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.
 
     | Seq (loc, es) -> Seq (loc, rename_seq exports scope es)
 
-    | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _) | LetEnvSeq (loc, _, _) 
+    | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _, _) | LetEnvSeq (loc, _, _) 
     | LetModuleSeq (loc, _, _) -> raise (RenameError.LetSeqInNonSeq (expr, loc))
 
     | Let (loc, p, e1, e2) ->
@@ -278,14 +278,24 @@ let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.
 
            At the same time, `e2` should *not* be able to use the type variables bound by `p` *)
         Let (loc, p', rename_expr exports (ty_trans scope) e1, rename_expr exports (scope_trans scope) e2)
-    | LetRec (loc, x, patterns, e1, e2) ->
+    | LetRec (loc, mty, x, patterns, e1, e2) ->
         let x' = fresh_var x in
-        let patterns', scope_trans, _ty_trans = rename_patterns scope patterns in
+        let patterns', scope_trans, _param_ty_trans = rename_patterns scope patterns in
         let scope' = insert_var x x' scope in
-        let inner_scope = scope_trans scope' in
-        (* let rec's *are* recursive. The type transformer is part of the *parameters*, so we ignore it here. 
+
+        let mty', type_trans = match mty with
+        | None -> None, Fun.id
+        | Some ty ->
+            let ty', ty_trans = rename_type loc scope ty in
+            Some ty', ty_trans
+        in
+
+        let inner_scope = type_trans (scope_trans scope') in
+
+        (* let rec's *are* recursive. The fist type transformer is part of the *parameters*, so we ignore it here. 
+           We do need to include the type transformer for the (possible) type annotation though!
            (See Note [PatternTypeTransformers]) *)
-        LetRec(loc, x', patterns', rename_expr exports inner_scope e1, rename_expr exports scope' e2)
+        LetRec(loc, mty', x', patterns', rename_expr exports inner_scope e1, rename_expr exports scope' e2)
     | LetEnv (loc, x, e1, e2) ->
         LetEnv (loc, x, rename_expr exports scope e1, rename_expr exports scope e2)
     | Assign (loc, x, e) ->
@@ -329,17 +339,25 @@ and rename_seq_state (exports : (module_exports * Renamed.expr list) FilePathMap
         let e' = rename_expr exports (ty_trans scope) e in
         let exprs', res_scope = rename_seq_state exports (scope_trans scope) exprs in
         (LetSeq (loc, p', e') :: exprs', res_scope)
-    | LetRecSeq (loc, x, patterns, e) :: exprs -> 
+    | LetRecSeq (loc, mty, x, patterns, e) :: exprs -> 
         let x' = fresh_var x in
-        let patterns', scope_trans, ty_trans = rename_patterns scope patterns in
+        let patterns', scope_trans, _param_ty_trans = rename_patterns scope patterns in
         let scope' = insert_var x x' scope in
-        let inner_scope = ty_trans (scope_trans scope') in
-        (* Let rec's *are* recursive! We do not want to apply the type transformer since it
-           only concerns the parameters.
+
+        let mty', type_trans = match mty with
+        | None -> None, Fun.id
+        | Some ty ->
+            let ty', ty_trans = rename_type loc scope ty in
+            Some ty', ty_trans
+        in
+        let inner_scope = type_trans (scope_trans scope') in
+        (* Let rec's *are* recursive! We should not apply the first type transformer since it
+           only concerns the parameters, but we need to include the type transformer for the
+           (potential) type annotation!
            (See Note [PatternTypeTransformers] and the case for `LetRec`) *)
         let e' = rename_expr exports inner_scope e in
         let exprs', res_scope = rename_seq_state exports scope' exprs in
-        (LetRecSeq(loc, x', patterns', e') :: exprs', res_scope)
+        (LetRecSeq(loc, mty', x', patterns', e') :: exprs', res_scope)
     | LetEnvSeq (loc, x, e) :: exprs ->
         let e = rename_expr exports scope e in
         let exprs, scope = rename_seq_state exports scope exprs in

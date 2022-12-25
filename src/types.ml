@@ -15,6 +15,8 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | WrongNumberOfArgs of ty list * ty list * ty * ty
                 | NonProgCallInPipe of expr
                 | MissingRowFields of (string * ty) list * (string * ty) list * ty * ty
+                | ArgCountMismatchInDefinition of name * ty list * int
+                | NonFunTypeInLetRec of name * ty
 
 exception TypeError of loc * type_error
 
@@ -310,9 +312,9 @@ let rec infer : local_env -> expr -> ty =
       (* Lets are non-recursive, so we use the *unaltered* environment *)
       check env ty e1;
       infer (env_trans env) e2  
-    | LetRec (loc, fun_name, pats, body, rest) ->
+    | LetRec (loc, mty, fun_name, pats, body, rest) ->
       (* We defer to `infer_seq_expr` here, since the core logic is exactly the same *)
-      let env_trans = infer_seq_expr env (LetRecSeq(loc, fun_name, pats, body)) in
+      let env_trans = infer_seq_expr env (LetRecSeq(loc, mty, fun_name, pats, body)) in
       infer (env_trans env) rest
     | LetEnv (_, envvar, e1, e2) ->
       check env String e1;
@@ -392,14 +394,33 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
       let ty, env_trans = infer_pattern env pat in
       check env ty e;
       env_trans
-    | LetRecSeq(loc, fun_name, pats, body) ->
-      let arg_tys, transformers = List.split (List.map (infer_pattern env) pats) in
-      let result_ty = fresh_unif () in
+    | LetRecSeq(loc, mty, fun_name, pats, body) ->
+      let arg_tys, transformers, result_ty = match Option.map skolemize mty with
+      | None -> 
+        let arg_tys, transformres = List.split (List.map (infer_pattern env) pats) in
+        arg_tys, transformres, fresh_unif ()
+      | Some (Fun(arg_tys, result_ty)) ->
+        if (List.compare_lengths arg_tys pats != 0) then
+          raise (TypeError (loc, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length pats)))
+        else
+          arg_tys, List.map2 (check_pattern env) pats arg_tys, result_ty
+      | Some ty -> raise (TypeError (loc, NonFunTypeInLetRec(fun_name, ty)))
+      in
+
+
       trace_tc ("[Infer (LetRec(Seq) ..)]: " ^ Name.pretty fun_name ^ " : " ^ pretty_type (Fun (arg_tys, result_ty)));
-      (* We have to check the body against a unification variable instead of inferring,
-          since we need to know the functions type in its own (possibly recursive) definition*)
-      let env_trans = insert_var fun_name (Fun (arg_tys, result_ty)) in
+
+      let fun_ty = match mty with
+      | Some ty -> ty
+      | None -> Fun (arg_tys, result_ty)
+      in
+
+      let env_trans = insert_var fun_name fun_ty in
+
       let inner_env = List.fold_left (<<) Fun.id transformers (env_trans env) in
+
+      (* Without a type annotation, we have to check the body against a unification variable instead of inferring,
+          since we need to know the functions type in its own (possibly recursive) definition*)
       check inner_env result_ty body;
       env_trans
     | LetEnvSeq(loc, envvar, expr) ->

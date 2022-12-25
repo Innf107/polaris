@@ -1,0 +1,1 @@
+test/categories/types/fancy_letrec_nonfun.pls:3:4 - 4:12: The function definition for 'f_5' is declared as a function but has a non-function type.

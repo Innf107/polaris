@@ -59,6 +59,10 @@ let handle_errors print_fun f =
   | Util.Panic msg -> print_fun ("PANIC! The 'impossible' happened (This is a bug, please report it!):\n" ^ msg)
   | Util.TODO loc -> print_fun ("PANIC! Unresolved compiler TODO at '" ^ loc ^ "'.\nIf you see this, please report it and tell the author to finish their things before releasing them!")
   | ParseError (loc, msg) -> print_fun ("Parse Error at " ^ Loc.pretty loc ^ ": " ^ msg)
+  | SpecificParseError (MismatchedLetName(loc, name1, name2)) ->
+    print_fun(Loc.pretty loc ^ ": Function declared with different names.\n"
+            ^ "    The type signature calls it:       '" ^ name1 ^ "'\n"
+            ^ "    but its definition refers to it as '" ^ name2 ^ "'")
   | Sys_error msg -> print_fun ("System error: " ^ msg)
   (* RenameError *)
   | VarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Variable not found: '" ^ x ^ "'")
@@ -216,7 +220,11 @@ let handle_errors print_fun f =
                      ^ "Missing Mutual row fields '" ^ Renamed.pretty_type (Record (RowClosed (Array.of_list remaining2))) ^ "'\n"
                      ^ "                      and '" ^ Renamed.pretty_type (Record (RowClosed (Array.of_list remaining1))) ^ "'\n"
                      ^ "                      respectively."
-
+    | ArgCountMismatchInDefinition (fun_name, types, count) ->
+      Loc.pretty loc ^ ": The function '" ^ Name.pretty fun_name ^ "' is declared with " ^ string_of_int count ^ " parameters\n"
+                     ^ "    but it's type suggests that it should have " ^ string_of_int (List.length types)
+    | NonFunTypeInLetRec(fun_name, ty) ->
+      Loc.pretty loc ^ ": The function definition for '" ^ Name.pretty fun_name ^ "' is declared as a function but has a non-function type."
   end
 let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;

@@ -1,2 +1,2 @@
-test/categories/types/higher_rank_illegal.pls:2:6 - 2:37: Illegal inner forall in type.
+test/categories/types/higher_rank_illegal.pls:2:4 - 2:70: Illegal inner forall in type.
     Polaris does not support higher rank polymorphism

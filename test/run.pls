@@ -51,8 +51,8 @@ for(files, \file -> {
         if result == expectedError then {
             !echo "-e" ("\e[32m[" ~ file ~ "](error): PASSED\e[0m")
         } else {
-            !echo "-e" ("\e[31m[" ~ file ~ "](error): FAILED!\n"
-                    ~ "    EXPECTED: '" ~ expectedError ~ "'\n"
+            !echo "-e" ("\e[1m\e[31m[" ~ file ~ "](error): FAILED!\n\e[0m"
+                    ~ "\e[31m[    EXPECTED: '" ~ expectedError ~ "'\n"
                     ~ "      ACTUAL: '" ~ result ~ "'\e[0m")
             errors := errors + 1
         }
@@ -65,8 +65,8 @@ for(files, \file -> {
             # at the moment.
             !echo "-e" ("\e[32m[" ~ file ~ "]: PASSED\e[0m")
         } else {
-            !echo "-e" ("\e[31m[" ~ file ~ "]: FAILED!\n"
-                    ~ "    EXPECTED: '" ~ expectation ~ "'\n"
+            !echo "-e" ("\e[1m\e[31m[" ~ file ~ "]: FAILED!\n\e[0m"
+                    ~ "\e[31m    EXPECTED: '" ~ expectation ~ "'\n"
                     ~ "      ACTUAL: '" ~ result ~ "'\e[0m")
             errors := errors + 1
         }

@@ -506,7 +506,9 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
     let env_trans =match_pat pat scrut (loc :: env.call_trace) in
     eval_expr (env_trans env) e2
 
-  | LetRec (loc, f, params, e1, e2) ->
+    (* We can safely ignore the type annotation since it has been checked by the
+       typechecker already *)
+  | LetRec (loc, _ty, f, params, e1, e2) ->
     let rec env' = lazy (fst (insert_var f (ClosureV (env', params, e1)) env)) in
     eval_expr (Lazy.force env') e2
   | LetEnv (loc, x, e1, e2) ->
@@ -605,7 +607,8 @@ and eval_seq_cont : 'r. eval_env -> Renamed.expr list -> (eval_env -> (Renamed.e
     let env_trans = match_pat pat scrut (loc :: env.call_trace) in
     eval_seq_cont (env_trans env) exprs cont
 
-  | LetRecSeq (loc, f, params, e) :: exprs ->
+    (* We can safely ignore the type annotation since it has been checked by the typechecker already *)
+  | LetRecSeq (loc, _ty, f, params, e) :: exprs ->
     let rec env' = lazy (fst (insert_var f (ClosureV (env', params, e)) env)) in
     eval_seq_cont (Lazy.force env') exprs cont
   | LetEnvSeq (loc, x, e) :: exprs ->

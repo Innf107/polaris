@@ -201,11 +201,11 @@ module Template = struct
     (* Sequencing *)
     | Seq of loc * expr list                      (* { e₁ ; .. ; eₙ } *)
     | LetSeq of loc * pattern * expr              (* let p = e (Only valid inside `Seq` expressions) *)
-    | LetRecSeq of loc * name * pattern list * expr  (* let rec f(x, .., x) = e*)
+    | LetRecSeq of loc * ty option * name * pattern list * expr  (* [let f : ty]; let f(x, .., x) = e*)
     | LetEnvSeq of loc * string * expr            (* let $x = e *)
     (* Mutable local definitions *)
     | Let of loc * pattern * expr * expr              (* let p = e1 in e2 (valid everywhere) *)
-    | LetRec of loc * name * pattern list * expr * expr  (* let rec f(x, .., x) = e*)
+    | LetRec of loc * ty option * name * pattern list * expr * expr  (* [let f : ty]; let f(x, .., x) = e*)
     | LetEnv of loc * string * expr * expr            (* let $x = e in e *)
     | Assign of loc * name * expr                     (* x := e *)
     (* Scripting capabilities *)
@@ -286,8 +286,8 @@ module Template = struct
             M.append (go expr) (fold monoid go_clause clauses)
           | If(_, condition, then_expr, else_expr) -> M.append (go condition) (M.append (go then_expr) (go else_expr))
           | Seq(_, exprs) -> fold monoid go exprs
-          | LetSeq(_, _, expr) | LetRecSeq(_, _, _, expr) | LetEnvSeq(_, _, expr) -> go expr
-          | Let(_, _, bind_expr, rest_expr) | LetRec(_, _, _, bind_expr, rest_expr) | LetEnv(_, _, bind_expr, rest_expr)
+          | LetSeq(_, _, expr) | LetRecSeq(_, _, _, _, expr) | LetEnvSeq(_, _, expr) -> go expr
+          | Let(_, _, bind_expr, rest_expr) | LetRec(_, _, _, _, bind_expr, rest_expr) | LetEnv(_, _, bind_expr, rest_expr)
             -> M.append (go bind_expr) (go rest_expr)
           | Assign(_, _, expr) -> go expr
           | ProgCall(_, _, arg_exprs) -> fold monoid go arg_exprs
@@ -407,11 +407,13 @@ module Template = struct
 
     | Seq (_, exprs) -> "{ " ^ String.concat "; " (List.map pretty exprs) ^ "}"
     | LetSeq (_, x, e) -> "let " ^ pretty_pattern x ^ " = " ^ pretty e
-    | LetRecSeq (_, x, xs, e) -> "let rec " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e
+    | LetRecSeq (_, None, x, xs, e) -> "let " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e
+    | LetRecSeq (_, Some ty, x, xs, e) -> "let " ^ pretty_name x ^ " : " ^ pretty_type ty ^ "; let " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e
     | LetEnvSeq (_, x, e) -> "let $" ^ x ^ " = " ^ pretty e
     | Let (_, x, e1, e2) ->
         "let " ^ pretty_pattern x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
-    | LetRec (_, x, xs, e1, e2) -> "let rec " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
+    | LetRec (_, None, x, xs, e1, e2) -> "let rec " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
+    | LetRec (_, Some ty, x, xs, e1, e2) -> "let " ^ pretty_name x ^ " : " ^ pretty_type ty ^ "; let " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
     | LetEnv (_, x, e1, e2) -> "let $" ^ x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
     | Assign (_, x, e) -> pretty_name x ^ " = " ^ pretty e
     | ProgCall (_, prog, args) ->
@@ -439,8 +441,8 @@ module Template = struct
     | Subscript(loc, _, _) | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
     | BinOp(loc, _, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)
-    | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _) | LetEnvSeq(loc, _, _) | Let(loc, _, _, _)
-    | LetRec(loc, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
+    | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _, _) | LetEnvSeq(loc, _, _) | Let(loc, _, _, _)
+    | LetRec(loc, _, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _)
     -> loc
     | ModSubscript (ext, _, _) -> mod_subscript_loc ext

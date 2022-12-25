@@ -1,14 +1,22 @@
 %{
 open Syntax
-open Parsed
+open Syntax.Parsed
+
+open Parserprelude
 
 module E = MenhirLib.ErrorReports
 module L = MenhirLib.LexerUtil
 
 let loc = Loc.from_pos
 
-
 let equal_token : token -> token -> bool = (=)
+
+(* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working.
+    (See the parsing rule of the same name) *)
+type expr_or_fun_def_ext =
+    | ExprExt of expr
+    | FunExt of string * pattern list * expr
+
 %}
 
 %token <string> IDENT
@@ -213,8 +221,32 @@ expr_leaf:
     | LET pattern "=" expr { LetSeq(loc $startpos $endpos, $2, $4) }
     | LET ENVVAR "=" expr IN expr { LetEnv(loc $startpos $endpos, $2, $4, $6) }
     | LET ENVVAR "=" expr { LetEnvSeq(loc $startpos $endpos, $2, $4) }
-    | LET IDENT "(" sep_trailing(COMMA, pattern) ")" "=" expr IN expr { LetRec(loc $startpos $endpos, $2, $4, $7, $9) }
-    | LET IDENT "(" sep_trailing(COMMA, pattern) ")" "=" expr         { LetRecSeq(loc $startpos $endpos, $2, $4, $7) }
+    | LET IDENT "(" sep_trailing(COMMA, pattern) ")" "=" expr IN expr { LetRec(loc $startpos $endpos, None, $2, $4, $7, $9) }    
+    (* Workaround to get both `let x : ty = e in e` and `let f : ty; f(x) = e in e` working *)
+    | LET IDENT ":" ty expr_or_fun_def_ext IN expr
+        {   match $5 with
+            (* TODO: The location in the type pattern is a bit off *)
+            | ExprExt expr -> Let(loc $startpos $endpos, TypePat (loc $startpos $endpos, VarPat(loc $startpos $endpos, $2), $4), expr, $7) 
+            | FunExt(name, params, body) ->
+                if $2 <> name then
+                    raise (SpecificParseError (MismatchedLetName(loc $startpos $endpos, $2, name)))
+                else
+                    LetRec(loc $startpos $endpos, Some $4, name, params, body, $7)    
+        }
+    | LET IDENT "(" sep_trailing(COMMA, pattern) ")" "=" expr         { LetRecSeq(loc $startpos $endpos, None, $2, $4, $7) }
+    
+    (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)
+    | LET IDENT ":" ty expr_or_fun_def_ext
+        {   match $5 with
+            (* TODO: The location in the type pattern is a bit off *)
+            | ExprExt expr -> LetSeq(loc $startpos $endpos, TypePat (loc $startpos $endpos, VarPat(loc $startpos $endpos, $2), $4), expr) 
+            | FunExt(name, params, body) ->
+                if $2 <> name then
+                    raise (SpecificParseError (MismatchedLetName(loc $startpos $endpos, $2, name)))
+                else
+                    LetRecSeq(loc $startpos $endpos, Some $4, name, params, body)    
+        }
+
     | "{" sep_trailing(SEMI+, expr) "}" { Seq(loc $startpos $endpos, $2) }
     | BANG expr_leaf* { ProgCall(loc $startpos $endpos, $1, $2) }
     | NOT expr_leaf { Not(loc $startpos $endpos, $2) }
@@ -224,6 +256,11 @@ expr_leaf:
     | AWAIT expr1 { Await(loc $startpos $endpos, $2) }
     | MATCH expr "{" sep_trailing(SEMI+, match_branch) "}" { Match(loc $startpos $endpos, $2, $4) }
     | MODULE IDENT "=" mod_expr { LetModuleSeq(loc $startpos $endpos, $2, $4) }
+
+(* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)
+expr_or_fun_def_ext:
+    | "=" expr { ExprExt ($2) }
+    | SEMI+ LET IDENT "(" sep_trailing(COMMA, pattern) ")" "=" expr { FunExt ($3, $5, $8) }
 
 match_branch:
     pattern "->" expr { ($1, $3) } 

@@ -428,11 +428,14 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
 
       let inner_env = List.fold_left (<<) Fun.id transformers (env_trans env) in
 
-      (* TODO: This is a bit too eager since `ty_skolemizer` already tries to apply itself to every node of the type *)
-      let skolemizer_traversal = object 
+      let skolemizer_traversal = object(self)
         inherit [unit] Traversal.traversal
 
         method! ty _ ty = ty_skolemizer ty, ()
+
+        (* ty_skolemizer already traverses the entire type, so this disables
+           any duplicate traversals (which would lead to time quadratic in the size of the type) *)
+        method! traverse_type state ty = self#ty state ty
       end in
 
       let body, () = skolemizer_traversal#traverse_expr () body in

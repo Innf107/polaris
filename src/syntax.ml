@@ -101,25 +101,25 @@ module Template = struct
       fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
   
 
+    let replace_row_extension fields = function
+    | Unif (u, name) -> Record (RowUnif (fields, (u, name)))
+    | TyVar var -> Record (RowVar (fields, var))
+    | Skol (u, name) -> Record (RowSkol (fields, (u, name)))
+    | Record (RowClosed fields2) ->
+      Record (RowClosed (Array.append fields fields2))
+    | Record (RowUnif (fields2, unif)) ->
+      Record (RowUnif (Array.append fields fields2, unif))
+    | Record (RowSkol (fields2, skol)) ->
+      Record (RowSkol (Array.append fields fields2, skol))
+    | Record (RowVar (fields2, var)) ->
+      Record (RowVar (Array.append fields fields2, var))
+    | ty -> panic __LOC__ ("Row extension variable replaced with non-row type")
+
+
     (* Recursively apply a transformation function over every node of a type 
        (in a bottom-up fashion / post-order traversal). *)
     let rec transform : (t -> t) -> t -> t =
       fun trans ty ->
-        let replace_row_extension fields = function
-        | Unif (u, name) -> Record (RowUnif (fields, (u, name)))
-        | TyVar var -> Record (RowVar (fields, var))
-        | Skol (u, name) -> Record (RowSkol (fields, (u, name)))
-        | Record (RowClosed fields2) ->
-          Record (RowClosed (Array.append fields fields2))
-        | Record (RowUnif (fields2, unif)) ->
-          Record (RowUnif (Array.append fields fields2, unif))
-        | Record (RowSkol (fields2, skol)) ->
-          Record (RowSkol (Array.append fields fields2, skol))
-        | Record (RowVar (fields2, var)) ->
-          Record (RowVar (Array.append fields fields2, var))
-        | ty -> panic __LOC__ ("Row extension variable replaced with non-row type")
-        in
-
         let transformed = match ty with
         | Forall (x, ty) -> Forall (x, transform trans ty)
         | Fun (args, res) -> Fun (List.map (transform trans) args, transform trans res)
@@ -451,6 +451,345 @@ module Template = struct
     | VarPat (loc, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
     | NumPat (loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _)
     -> loc
+
+
+  module Traversal = struct
+    (* The traversal system here is similar to the one used in ppx_lib for the OCaml AST.
+       Though unlike that one, there are not separate traversal classes for map, fold, etc here.
+       Instead, every traversal performs a combined map/fold operation.
+
+       The syntax tree is always traversed in a bottom-up manner.
+      *)
+
+    class ['state] traversal = object(self)
+      method expr : 'state -> expr -> (expr * 'state) =
+        fun state expr -> (expr, state)
+
+      method pattern : 'state -> pattern -> (pattern * 'state) =
+        fun state pattern -> (pattern, state)
+
+      method ty : 'state -> ty -> (ty * 'state) =
+        fun state ty -> (ty, state)
+
+      method name : 'state -> name -> (name * 'state) =
+        fun state name -> (name, state)
+
+      method module_expr : 'state -> module_expr -> (module_expr * 'state) = 
+        fun state module_expr -> (module_expr, state)
+
+      method list_comp_clause : 'state -> list_comp_clause -> (list_comp_clause * 'state) = 
+        fun state list_comp_clause -> (list_comp_clause, state)
+
+      method traverse_expr : 'state -> expr -> (expr * 'state) = 
+        fun state expression ->
+          let transformed, state = match expression with
+          (* Non-recursive cases (that don't mention another traversable node type) *)
+          | StringLit _ | NumLit _ | BoolLit _ | UnitLit _ | EnvVar _
+          | NullLit _ -> expression, state
+          (* Recursive boilerplate *)
+          | Var (loc, name) ->
+            let name, state = self#traverse_name state name in
+            Var (loc, name), state
+          | App (loc, fun_expr, arg_exprs) ->
+            let fun_expr, state = self#traverse_expr state fun_expr in
+            let (arg_exprs, state) = self#traverse_list self#traverse_expr state arg_exprs in
+            App (loc, fun_expr, arg_exprs), state
+          | Lambda(loc, patterns, body) ->
+            let patterns, state = self#traverse_list self#traverse_pattern state patterns in
+            let body, state = self#traverse_expr state body in
+            Lambda(loc, patterns, body), state
+          | ListLit(loc, exprs) ->
+            let exprs, state = self#traverse_list self#traverse_expr state exprs in
+            ListLit(loc, exprs), state
+          | TupleLit(loc, exprs) ->
+            let exprs, state = self#traverse_list self#traverse_expr state exprs in
+            TupleLit(loc, exprs), state
+          | RecordLit (loc, fields) ->
+            let fields, state = self#traverse_list 
+              (fun state (field, expr) ->
+                let expr, state = self#traverse_expr state expr in
+                (field, expr), state) state fields 
+            in
+            RecordLit(loc, fields), state
+          | Subscript(loc, expr, field) ->
+            let expr, state = self#traverse_expr state expr in
+            Subscript(loc, expr, field), state
+          | RecordUpdate(loc, expr, updates) ->
+            let expr, state = self#traverse_expr state expr in
+            let updates, state = self#traverse_list 
+              (fun state (field, expr) ->
+                let expr, state = self#traverse_expr state expr in
+                (field, expr), state) state updates 
+            in
+            RecordUpdate(loc, expr, updates), state
+          | RecordExtension(loc, expr, updates) ->
+            let expr, state = self#traverse_expr state expr in
+            let updates, state = self#traverse_list 
+              (fun state (field, expr) ->
+                let expr, state = self#traverse_expr state expr in
+                (field, expr), state) state updates 
+            in
+            RecordExtension(loc, expr, updates), state
+          | DynLookup(loc, expr, field_expr) ->
+            let expr, state = self#traverse_expr state expr in
+            let field_expr, state = self#traverse_expr state field_expr in
+            DynLookup(loc, expr, field_expr), state
+          | BinOp(loc, left_expr, op, right_expr) -> 
+            let left_expr, state = self#traverse_expr state left_expr in
+            let right_expr, state = self#traverse_expr state right_expr in
+            BinOp(loc, left_expr, op, right_expr), state
+          | Not(loc, expr) ->
+            let expr, state = self#traverse_expr state expr in
+            Not(loc, expr), state
+          | Range(loc, start_expr, end_expr) ->
+            let start_expr, state = self#traverse_expr state start_expr in
+            let end_expr, state = self#traverse_expr state end_expr in
+            Range(loc, start_expr, end_expr), state
+          | ListComp(loc, expr, clauses) -> 
+            let expr, state = self#traverse_expr state expr in
+            let clauses, state = self#traverse_list self#traverse_list_comp_clause state clauses in
+            ListComp(loc, expr, clauses), state
+          | If(loc, condition_expr, then_expr, else_expr) ->
+            let condition_expr, state = self#traverse_expr state condition_expr in
+            let then_expr, state = self#traverse_expr state then_expr in
+            let else_expr, state = self#traverse_expr state else_expr in
+            If(loc, condition_expr, then_expr, else_expr), state
+          | Seq(loc, exprs) ->
+            let exprs, state = self#traverse_list self#traverse_expr state exprs in
+            Seq(loc, exprs), state
+          | LetSeq(loc, pattern, expr) ->
+            let pattern, state = self#traverse_pattern state pattern in
+            let expr, state = self#traverse_expr state expr in
+            LetSeq(loc, pattern, expr), state
+          | LetRecSeq(loc, maybe_typesig, fun_name, param_patterns, body_expr) ->
+            let maybe_typesig, state = match maybe_typesig with
+            | None -> None, state
+            | Some ty -> 
+              let ty, state = self#traverse_type state ty in
+              Some ty, state
+            in
+            let fun_name, state = self#traverse_name state fun_name in
+            let param_patterns, state = self#traverse_list self#traverse_pattern state param_patterns in
+            let body_expr, state = self#traverse_expr state body_expr in
+            LetRecSeq(loc, maybe_typesig, fun_name, param_patterns, body_expr), state
+          | LetEnvSeq(loc, env_var, expr) ->
+            let expr, state = self#traverse_expr state expr in
+            LetEnvSeq(loc, env_var, expr), state
+          | Let(loc, pattern, expr, rest_expr) ->
+            let pattern, state = self#traverse_pattern state pattern in
+            let expr, state = self#traverse_expr state expr in
+            let rest_expr, state = self#traverse_expr state rest_expr in
+            Let(loc, pattern, expr, rest_expr), state
+          | LetRec(loc, maybe_typesig, fun_name, param_patterns, body_expr, rest_expr) ->
+            let maybe_typesig, state = match maybe_typesig with
+            | None -> None, state
+            | Some ty -> 
+              let ty, state = self#traverse_type state ty in
+              Some ty, state
+            in
+            let fun_name, state = self#traverse_name state fun_name in
+            let param_patterns, state = self#traverse_list self#traverse_pattern state param_patterns in
+            let body_expr, state = self#traverse_expr state body_expr in
+            let rest_expr, state = self#traverse_expr state rest_expr in
+            LetRec(loc, maybe_typesig, fun_name, param_patterns, body_expr, rest_expr), state
+          | LetEnv(loc, envvar, expr, rest_expr) ->
+            let expr, state = self#traverse_expr state expr in
+            let rest_expr, state = self#traverse_expr state rest_expr in
+            LetEnv(loc, envvar, expr, rest_expr), state
+          | Assign(loc, varname, expr) ->
+            let varname, state = self#traverse_name state varname in
+            let expr, state = self#traverse_expr state expr in
+            Assign(loc, varname, expr), state
+          | ProgCall(loc, progname, exprs) ->
+            let exprs, state = self#traverse_list self#traverse_expr state exprs in
+            ProgCall(loc, progname, exprs), state
+          | Pipe(loc, exprs) ->
+            let exprs, state = self#traverse_list self#traverse_expr state exprs in
+            Pipe(loc, exprs), state
+          | Async(loc, expr) -> 
+            let expr, state = self#traverse_expr state expr in
+            Async(loc, expr), state
+          | Await(loc, expr) -> 
+            let expr, state = self#traverse_expr state expr in
+            Await(loc, expr), state
+          | Match (loc, scrutinee_expr, branch_exprs) ->
+            let scrutinee_expr, state = self#traverse_expr state scrutinee_expr in
+            let branch_exprs, scrutinee_expr = self#traverse_list 
+              (fun state (pattern, expr) ->
+                let pattern, state = self#traverse_pattern state pattern in
+                let expr, state = self#traverse_expr state expr in
+                (pattern, expr), state) state branch_exprs
+            in
+            Match(loc, scrutinee_expr, branch_exprs), state
+          | LetModuleSeq(loc, name, mod_expr) ->
+            let name, state = self#traverse_name state name in
+            let mod_expr, state = self#traverse_module_expr state mod_expr in
+            LetModuleSeq(loc, name, mod_expr), state 
+          | Ascription(loc, expr, ty) ->
+            let expr, state = self#traverse_expr state expr in
+            let ty, state = self#traverse_type state ty in
+            Ascription(loc, expr, ty), state
+          | ModSubscript(ext, mod_name, field_name) ->
+            let mod_name, state = self#traverse_name state mod_name in
+            let field_name, state = self#traverse_name state field_name in
+            ModSubscript(ext, mod_name, field_name), state
+          in
+          self#expr state transformed
+
+    method traverse_pattern : 'state -> pattern -> (pattern * 'state) =
+      fun state pattern ->
+        let transformed, state = match pattern with
+        (* Non-recursive *)
+        | NumPat(loc, num) -> NumPat(loc, num), state
+        (* Recursive *)
+        | VarPat(loc, name) -> 
+          let name, state = self#traverse_name state name in
+          VarPat(loc, name), state
+        | ConsPat(loc, head_pattern, tail_pattern) -> 
+          let head_pattern, state = self#traverse_pattern state head_pattern in
+          let tail_pattern, state = self#traverse_pattern state tail_pattern in
+          ConsPat(loc, head_pattern, tail_pattern), state
+        | ListPat(loc, patterns) ->
+          let patterns, state = self#traverse_list self#traverse_pattern state patterns in
+          ListPat(loc, patterns), state
+        | TuplePat(loc, patterns) ->
+          let patterns, state = self#traverse_list self#traverse_pattern state patterns in
+          TuplePat(loc, patterns), state
+        | OrPat(loc, left_pattern, right_pattern) ->
+          let left_pattern, state = self#traverse_pattern state left_pattern in
+          let right_pattern, state = self#traverse_pattern state right_pattern in
+          OrPat(loc, left_pattern, right_pattern), state
+        | TypePat(loc, pattern, ty) ->
+          let pattern, state = self#traverse_pattern state pattern in
+          let ty, state = self#traverse_type state ty in
+          TypePat(loc, pattern, ty), state
+        in
+        self#pattern state transformed
+
+    method traverse_type : 'state -> ty -> (ty * 'state) =
+      fun state ty ->
+        let transformed, state = match ty with
+        (* Non-recursive cases *)
+        | Number | Bool | String -> ty, state
+        (* Recursion *)
+        | Forall (var_name, ty) ->
+          let var_name, state = self#traverse_name state var_name in
+          let ty, state = self#traverse_type state ty in
+          Forall(var_name, ty), state
+        | Fun (dom_types, cod_type) ->
+          let dom_types, state = self#traverse_list self#traverse_type state dom_types in
+          let cod_type, state = self#traverse_type state cod_type in
+          Fun(dom_types, cod_type), state
+        | TyVar(name) ->
+          let name, state = self#traverse_name state name in
+          TyVar(name), state
+        | Unif(unique, name) ->
+          let name, state = self#traverse_name state name in
+          Unif(unique, name), state
+        | Skol(unique, name) ->
+          let name, state = self#traverse_name state name in
+          Skol(unique, name), state
+        | Tuple(tys) ->
+          let tys, state = self#traverse_list self#traverse_type state (Array.to_list tys) in
+          Tuple(Array.of_list tys), state
+        | List(ty) ->
+          let ty, state = self#traverse_type state ty in
+          List(ty), state
+        | Promise(ty) ->
+          let ty, state = self#traverse_type state ty in
+          List(ty), state
+        | Record (RowClosed fields) ->
+          let fields, state = self#traverse_list 
+            (fun state (field, ty) ->
+              let ty, state = self#traverse_type state ty in
+              (field, ty), state
+              ) 
+            state 
+            (Array.to_list fields) 
+          in
+          Record (RowClosed (Array.of_list fields)), state
+        | Record (RowVar (fields, var)) ->
+          let fields, state = self#traverse_list 
+            (fun state (field, ty) ->
+              let ty, state = self#traverse_type state ty in
+              (field, ty), state
+              ) 
+            state 
+            (Array.to_list fields) 
+          in
+          (* Just as in Ty.transform, we treat record extension variables as freestanding
+            types and properly merge the transformed results back to give a single record type
+            TODO: Maybe this should be configurable? *)
+          let var, state = self#traverse_type state (TyVar var) in
+          Ty.replace_row_extension (Array.of_list fields) var, state
+        | Record (RowUnif (fields, (unique, var))) ->
+          let fields, state = self#traverse_list 
+            (fun state (field, ty) ->
+              let ty, state = self#traverse_type state ty in
+              (field, ty), state
+              ) 
+            state 
+            (Array.to_list fields) 
+          in
+          let var, state = self#traverse_type state (Unif (unique, var)) in
+          Ty.replace_row_extension (Array.of_list fields) var, state
+        | Record (RowSkol (fields, (unique, var))) ->
+          let fields, state = self#traverse_list 
+            (fun state (field, ty) ->
+              let ty, state = self#traverse_type state ty in
+              (field, ty), state
+              ) 
+            state 
+            (Array.to_list fields) 
+          in
+          let var, state = self#traverse_type state (Skol (unique, var)) in
+          Ty.replace_row_extension (Array.of_list fields) var, state  
+        in
+        self#ty state transformed
+
+    method traverse_name : 'state -> name -> (name * 'state) =
+      fun state name -> self#name state name
+
+    method traverse_module_expr : 'state -> module_expr -> (module_expr * 'state) =
+      fun state module_expr ->
+        let transformed, state = match module_expr with
+        | Import (loc, path) ->
+          Import (loc, path), state
+        | ModVar (loc, varname) ->
+          let varname, state = self#traverse_name state varname in
+          ModVar (loc, varname), state
+        | SubModule(loc, mod_expr, name) ->
+          let mod_expr, state = self#traverse_module_expr state mod_expr in
+          let name, state = self#traverse_name state name in
+          SubModule(loc, mod_expr, name), state
+        in
+        self#module_expr state transformed  
+
+    method traverse_list_comp_clause : 'state -> list_comp_clause -> (list_comp_clause * 'state) =
+      fun state list_comp_clause ->
+        let transformed, state = match list_comp_clause with
+        | DrawClause (pattern, expr) ->
+          let pattern, state = self#traverse_pattern state pattern in
+          let expr, state = self#traverse_expr state expr in
+          DrawClause (pattern, expr), state
+        | FilterClause (expr) ->
+          let expr, state = self#traverse_expr state expr in
+          FilterClause(expr), state
+        in
+        self#list_comp_clause state transformed      
+
+    method traverse_list 
+      : 'state 'node. ('state -> 'node -> ('node * 'state)) -> 'state -> 'node list -> ('node list * 'state) 
+      = fun traversal state exprs ->
+        List.fold_right
+          (fun expr (exprs, state) -> 
+            let expr, state = traversal state expr in
+            (expr :: exprs, state)
+            )
+          exprs
+          ([], state)
+    end
+  end
 end [@@ttg_template]
 
 

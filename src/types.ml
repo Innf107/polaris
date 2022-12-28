@@ -127,12 +127,20 @@ let instantiate : ty -> ty =
     let (instaniated, _) = instantiate_with_function ty in
     instaniated
 
-let rec skolemize : ty -> ty =
+let rec skolemize_with_function : ty -> ty * (ty -> ty) =
   function
   | Forall (tv, ty) ->
     let skol = Skol (Unique.fresh (), tv) in
-    skolemize (replace_tvar tv skol ty)
-  | ty -> ty
+    let replacement_fun = replace_tvar tv skol in
+    let skolemized, inner_replacement_fun = skolemize_with_function (replacement_fun ty) in
+    skolemized, (fun ty -> inner_replacement_fun (replacement_fun ty))
+  | ty -> ty, Fun.id
+
+let skolemize : ty -> ty =
+  fun ty ->
+    let (skolemized, _) = skolemize_with_function ty in
+    skolemized
+  
 
 let rec eval_module_env : local_env -> module_expr -> global_env =
   fun env -> function
@@ -395,16 +403,17 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
       check env ty e;
       env_trans
     | LetRecSeq(loc, mty, fun_name, pats, body) ->
-      let arg_tys, transformers, result_ty = match Option.map skolemize mty with
-      | None -> 
-        let arg_tys, transformres = List.split (List.map (infer_pattern env) pats) in
-        arg_tys, transformres, fresh_unif ()
-      | Some (Fun(arg_tys, result_ty)) ->
-        if (List.compare_lengths arg_tys pats != 0) then
-          raise (TypeError (loc, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length pats)))
-        else
-          arg_tys, List.map2 (check_pattern env) pats arg_tys, result_ty
-      | Some ty -> raise (TypeError (loc, NonFunTypeInLetRec(fun_name, ty)))
+      let arg_tys, transformers, result_ty, ty_skolemizer = 
+        match Option.map skolemize_with_function mty with
+        | None -> 
+          let arg_tys, transformres = List.split (List.map (infer_pattern env) pats) in
+          arg_tys, transformres, fresh_unif (), Fun.id
+        | Some (Fun(arg_tys, result_ty), ty_skolemizer) ->
+          if (List.compare_lengths arg_tys pats != 0) then
+            raise (TypeError (loc, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length pats)))
+          else
+            arg_tys, List.map2 (check_pattern env) pats arg_tys, result_ty, ty_skolemizer
+        | Some (ty, _) -> raise (TypeError (loc, NonFunTypeInLetRec(fun_name, ty)))
       in
 
 
@@ -419,6 +428,7 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
 
       let inner_env = List.fold_left (<<) Fun.id transformers (env_trans env) in
 
+      (* TODO: Apply 'ty_skolemizer' to every type annotation with some kind of generic traversal *)
       (* Without a type annotation, we have to check the body against a unification variable instead of inferring,
           since we need to know the functions type in its own (possibly recursive) definition*)
       check inner_env result_ty body;

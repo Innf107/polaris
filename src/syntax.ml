@@ -614,7 +614,7 @@ module Template = struct
             Await(loc, expr), state
           | Match (loc, scrutinee_expr, branch_exprs) ->
             let scrutinee_expr, state = self#traverse_expr state scrutinee_expr in
-            let branch_exprs, scrutinee_expr = self#traverse_list 
+            let branch_exprs, state = self#traverse_list 
               (fun state (pattern, expr) ->
                 let pattern, state = self#traverse_pattern state pattern in
                 let expr, state = self#traverse_expr state expr in

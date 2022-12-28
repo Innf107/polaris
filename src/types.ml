@@ -428,7 +428,14 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
 
       let inner_env = List.fold_left (<<) Fun.id transformers (env_trans env) in
 
-      (* TODO: Apply 'ty_skolemizer' to every type annotation with some kind of generic traversal *)
+      (* TODO: This is a bit too eager since `ty_skolemizer` already tries to apply itself to every node of the type *)
+      let skolemizer_traversal = object 
+        inherit [unit] Traversal.traversal
+
+        method! ty _ ty = ty_skolemizer ty, ()
+      end in
+
+      let body, () = skolemizer_traversal#traverse_expr () body in
       (* Without a type annotation, we have to check the body against a unification variable instead of inferring,
           since we need to know the functions type in its own (possibly recursive) definition*)
       check inner_env result_ty body;
@@ -453,7 +460,7 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
       let _ = infer env expr in
       Fun.id
     | expr ->
-      check env (Tuple [||]) expr;
+      check env ( Tuple [||]) expr;
       Fun.id
 
 and infer_seq : local_env -> expr list -> ty =

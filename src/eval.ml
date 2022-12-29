@@ -38,7 +38,6 @@ and value =
      they are definitely unique and there is no point in keeping
      an additional index *)
   | PrimOpV of string
-  | UnitV
   | BoolV of bool
   (* Lists are *immutable*. 
      Otherwise we would have to deal with some kind of a 'place' system, which is
@@ -51,6 +50,11 @@ and value =
   | NullV
   (* Represents a concurrent thread of execution *)
   | PromiseV of value Promise.t
+
+let unitV = RecordV (RecordVImpl.empty)
+let isUnitV = function
+  | RecordV record -> RecordVImpl.equal (fun _ _ -> false) record RecordVImpl.empty
+  | _ -> false
 
 module EvalError = struct
   exception DynamicVarNotFound of name * loc list
@@ -109,14 +113,13 @@ module Value = struct
         "<closure(" ^ String.concat ", " (List.map Syntax.Renamed.pretty_pattern params) ^ ")>"
     | PrimOpV name ->
         "<primative: " ^ name ^ ">"
-    | UnitV -> "()"
     | NullV -> "null"
     | BoolV b -> string_of_bool b
     | ListV vals -> "[" ^ String.concat ", " (List.map pretty vals) ^ "]"
     | TupleV vals -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty vals)) ^ ")"
     | RecordV kvs -> 
       let kv_list = List.of_seq (RecordVImpl.to_seq kvs) in
-      "#{ " ^ String.concat ", " (List.map (fun (k, v) -> k ^ " = " ^ pretty v) kv_list) ^ " }"
+      "{ " ^ String.concat ", " (List.map (fun (k, v) -> k ^ " = " ^ pretty v) kv_list) ^ " }"
     | PromiseV p ->
       match Promise.peek p with
       | Finished value -> "<promise: " ^ pretty value ^ ">"
@@ -128,7 +131,7 @@ module Value = struct
     | StringV v -> [v]
     | NumV _ | BoolV _ -> [pretty x]
     (* TODO: Should records/maps be converted to JSON? *)
-    | ClosureV _ | PrimOpV _ | UnitV | NullV | TupleV _ | RecordV _ | PromiseV _ -> fail x
+    | ClosureV _ | PrimOpV _ | NullV | TupleV _ | RecordV _ | PromiseV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
@@ -150,7 +153,7 @@ let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
     | NullV     -> { env with env_vars = EnvMap.remove var env.env_vars }
     | StringV x -> { env with env_vars = EnvMap.add var x env.env_vars }
     | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
-    | UnitV | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ 
+    | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ 
       -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
 
 let insert_module_var : name -> runtime_module -> eval_env -> eval_env =
@@ -184,7 +187,6 @@ let rec val_eq (x : value) (y : value) : bool =
   (* Closure comparison always evaluates to false.
       We're not going to solve the halting problem for this. *)
   | (ClosureV _, _ | _, ClosureV _) -> false
-  | UnitV, UnitV -> true
   | BoolV x, BoolV y -> x = y
   (* Lists are compared elements-wise, *not* by reference
     (whatever that would even mean with polaris' (more or less)
@@ -290,7 +292,7 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
   | StringLit (_, s) -> StringV s
   | NumLit (_, f)    -> NumV f
   | BoolLit (_, b)   -> BoolV b
-  | UnitLit _        -> UnitV
+  | UnitLit _        -> unitV
   | NullLit _        -> NullV
 
   | ListLit (_, exprs) -> 
@@ -517,7 +519,7 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
   | Assign (loc, x, e1) ->
     let x_ref = lookup_var env loc x  in
     x_ref := (eval_expr env e1);
-    UnitV
+    unitV
 
   | ProgCall (loc, prog, args) as expr -> 
     eval_expr env (Pipe (loc, [expr]))
@@ -601,7 +603,7 @@ and eval_app env loc fun_v arg_vals =
 and eval_seq_cont : 'r. eval_env -> Renamed.expr list -> (eval_env -> (Renamed.expr, value) either -> 'r) -> 'r =
   fun env exprs cont ->
   match exprs with
-  | [] -> cont env (Right UnitV)
+  | [] -> cont env (Right unitV)
   | LetSeq (loc, pat, e) :: exprs -> 
     let scrut = eval_expr env e in
     let env_trans = match_pat pat scrut (loc :: env.call_trace) in
@@ -694,7 +696,7 @@ and eval_primop env op args loc = let open EvalError in
     | x -> Value.pretty x
     in
     print_endline (String.concat " " (List.map pretty_print args));
-    UnitV
+    unitV
   | "head" -> begin match args with
               | [ListV (head::tail)] -> head
               | [ListV []] -> raise (PrimOpArgumentError ("head", args, "Empty list", loc :: env.call_trace))
@@ -780,7 +782,7 @@ and eval_primop env op args loc = let open EvalError in
                   let channel = open_out path in
                   Out_channel.output_string channel content;
                   Out_channel.close channel;
-                  UnitV
+                  unitV
                 | _ -> raise (PrimOpArgumentError ("writeFile", args, "Expected two string arguments", loc :: env.call_trace))
                 end
   | "parseInt" -> begin match args with
@@ -811,7 +813,7 @@ and eval_primop env op args loc = let open EvalError in
   | "chdir" ->  begin match args with
                 | [StringV path_str] -> 
                   Sys.chdir path_str;
-                  UnitV
+                  unitV
                 | _ -> raise (PrimOpArgumentError ("chdir", args, "Expected a strings", loc :: env.call_trace))
                 end
   | "exit" -> begin match args with
@@ -856,7 +858,7 @@ and eval_primop env op args loc = let open EvalError in
   | "ensure" -> begin match args with
               | [StringV path] ->
                 if Util.command_exists path then
-                  UnitV
+                  unitV
                 else
                   raise (EnsureFailed (path, loc::env.call_trace))
               | _ -> raise (PrimOpArgumentError("ensure", args, "Expected a string", loc :: env.call_trace))

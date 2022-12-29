@@ -1,5 +1,5 @@
-# EXPECT: #{ x = 5, y = 3 }
+# EXPECT: { x = 5, y = 3 }
 
-let r = #{ y = 3 }
+let r = { y = 3 }
 
-print(#{ r extend x = 5 })
+print({ r extend x = 5 })

@@ -59,6 +59,8 @@ module Template = struct
 
   module Ty = struct 
     type t = ty
+    
+    let unit = Record (RowClosed [||])
 
     (** Recursively apply a list returning operation over every constructor of 
       a type and concatenate the results with a provided monoid implementation.
@@ -340,10 +342,10 @@ module Template = struct
     | Tuple tys -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty_type tys)) ^ ")"
     | List ty -> "List(" ^ pretty_type ty ^ ")"
     | Promise ty -> "Promise(" ^ pretty_type ty ^ ")"
-    | Record (RowClosed fields) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ "}"
-    | Record (RowUnif (fields, (u, name))) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Unif (u, name)) ^ "}"
-    | Record (RowSkol (fields, (u, name))) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Skol (u, name)) ^ "}"
-    | Record (RowVar (fields, name)) -> "#{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_name name ^ "}"
+    | Record (RowClosed fields) -> "{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ "}"
+    | Record (RowUnif (fields, (u, name))) -> "{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Unif (u, name)) ^ "}"
+    | Record (RowSkol (fields, (u, name))) -> "{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Skol (u, name)) ^ "}"
+    | Record (RowVar (fields, name)) -> "{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_name name ^ "}"
 
   let rec pretty_pattern = function
     | VarPat (_, x) -> pretty_name x

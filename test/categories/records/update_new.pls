@@ -1,4 +1,4 @@
 
-let r = #{ x = 5 }
+let r = { x = 5 }
 
-print(#{ r with y = 3 })
+print({ r with y = 3 })

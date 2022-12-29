@@ -3,5 +3,5 @@ let length(xs) = match xs {
     (_ :: xs) -> length(xs)
 }
 
-let _ = #{
+let _ = {
 }

@@ -241,7 +241,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
   | Some expr ->
     let result, env, scope = Driver.run_env driver_options (Lexing.from_string expr) env scope in
     begin match result with
-    | UnitV -> ()
+    | v when isUnitV v -> ()
     | _ -> print_endline (Value.pretty result)
     end;
     env, scope, options.interactive
@@ -263,7 +263,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
               let result, new_env, new_scope = Driver.run_env driver_options (Lexing.from_string input) env scope in
 
               begin match result with
-              | UnitV -> ()
+              | v when isUnitV v -> ()
               | _ -> print_endline (" - " ^ Value.pretty result)
               end;
               go new_env new_scope)

@@ -66,7 +66,12 @@ let rename_type loc (scope : RenameScope.t) original_type =
         | Promise(ty) -> Promise(rename_nonbinding ty)
         | Tuple(tys) -> Tuple(Array.map rename_nonbinding tys)
         | Fun(tys1, ty) -> Fun(List.map rename_nonbinding tys1, rename_nonbinding ty)
-        | Record(row) -> todo __LOC__
+        | Record(RowClosed tys) -> Record(RowClosed (Array.map (fun (x, ty) -> (x, rename_nonbinding ty)) tys))
+        | Record(RowVar (tys, varname)) -> 
+            begin match RenameMap.find_opt varname scope.ty_vars with
+            | Some varname -> Record(RowVar (Array.map (fun (x, ty) -> (x, rename_nonbinding ty)) tys, varname))
+            | None -> raise (RenameError.TyVarNotFound(varname, loc))
+            end
         | TyVar(tv) -> begin match RenameMap.find_opt tv scope.ty_vars with
             | Some tv' -> TyVar(tv')
             | None -> raise (RenameError.TyVarNotFound(tv, loc))
@@ -74,6 +79,8 @@ let rename_type loc (scope : RenameScope.t) original_type =
         | Parsed.Forall _ -> raise (RenameError.HigherRankType(ty, loc))
         | Unif(_) -> panic __LOC__ ("Unification variable found after parsing. How did this happen wtf?")
         | Skol(_) -> panic __LOC__ ("Skolem found after parsing. How did this happen wtf?")
+        | Record(RowUnif _) -> panic __LOC__ ("Unification variable record found after parsing. How did this happen wtf?")
+        | Record(RowSkol _) -> panic __LOC__ ("Skolem record found after parsing. How did this happen wtf?")
         in
         match ty with
         | Parsed.Forall(tv, ty) ->

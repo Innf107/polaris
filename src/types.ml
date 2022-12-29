@@ -231,7 +231,7 @@ let rec infer : local_env -> expr -> ty =
     | StringLit _ -> String
     | NumLit _ -> Number
     | BoolLit _ -> Bool
-    | UnitLit _ -> Tuple [||]
+    | UnitLit _ -> Ty.unit
     | NullLit _ -> panic __LOC__ "Nulls should be phased out now that we have static types" 
     | ListLit (loc, []) ->
       let elem_ty = fresh_unif () in
@@ -333,7 +333,7 @@ let rec infer : local_env -> expr -> ty =
         | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound variable in typechecker (assignment): '" ^ Name.pretty var ^ "'")
       in
       check env var_ty expr;
-      Tuple [||]
+      Ty.unit
     | ProgCall (loc, prog, args) ->
       (* TODO: We really need some kind of toString typeclass here *)
       List.iter (check env String) args;
@@ -463,12 +463,12 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
       let _ = infer env expr in
       Fun.id
     | expr ->
-      check env ( Tuple [||]) expr;
+      check env Ty.unit expr;
       Fun.id
 
 and infer_seq : local_env -> expr list -> ty =
   fun env exprs -> match exprs with
-    | [] -> Tuple [||]
+    | [] -> Ty.unit
     | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ as expr] ->
       (* If the last expression in an expression block is a
          LetSeq* expresion, we don't need to carry the environment transformations,
@@ -476,7 +476,7 @@ and infer_seq : local_env -> expr list -> ty =
          so it is not passed to `infer`
         *)
       let _ : _ = infer_seq_expr env expr in
-      Tuple [||]
+      Ty.unit
     | [ expr ] -> infer env expr
     | expr :: exprs -> 
       let env_trans = infer_seq_expr env expr in
@@ -617,7 +617,8 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
       | (Record (RowVar _), _ | _, Record (RowVar _)) -> 
         panic __LOC__ "Uninstantiated variable row found during unification"
       | TyVar _, _ | _, TyVar _ -> panic __LOC__ "Uninstantiated type variable found during unification"
-      | _ -> raise (TypeError (loc, UnableToUnify ((ty1, ty2), (original_ty1, original_ty2))))
+      | _ -> raise (TypeError (loc, UnableToUnify ((partial_apply state ty1, partial_apply state ty2), 
+                                                   (partial_apply state original_ty1, partial_apply state original_ty2))))
     in
     go original_ty1 original_ty2
 

@@ -211,9 +211,11 @@ expr_leaf:
     | "[" expr1 "|" LET pattern "<-" expr list_comp_clauses "]" 
         { ListComp(loc $startpos $endpos, $2, DrawClause($5, $7) :: $8) }
     | "[" sep_trailing(COMMA, expr) "]" { ListLit(loc $startpos $endpos, $2) }
-    | "#{" expr WITH sep_trailing1(COMMA, assign) "}" { RecordUpdate(loc $startpos $endpos, $2, $4) }
-    | "#{" expr EXTEND sep_trailing1(COMMA, assign) "}" { RecordExtension(loc $startpos $endpos, $2, $4) }
-    | "#{" sep_trailing(COMMA, assign) "}" { RecordLit(loc $startpos $endpos, $2) }
+    | "{" "}" { RecordLit(loc $startpos $endpos, [])}
+    | "{" sep_trailing1(SEMI+, expr) "}"   { Seq(loc $startpos $endpos, $2) }
+    | "{" sep_trailing1(COMMA, assign) "}" { RecordLit(loc $startpos $endpos, $2) }
+    | "{" expr WITH sep_trailing1(COMMA, assign) "}" { RecordUpdate(loc $startpos $endpos, $2, $4) }
+    | "{" expr EXTEND sep_trailing1(COMMA, assign) "}" { RecordExtension(loc $startpos $endpos, $2, $4) }
     | "(" expr ")" { $2 }
     | "(" expr COMMA sep_trailing(COMMA, expr) ")" { TupleLit(loc $startpos $endpos, $2 :: $4) }
     | "\\" pattern* "->" expr { Lambda(loc $startpos $endpos, $2, $4) }  
@@ -247,7 +249,6 @@ expr_leaf:
                     LetRecSeq(loc $startpos $endpos, Some $4, name, params, body)    
         }
 
-    | "{" sep_trailing(SEMI+, expr) "}" { Seq(loc $startpos $endpos, $2) }
     | BANG expr_leaf* { ProgCall(loc $startpos $endpos, $1, $2) }
     | NOT expr_leaf { Not(loc $startpos $endpos, $2) }
     | "[" expr ".." expr "]" { Range(loc $startpos $endpos, $2, $4) }
@@ -304,6 +305,7 @@ mod_expr:
 ty:
     | "(" sep_trailing(COMMA, ty) ")" "->" ty               { Fun ($2, $5) }
     | ty1 "->" ty                                           { Fun ([$1], $3) }
+    | "(" ")"                                               { Ty.unit }
     | "(" sep_trailing(COMMA, ty) ")"                       { Tuple(Array.of_list $2) }
     | FORALL IDENT* "." ty                                  { List.fold_right (fun a r -> Forall(a, r)) $2 $4 }
     | ty1                                                   { $1 }

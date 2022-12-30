@@ -6,7 +6,8 @@
   bestline 
   unix
   re
-  threads)
+  threads
+  base)
  (preprocess (pps trees_that_grow)))
 
 (menhir

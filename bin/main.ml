@@ -67,7 +67,8 @@ let handle_errors print_fun f =
   (* RenameError *)
   | VarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Variable not found: '" ^ x ^ "'")
   | ModuleVarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Module not found: '" ^ x ^ "'")
-  | TyVarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Type variable not found: '" ^ x ^ "'")
+  | TyVarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Type variable or constructor not found: '" ^ x ^ "'")
+  | TyConNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Type constructor not found: '" ^ x ^ "'")
   | SubscriptVarNotFound (x, loc) -> 
     print_fun (Loc.pretty loc ^ ": Variable or module not found: '" ^ x ^ "'")
   | LetSeqInNonSeq (expr, loc) -> print_fun (
@@ -78,7 +79,11 @@ let handle_errors print_fun f =
     print_fun (Loc.pretty loc ^ ": Module does not contain a submodule named '" ^ name ^ "'")
   | HigherRankType (_ty, loc) ->
     print_fun (Loc.pretty loc ^ ": Illegal inner forall in type.\n    Polaris does not support higher rank polymorphism")
-  (* EvalError *)
+  | WrongNumberOfTyConArgs(name, expected_arg_count, args, loc) -> print_fun (
+      Loc.pretty loc ^ ": Invalid number of arguments supplied to type constructor '" ^ Name.pretty name ^ "'.\n"
+    ^ "    The type constructor takes " ^ string_of_int expected_arg_count ^ " arguments\n"
+    ^ "                 but was given " ^ (string_of_int (List.length args)))
+    (* EvalError *)
   | DynamicVarNotFound (x, loc::locs) -> print_fun (
         Loc.pretty loc ^ ": Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
       ^ "This is definitely a bug in the interpreter"
@@ -195,6 +200,11 @@ let handle_errors print_fun f =
                      ^ "                    and '" ^ Renamed.pretty_type ty2 ^ "'\n"
                      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
                      ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"
+    | MismatchedTyCon (constr_name1, constr_name2, original_ty1, original_ty2) ->
+      Loc.pretty loc ^ ": Unable to match data constructors '" ^ Name.pretty constr_name1 ^ "' and '" ^ Name.pretty constr_name2 ^ "'\n"
+                     ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
+                     ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"
+
     | Impredicative ((ty1, ty2), (original_ty1, original_ty2)) ->
       Loc.pretty loc ^ ": Impredicative instantiation attempted when matching types '" ^ Renamed.pretty_type ty1 ^ "'\n"
       ^ "                    and '" ^ Renamed.pretty_type ty2 ^ "'\n"

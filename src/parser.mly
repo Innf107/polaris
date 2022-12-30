@@ -37,7 +37,6 @@ type expr_or_fun_def_ext =
 %token DOUBLECOLON "::"
 %token LPAREN "("
 %token RPAREN ")"
-%token HASHLBRACE "#{"
 %token LBRACE "{" 
 %token RBRACE "}"
 %token LBRACKET "["
@@ -67,6 +66,7 @@ type expr_or_fun_def_ext =
 %token WITH EXTEND
 %token MODULE IMPORT EXPORT
 %token FORALL
+%token DATA
 %token EOF
 
 
@@ -206,7 +206,13 @@ expr_leaf:
     | "(" ")" { UnitLit(loc $startpos $endpos) }
     | TRUE { BoolLit(loc $startpos $endpos, true) }
     | FALSE { BoolLit(loc $startpos $endpos, false) }
-    | IDENT { Var(loc $startpos $endpos, $1) }
+    | IDENT { 
+        if Base.Char.is_uppercase (($1).[0]) then
+            DataConstructor(loc $startpos $endpos, $1)
+        else
+            Var(loc $startpos $endpos, $1)
+        }
+
     | ENVVAR { EnvVar(loc $startpos $endpos, $1) }
     | "[" expr1 "|" LET pattern "<-" expr list_comp_clauses "]" 
         { ListComp(loc $startpos $endpos, $2, DrawClause($5, $7) :: $8) }
@@ -257,6 +263,9 @@ expr_leaf:
     | AWAIT expr1 { Await(loc $startpos $endpos, $2) }
     | MATCH expr "{" sep_trailing(SEMI+, match_branch) "}" { Match(loc $startpos $endpos, $2, $4) }
     | MODULE IDENT "=" mod_expr { LetModuleSeq(loc $startpos $endpos, $2, $4) }
+    | DATA IDENT "=" ty { LetDataSeq(loc $startpos $endpos, $2, [], $4) }
+    | DATA IDENT "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetDataSeq(loc $startpos $endpos, $2, $4, $7) }
+
 
 (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)
 expr_or_fun_def_ext:
@@ -303,24 +312,36 @@ mod_expr:
     | mod_expr "." IDENT { SubModule(loc $startpos $endpos, $1, $3) }
 
 ty:
-    | "(" sep_trailing(COMMA, ty) ")" "->" ty               { Fun ($2, $5) }
-    | ty1 "->" ty                                           { Fun ([$1], $3) }
-    | "(" ")"                                               { Ty.unit }
-    | "(" sep_trailing(COMMA, ty) ")"                       { Tuple(Array.of_list $2) }
+    | "(" ty COMMA sep_trailing(COMMA, ty) ")" "->" ty      { Fun ($2 :: $4, $7) }
+    | "(" ty ")" "->" ty                                    { Fun ([$2], $5) }
+    | "(" ")" "->" ty                                       { Fun ([], $4)}
+    | ty2 "->" ty                                           { Fun ([$1], $3) }
+    | "(" ty COMMA sep_trailing(COMMA, ty) ")"              { Tuple(Array.of_list ($2 :: $4)) }
     | FORALL IDENT* "." ty                                  { List.fold_right (fun a r -> Forall(a, r)) $2 $4 }
     | ty1                                                   { $1 }
 
 ty1:
+    | "(" ")"                                               { Ty.unit }
+    | ty2                                                   { $1 }
+
+ty2:
     | IDENT                                                 { match $1 with
                                                                 | "Number" -> Number
                                                                 | "Bool" -> Bool
                                                                 | "String" -> String
                                                                 | x -> TyVar(x)
                                                             }
-    | IDENT "(" ty ")"                                      { match $1 with 
-                                                                | "List" -> List($3) 
-                                                                | "Promise" -> Promise($3)
-                                                                | _ -> Util.panic __LOC__ (Loc.pretty (loc $startpos $endpos) ^ "Type constructors are not yet implemented! (Maybe you just misspelled 'List'?)")
+    | IDENT "(" sep_trailing(COMMA, ty) ")"                 { match $1 with 
+                                                                | "List" | "Promise" -> 
+                                                                    begin match $3 with 
+                                                                    | [ty] -> begin match $1 with
+                                                                        | "List" -> List(ty) 
+                                                                        | "Promise" -> Promise(ty)
+                                                                        | _ -> Util.panic __LOC__ "impossible pattern match"
+                                                                        end
+                                                                    | _ -> Util.panic __LOC__ (Loc.pretty (loc $startpos $endpos) ^ ": Type constructor " ^ $1 ^ " should take exactly one argument.\nThis is a known bug, please do NOT report it! The compiler just needs some work to report this correctly. It is trying its best!")
+                                                                    end
+                                                                | _ -> TyConstructor($1, $3)
                                                             }
     | "{" sep_trailing(COMMA, record_entry) "}"             { Record (RowClosed(Array.of_list $2)) }
     | "{" sep_trailing(COMMA, record_entry) "|" IDENT "}"   { Record (RowVar(Array.of_list $2, $4)) }

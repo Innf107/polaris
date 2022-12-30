@@ -10,6 +10,7 @@ let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix: "Subst"
 type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                                  (* ^           ^ full original types *)
                                  (* | specific mismatch               *)
+                | MismatchedTyCon of name * name * ty * ty
                 | Impredicative of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
                 | WrongNumberOfArgs of ty list * ty list * ty * ty
@@ -208,10 +209,12 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
 
 let rec infer : local_env -> expr -> ty =
   fun env expr -> match expr with
-    | Var (loc, x) -> 
+    (* Data constructors and variables can never have the same name
+       so we do not need to treat them separately here *)
+    | Var (loc, x) | DataConstructor(loc, x) -> 
       begin match NameMap.find_opt x env.local_types with
       | Some ty -> instantiate ty
-      | None -> panic __LOC__ ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")
+      | None -> panic __LOC__ ("Unbound variable or data constructor in type checker: '" ^ Name.pretty x ^ "'")
       end
     | App (loc, func, args) ->
       (* We infer the argument types first and then check the function type against that.
@@ -314,7 +317,7 @@ let rec infer : local_env -> expr -> ty =
       check env res_ty el;
       res_ty
     | Seq (_, exprs) -> infer_seq env exprs
-    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
+    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
     | Let (_, p, e1, e2) ->
       let ty, env_trans = infer_pattern env p in
       (* Lets are non-recursive, so we use the *unaltered* environment *)
@@ -453,6 +456,13 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
       (* TODO: This should *not* be merged with the current environment,
          since we still want modules to be qualified (at least by default) *)
       fun env -> { env with module_var_contents = NameMap.add name module_env env.module_var_contents }
+    | LetDataSeq(loc, data_name, params, ty) ->
+      let data_constructor_type = 
+        List.fold_right (fun param ty -> Forall (param, ty)) params
+          (Fun([ty], TyConstructor(data_name, List.map (fun x -> TyVar(x)) params)))
+      in
+      insert_var data_name data_constructor_type
+      
     | ProgCall (loc, prog, args) ->
       List.iter (check env String) args;
       Fun.id
@@ -560,6 +570,11 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
           end
         end
       end
+      | TyConstructor(name1, args1), TyConstructor(name2, args2) ->
+        if Name.compare name1 name2 <> 0 then
+          raise (TypeError (loc, MismatchedTyCon(name1, name2, partial_apply state original_ty1, partial_apply state original_ty2)))
+        else
+          List.iter2 go args1 args2
       | Fun (dom1, cod1), Fun (dom2, cod2) ->
         if List.compare_lengths dom1 dom2 != 0 then
           raise (TypeError (loc, 

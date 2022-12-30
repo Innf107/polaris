@@ -19,7 +19,6 @@ let pretty_token = function
 | DOUBLECOLON -> "DOUBLECOLON"
 | LPAREN -> "LPAREN" 
 | RPAREN -> "RPAREN" 
-| HASHLBRACE -> "HASHLBRACE" 
 | LBRACE -> "LBRACE" 
 | RBRACE -> "RBRACE" 
 | LBRACKET -> "LBRACKET" 
@@ -61,3 +60,4 @@ let pretty_token = function
 | IMPORT -> "IMPORT"
 | EXPORT -> "EXPORT"
 | FORALL -> "FORALL"
+| DATA -> "DATA"

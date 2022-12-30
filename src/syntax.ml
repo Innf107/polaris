@@ -38,6 +38,7 @@ module Template = struct
     | Forall of name * ty
     | Fun of ty list * ty
     | TyVar of name
+    | TyConstructor of name * ty list
     (* The 'name' is just kept around for error messages but *completely ignored* when typechecking *)
     | Unif of Unique.t * name
     | Skol of Unique.t * name
@@ -89,6 +90,8 @@ module Template = struct
               M.append (fold monoid (go << snd) (Array.to_list fields)) (go (Skol (u, name)))
             | Record (RowVar (fields, var)) ->
               M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (TyVar var))
+            | TyConstructor (name, args) ->
+              fold monoid go args
             (* non-recursive cases *)
             | TyVar _ | Unif _ | Skol _ | Number | Bool | String  -> M.empty
           in
@@ -141,6 +144,7 @@ module Template = struct
           let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
           let extension_type = transform trans (Skol (u, name)) in
           replace_row_extension fields extension_type
+        | TyConstructor (name, args) -> TyConstructor (name, List.map (transform trans) args)
         (* Non-recursive cases *)
         | (TyVar _ | Unif _ | Skol _ | Number | Bool | String) as ty -> ty
         in
@@ -173,6 +177,7 @@ module Template = struct
   and expr =
     (* Lambda calculus *)
     | Var of loc * name                     (* x *)
+    | DataConstructor of loc * name         (* X *)
     | App of loc * expr * expr list         (* e (e₁, .., eₙ) *)
     | Lambda of loc * pattern list * expr   (* \(p₁, .., pₙ) -> e*)
     (* Literals *)
@@ -205,6 +210,7 @@ module Template = struct
     | LetSeq of loc * pattern * expr              (* let p = e (Only valid inside `Seq` expressions) *)
     | LetRecSeq of loc * ty option * name * pattern list * expr  (* [let f : ty]; let f(x, .., x) = e*)
     | LetEnvSeq of loc * string * expr            (* let $x = e *)
+    | LetDataSeq of loc * name * name list * ty   (* data x(x, .., x) = t *)
     (* Mutable local definitions *)
     | Let of loc * pattern * expr * expr              (* let p = e1 in e2 (valid everywhere) *)
     | LetRec of loc * ty option * name * pattern list * expr * expr  (* [let f : ty]; let f(x, .., x) = e*)
@@ -265,8 +271,8 @@ module Template = struct
         let rec go expr = 
           let result = get expr in
           let remaining = match expr with
-          | Var _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
-          | UnitLit _ | NullLit _ | ModSubscript _ -> M.empty
+          | Var _ | DataConstructor _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
+          | UnitLit _ | NullLit _ | ModSubscript _ | LetDataSeq _ -> M.empty
           | App(_, fexpr, arg_exprs) -> M.append (go fexpr) (fold monoid go arg_exprs) 
           | Lambda(_, _, expr) -> go expr
           | ListLit(_, exprs) -> fold monoid go exprs
@@ -333,6 +339,9 @@ module Template = struct
   let rec pretty_type = function
     | Forall (var, ty) -> "∀" ^ pretty_name var ^ ". " ^ pretty_type ty
     | Fun (args, res) -> "(" ^ String.concat ", " (List.map pretty_type args) ^ ") -> " ^ pretty_type res
+    (* TODO: Add a flag to disambiguate 0-argument type constructors and type variables *)
+    | TyConstructor (name, []) -> pretty_name name
+    | TyConstructor (name, args) -> pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_type args) ^ ")"
     | TyVar var -> pretty_name var
     | Unif (u, name) -> pretty_name name ^ "$" ^ Unique.display u
     | Skol (u, name) -> pretty_name name ^ "@" ^ Unique.display u
@@ -358,6 +367,7 @@ module Template = struct
 
   let rec pretty = function
     | Var (_, x) -> pretty_name x
+    | DataConstructor(_, x) -> pretty_name x
     | App (_, f, args) ->
         pretty f ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")"
     | Lambda (_, params, e) ->
@@ -371,7 +381,7 @@ module Template = struct
     | NullLit _ -> "null"
     | ListLit (_, exprs) -> "[" ^ String.concat ", " (List.map pretty exprs) ^ "]"
     | TupleLit (_, exprs) -> "(" ^ String.concat ", " (List.map pretty exprs) ^ ")"
-    | RecordLit (_, kvs) -> "#{" ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
+    | RecordLit (_, kvs) -> "{" ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
     | Subscript (_, expr, key) -> "(" ^ pretty expr ^ ")." ^ key
     | ModSubscript (_, mod_name, key_name) -> pretty_name mod_name ^ "." ^ pretty_name key_name
     | RecordUpdate (_, expr, kvs) -> "#{" ^ pretty expr ^ " with " ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
@@ -412,6 +422,9 @@ module Template = struct
     | LetRecSeq (_, None, x, xs, e) -> "let " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e
     | LetRecSeq (_, Some ty, x, xs, e) -> "let " ^ pretty_name x ^ " : " ^ pretty_type ty ^ "; let " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e
     | LetEnvSeq (_, x, e) -> "let $" ^ x ^ " = " ^ pretty e
+    | LetDataSeq (_, varname, [], ty) -> "data " ^ pretty_name varname ^ " = " ^ pretty_type ty
+    | LetDataSeq (_, varname, params, ty) -> "data " ^ pretty_name varname ^ "(" ^ String.concat ", " (List.map pretty_name params) ^ ") = " ^ pretty_type ty
+
     | Let (_, x, e1, e2) ->
         "let " ^ pretty_pattern x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
     | LetRec (_, None, x, xs, e1, e2) -> "let rec " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
@@ -438,12 +451,13 @@ module Template = struct
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
 
   let get_loc = function
-    | Var (loc, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
+    | Var (loc, _) | DataConstructor(loc, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
     | Subscript(loc, _, _) | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
     | BinOp(loc, _, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)
-    | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _, _) | LetEnvSeq(loc, _, _) | Let(loc, _, _, _)
+    | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _, _) | LetEnvSeq(loc, _, _) 
+    | LetDataSeq (loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _)
     -> loc
@@ -492,6 +506,9 @@ module Template = struct
           | Var (loc, name) ->
             let name, state = self#traverse_name state name in
             Var (loc, name), state
+          | DataConstructor (loc, name) ->
+            let name, state = self#traverse_name state name in
+            DataConstructor (loc, name), state
           | App (loc, fun_expr, arg_exprs) ->
             let fun_expr, state = self#traverse_expr state fun_expr in
             let (arg_exprs, state) = self#traverse_list self#traverse_expr state arg_exprs in
@@ -577,6 +594,11 @@ module Template = struct
           | LetEnvSeq(loc, env_var, expr) ->
             let expr, state = self#traverse_expr state expr in
             LetEnvSeq(loc, env_var, expr), state
+          | LetDataSeq(loc, data_name, params, ty) ->
+            let data_name, state = self#traverse_name state data_name in
+            let params, state = self#traverse_list self#traverse_name state params in
+            let ty, state = self#traverse_type state ty in
+            LetDataSeq(loc, data_name, params, ty), state
           | Let(loc, pattern, expr, rest_expr) ->
             let pattern, state = self#traverse_pattern state pattern in
             let expr, state = self#traverse_expr state expr in
@@ -685,6 +707,10 @@ module Template = struct
         | TyVar(name) ->
           let name, state = self#traverse_name state name in
           TyVar(name), state
+        | TyConstructor(name, arg_types) ->
+          let name, state = self#traverse_name state name in
+          let arg_types, state = self#traverse_list self#traverse_type state arg_types in
+          TyConstructor(name, arg_types), state
         | Unif(unique, name) ->
           let name, state = self#traverse_name state name in
           Unif(unique, name), state

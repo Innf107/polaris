@@ -4,6 +4,7 @@ open Syntax.Renamed
 type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                                  (* ^           ^ full original types *)
                                  (* | specific mismatch               *)
+                | MismatchedTyCon of name * name * ty * ty
                 | Impredicative of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
                 | WrongNumberOfArgs of ty list * ty list * ty * ty

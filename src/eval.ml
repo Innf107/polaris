@@ -50,6 +50,11 @@ and value =
   | NullV
   (* Represents a concurrent thread of execution *)
   | PromiseV of value Promise.t
+  (* Until there are type classes, we need to keep the constructor name
+     for pretty printing purposes *)
+  | DataConV of name * value
+  (* Data constructors can be used like functions *)
+  | PartialDataConV of name
 
 let unitV = RecordV (RecordVImpl.empty)
 let isUnitV = function
@@ -121,17 +126,23 @@ module Value = struct
       let kv_list = List.of_seq (RecordVImpl.to_seq kvs) in
       "{ " ^ String.concat ", " (List.map (fun (k, v) -> k ^ " = " ^ pretty v) kv_list) ^ " }"
     | PromiseV p ->
-      match Promise.peek p with
+      begin match Promise.peek p with
       | Finished value -> "<promise: " ^ pretty value ^ ">"
       | Failed _ex -> "<promise: <<failure>>>" 
       | Pending -> "<promise: <<pending>>>"
+      end
+    | DataConV(constructor_name, value) ->
+      constructor_name.name ^ "(" ^ pretty value ^ ")" 
+    | PartialDataConV(constructor_name) ->
+      "<constructor: " ^ Name.pretty constructor_name ^ ">"
+
 
   let rec as_args (fail : t -> 'a) (x : t) : string list =
     match x with
     | StringV v -> [v]
     | NumV _ | BoolV _ -> [pretty x]
     (* TODO: Should records/maps be converted to JSON? *)
-    | ClosureV _ | PrimOpV _ | NullV | TupleV _ | RecordV _ | PromiseV _ -> fail x
+    | ClosureV _ | PrimOpV _ | NullV | TupleV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
@@ -153,7 +164,7 @@ let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
     | NullV     -> { env with env_vars = EnvMap.remove var env.env_vars }
     | StringV x -> { env with env_vars = EnvMap.add var x env.env_vars }
     | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
-    | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ 
+    | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _
       -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
 
 let insert_module_var : name -> runtime_module -> eval_env -> eval_env =
@@ -282,6 +293,8 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
       if x.index = Name.primop_index
       then PrimOpV x.name
       else !(lookup_var env loc x)
+  | DataConstructor (loc, name) ->
+    PartialDataConV(name)
   | App (loc, f, args) ->
     (* See Note [left-to-right evaluation] *)
     let f_val = eval_expr env f in
@@ -501,7 +514,7 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
       eval_expr env e3
 
   | Seq (_, exprs) -> eval_seq env exprs
-  | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ -> raise (Panic "let assignment found outside of sequence expression")
+  | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
   | Let (loc, pat, e1, e2) ->
     let scrut = eval_expr env e1 in
@@ -591,7 +604,11 @@ and eval_app env loc fun_v arg_vals =
       let updated_clos_env = env_trans (Lazy.force clos_env) in
       (* The call trace is extended and carried over to the closure environment *)
       eval_expr {updated_clos_env with call_trace = loc :: env.call_trace} body
-  
+  | PartialDataConV (constructor_name) ->
+    begin match arg_vals with
+    | [x] -> DataConV(constructor_name, x)
+    | _ -> panic __LOC__ ("Invalid number of arguments for data constructor '" ^ Name.pretty constructor_name ^ "': [" ^ String.concat ", " (List.map Value.pretty arg_vals) ^ "]")
+    end
   | PrimOpV prim_name ->
       eval_primop {env with call_trace = loc :: env.call_trace} prim_name arg_vals loc
   | x ->
@@ -619,6 +636,9 @@ and eval_seq_cont : 'r. eval_env -> Renamed.expr list -> (eval_env -> (Renamed.e
   | LetModuleSeq (loc, x, me) :: exprs ->
     let module_val = eval_mod_expr env me in
     let env = insert_module_var x module_val env in
+    eval_seq_cont env exprs cont
+  | LetDataSeq (loc, _, _, _) :: exprs -> 
+    (* Types are erased at runtime, so we don't need to do anything clever here *)
     eval_seq_cont env exprs cont
   (* Single program calls are just evaluated like pipes *)
   | ProgCall (loc, _, _) as expr :: exprs ->

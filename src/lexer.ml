@@ -180,6 +180,7 @@ let ident_token = let open Parser in function
 | "import" -> IMPORT
 | "export" -> EXPORT
 | "forall" -> FORALL
+| "data" -> DATA
 | str -> IDENT(str)
 
 let op_token lexbuf = let open Parser in function
@@ -251,12 +252,9 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | None -> Parser.EOF
     | Some(c) -> raise (LexError (InvalidChar (get_loc lexbuf, c)))
     end
+    (* TODO: Is this still necessary now that there is no '#{' token anymore? *)
   | LeadingHash ->
     begin match next_char lexbuf with
-    | Some('{') ->
-      open_ignored_block state;
-      set_state (Default) state lexbuf;
-      HASHLBRACE
     | Some('\n') ->
       set_state (LeadingWhitespace) state lexbuf;
       continue ()

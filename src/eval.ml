@@ -253,6 +253,8 @@ let rec match_pat_opt (pat : Renamed.pattern) (scrut : value) : (eval_env -> eva
     | Some(t) -> Some(t)
     | None -> match_pat_opt p2 v
     end
+  | DataPat(_, constructor_name, pattern), DataConV(val_constructor_name, underlying) when constructor_name = val_constructor_name ->
+    match_pat_opt pattern underlying
   | _ -> None
 
 let match_pat pat scrut locs =

@@ -22,6 +22,7 @@ type lex_kind =
   | LeadingMinus
   | Comment 
   | InIdent of string
+  | InConstructor of string
   | InOp of string
   | InString of string
   | InSingleString of string
@@ -121,6 +122,10 @@ let is_alpha_num c = is_alpha c || is_digit c
 let is_ident_start c = is_alpha c || c = '_'
 
 let is_ident c = is_ident_start c || is_digit c
+
+let is_constructor_start c = is_ident_start c && Base.Char.is_uppercase c
+
+let is_constructor = is_ident
 
 let is_op_start = function
   | '=' | '<' | '>' | '+' | '*' | '/' | '&' | ',' |  '.' | '~' | ':' | ';' | '\\' | '|' -> true
@@ -241,6 +246,9 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | Some(c) when is_digit c ->
       set_state (InNumber (string_of_char c)) state lexbuf;
       continue ()
+    | Some(c) when is_constructor_start c ->
+      set_state (InConstructor (string_of_char c)) state lexbuf;
+      continue ()  
     | Some(c) when is_ident_start c ->
       set_state (InIdent (string_of_char c)) state lexbuf;
       continue ()
@@ -288,7 +296,7 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | None ->
       Parser.EOF
     end
-  | InIdent(ident) -> begin match peek_char lexbuf with
+    | InIdent(ident) -> begin match peek_char lexbuf with
     | Some(c) when is_ident c ->
       let _ = next_char lexbuf in
       set_state (InIdent(ident ^ string_of_char c)) state lexbuf;
@@ -299,6 +307,18 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | None -> 
       set_state (Default) state lexbuf;
       ident_token ident
+    end
+  | InConstructor(ident) -> begin match peek_char lexbuf with
+    | Some(c) when is_ident c ->
+      let _ = next_char lexbuf in
+      set_state (InConstructor(ident ^ string_of_char c)) state lexbuf;
+      continue ()
+    | Some(_) ->
+      set_state Default state lexbuf;
+      CONSTRUCTOR ident
+    | None -> 
+      set_state Default state lexbuf;
+      CONSTRUCTOR ident
     end
   | InString str -> begin match next_char lexbuf with
     | Some('"') ->

@@ -20,6 +20,7 @@ type expr_or_fun_def_ext =
 %}
 
 %token <string> IDENT
+%token <string> CONSTRUCTOR
 %token <string> STRING
 %token <int>    INT
 %token <float>  FLOAT
@@ -206,13 +207,8 @@ expr_leaf:
     | "(" ")" { UnitLit(loc $startpos $endpos) }
     | TRUE { BoolLit(loc $startpos $endpos, true) }
     | FALSE { BoolLit(loc $startpos $endpos, false) }
-    | IDENT { 
-        if Base.Char.is_uppercase (($1).[0]) then
-            DataConstructor(loc $startpos $endpos, $1)
-        else
-            Var(loc $startpos $endpos, $1)
-        }
-
+    | CONSTRUCTOR { DataConstructor(loc $startpos $endpos, $1) }
+    | IDENT { Var(loc $startpos $endpos, $1) }
     | ENVVAR { EnvVar(loc $startpos $endpos, $1) }
     | "[" expr1 "|" LET pattern "<-" expr list_comp_clauses "]" 
         { ListComp(loc $startpos $endpos, $2, DrawClause($5, $7) :: $8) }
@@ -262,9 +258,9 @@ expr_leaf:
     | ASYNC expr1 { Async(loc $startpos $endpos, $2) }
     | AWAIT expr1 { Await(loc $startpos $endpos, $2) }
     | MATCH expr "{" sep_trailing(SEMI+, match_branch) "}" { Match(loc $startpos $endpos, $2, $4) }
-    | MODULE IDENT "=" mod_expr { LetModuleSeq(loc $startpos $endpos, $2, $4) }
-    | DATA IDENT "=" ty { LetDataSeq(loc $startpos $endpos, $2, [], $4) }
-    | DATA IDENT "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetDataSeq(loc $startpos $endpos, $2, $4, $7) }
+    | MODULE CONSTRUCTOR "=" mod_expr { LetModuleSeq(loc $startpos $endpos, $2, $4) }
+    | DATA CONSTRUCTOR "=" ty { LetDataSeq(loc $startpos $endpos, $2, [], $4) }
+    | DATA CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetDataSeq(loc $startpos $endpos, $2, $4, $7) }
 
 
 (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)
@@ -301,6 +297,7 @@ pattern2:
 pattern_leaf:
     | "[" sep_trailing(COMMA, pattern) "]" { ListPat(loc $startpos $endpos, $2) }
     | IDENT { VarPat(loc $startpos $endpos, $1) }
+    | CONSTRUCTOR "(" pattern ")" { DataPat(loc $startpos $endpos, $1, $3) }
     | INT { NumPat(loc $startpos $endpos, float_of_int $1) }
     | FLOAT { NumPat(loc $startpos $endpos, $1) }
     | "(" pattern ")" { $2 }
@@ -308,8 +305,8 @@ pattern_leaf:
 
 mod_expr:
     | IMPORT "(" STRING ")" { Import(loc $startpos $endpos, $3) }
-    | IDENT { ModVar(loc $startpos $endpos, $1) }
-    | mod_expr "." IDENT { SubModule(loc $startpos $endpos, $1, $3) }
+    | CONSTRUCTOR { ModVar(loc $startpos $endpos, $1) }
+    | mod_expr "." CONSTRUCTOR { SubModule(loc $startpos $endpos, $1, $3) }
 
 ty:
     | "(" ty COMMA sep_trailing(COMMA, ty) ")" "->" ty      { Fun ($2 :: $4, $7) }
@@ -325,13 +322,14 @@ ty1:
     | ty2                                                   { $1 }
 
 ty2:
-    | IDENT                                                 { match $1 with
+    | CONSTRUCTOR                                           { match $1 with
                                                                 | "Number" -> Number
                                                                 | "Bool" -> Bool
                                                                 | "String" -> String
-                                                                | x -> TyVar(x)
+                                                                | _ -> TyConstructor($1, [])
                                                             }
-    | IDENT "(" sep_trailing(COMMA, ty) ")"                 { match $1 with 
+    | IDENT                                                 { TyVar($1) }
+    | CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")"                 { match $1 with 
                                                                 | "List" | "Promise" -> 
                                                                     begin match $3 with 
                                                                     | [ty] -> begin match $1 with

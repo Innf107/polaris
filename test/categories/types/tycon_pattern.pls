@@ -2,7 +2,7 @@
 
 data T = Number
 
-let x : T = T 5
+let x : T = T(5)
 
 let (T(y : Number)) = x
 

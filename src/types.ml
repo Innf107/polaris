@@ -32,12 +32,14 @@ type ty_constraint = Unify of loc * ty * ty
 type global_env = {
   var_types : ty NameMap.t;
   module_var_contents : global_env NameMap.t;
+  data_definitions : (name list * ty) NameMap.t
 }
 
 type local_env = {
   local_types : ty NameMap.t;
   constraints : ty_constraint Difflist.t ref;
-  module_var_contents : global_env NameMap.t
+  module_var_contents : global_env NameMap.t;
+  data_definitions : (name list * ty) NameMap.t
 }
 
 
@@ -101,14 +103,31 @@ let fresh_unif () =
   let index, name = fresh_unif_raw () in
   Unif (index, name)
 
+let fresh_unif_with name =
+  let index, name = fresh_unif_raw_with name in
+  Unif (index, name)
+
 let insert_var : name -> ty -> local_env -> local_env =
   fun x ty env -> { env with local_types = NameMap.add x ty env.local_types }
+
+let insert_data_definition : name -> name list -> ty -> local_env -> local_env =
+  fun constructor params underlying_type env ->
+    { env with data_definitions = NameMap.add constructor (params, underlying_type) env.data_definitions }
 
 let replace_tvar : name -> ty -> ty -> ty =
   fun var replacement -> Ty.transform begin function
     (* We rely on the renamer and generalization to eliminate
        and name shadowing, so we don't need to deal with foralls here *)
     | TyVar tv when tv = var -> replacement
+    | ty -> ty
+    end
+
+let replace_tvars : ty NameMap.t -> ty -> ty =
+  fun vars -> Ty.transform begin function
+    | TyVar tv -> begin match NameMap.find_opt tv vars with
+      | None -> TyVar tv
+      | Some ty -> ty
+      end
     | ty -> ty
     end
 
@@ -154,6 +173,7 @@ let rec eval_module_env : local_env -> module_expr -> global_env =
     { var_types = mod_exports.exported_types;
       (* TODO: Allow modules to export other modules and include them here *)
       module_var_contents = NameMap.empty;
+      data_definitions = NameMap.empty
     }
   | SubModule (loc, mod_expr, name) ->
     let parent_env = eval_module_env env mod_expr in
@@ -190,11 +210,29 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
     | TypePat(_, pattern, ty) ->
       let env_trans = check_pattern env pattern ty in
       ty, env_trans
+    | DataPat(loc, constructor_name, pattern) ->
+      let type_variables, underlying_type_raw = match NameMap.find_opt constructor_name env.data_definitions with
+      | Some (vars, ty) -> vars, ty
+      | None -> panic __LOC__ (Loc.pretty loc ^ ": Data constructor not found in typechecker: '" ^ Name.pretty constructor_name ^ "'. This should have been caught earlier!")
+      in
+      let vars_with_unifs = List.map (fun var -> (var, fresh_unif_with var.name)) type_variables in
+      
+      let data_type = TyConstructor(constructor_name, List.map snd vars_with_unifs) in
+
+      let underlying_type = replace_tvars (NameMap.of_seq (List.to_seq vars_with_unifs)) underlying_type_raw in
+
+      let env_trans = check_pattern env pattern underlying_type in
+
+      data_type, env_trans      
+
+      
+      
 
 
 (* The checking judgement for patterns doesn't actually do anything interesting at the moment. *)
 and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
   fun env pat expected_ty ->
+    trace_tc ("checking pattern '" ^ pretty_pattern pat ^ "' : " ^ pretty_type expected_ty);
     match pat with
     (* We need a special case for var patterns to allow polymorphic type patterns. 
       (These would be rejected by unification)
@@ -461,7 +499,8 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
         List.fold_right (fun param ty -> Forall (param, ty)) params
           (Fun([ty], TyConstructor(data_name, List.map (fun x -> TyVar(x)) params)))
       in
-      insert_var data_name data_constructor_type
+      insert_data_definition data_name params ty
+      << insert_var data_name data_constructor_type
       
     | ProgCall (loc, prog, args) ->
       List.iter (check env String) args;
@@ -574,7 +613,10 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
         if Name.compare name1 name2 <> 0 then
           raise (TypeError (loc, MismatchedTyCon(name1, name2, partial_apply state original_ty1, partial_apply state original_ty2)))
         else
-          List.iter2 go args1 args2
+          if List.compare_lengths args1 args2 <> 0 then
+            panic __LOC__ (Loc.pretty loc ^ ": Trying to unify applications of type constructor '" ^ Name.pretty name1 ^ "' to different numbers of arguments.\n    ty1: " ^ pretty_type ty1 ^ "\n    ty2: " ^ pretty_type ty2)
+          else
+            List.iter2 go args1 args2
       | Fun (dom1, cod1), Fun (dom2, cod2) ->
         if List.compare_lengths dom1 dom2 != 0 then
           raise (TypeError (loc, 
@@ -674,6 +716,7 @@ let typecheck_top_level : global_env -> expr -> global_env =
       { local_types = global_env.var_types;
         module_var_contents = global_env.module_var_contents;
         constraints = ref Difflist.empty;
+        data_definitions = global_env.data_definitions;
       } in
     
     let local_env_trans = infer_seq_expr local_env expr in
@@ -687,6 +730,7 @@ let typecheck_top_level : global_env -> expr -> global_env =
       local_types = NameMap.empty;
       module_var_contents = NameMap.empty;
       constraints = local_env.constraints; 
+      data_definitions = NameMap.empty;
     } in
 
     let subst = solve_constraints (Difflist.to_list !(local_env.constraints)) in
@@ -700,7 +744,11 @@ let typecheck_top_level : global_env -> expr -> global_env =
         module_var_contents =
           NameMap.union (fun _ _ x -> Some x)
             (global_env.module_var_contents)
-            temp_local_env.module_var_contents
+            temp_local_env.module_var_contents;
+        data_definitions =
+          NameMap.union (fun _ _ x -> Some x)
+            (global_env.data_definitions)
+            temp_local_env.data_definitions;
       } in
     global_env
 
@@ -729,7 +777,7 @@ let typecheck header exprs =
       (Primops.PrimOpMap.to_seq Primops.primops))
   in
   (* TODO: Maybe primops should be part of an implicitly imported module? *)
-  let global_env = { var_types = prim_types; module_var_contents = NameMap.empty } in
+  let global_env = { var_types = prim_types; module_var_contents = NameMap.empty; data_definitions = NameMap.empty } in
 
   let global_env = typecheck_header header global_env in
 

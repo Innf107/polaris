@@ -159,6 +159,7 @@ module Template = struct
     | NumPat of loc * float
     | OrPat of loc * pattern * pattern
     | TypePat of loc * pattern * ty
+    | DataPat of loc * name * pattern
 
   type module_exports = {
       exported_names : name StringMap.t;
@@ -364,6 +365,7 @@ module Template = struct
     | NumPat (_, f) -> Float.to_string f
     | OrPat (_, p1, p2) -> "(" ^ pretty_pattern p1 ^ " | " ^ pretty_pattern p2 ^ ")"
     | TypePat (_, pat, ty) -> "(" ^ pretty_pattern pat ^ " : " ^ pretty_type ty ^ ")"
+    | DataPat (_, name, pattern) -> pretty_name name ^ "(" ^ pretty_pattern pattern ^ ")"
 
   let rec pretty = function
     | Var (_, x) -> pretty_name x
@@ -465,7 +467,7 @@ module Template = struct
 
   let get_pattern_loc = function
     | VarPat (loc, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
-    | NumPat (loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _)
+    | NumPat (loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _) | DataPat (loc, _, _)
     -> loc
 
 
@@ -687,6 +689,10 @@ module Template = struct
           let pattern, state = self#traverse_pattern state pattern in
           let ty, state = self#traverse_type state ty in
           TypePat(loc, pattern, ty), state
+        | DataPat(loc, constructor_name, pattern) ->
+          let constructor_name, state = self#traverse_name state constructor_name in
+          let patterns, state = self#traverse_pattern state pattern in
+          DataPat(loc, constructor_name, patterns), state
         in
         self#pattern state transformed
 

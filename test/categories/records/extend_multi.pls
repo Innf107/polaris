@@ -1,4 +1,4 @@
-# EXPECT: { x = 3, x = b }
+# EXPECT: { x = 3, x = "b" }
 
 let r = { x = 1, x = "a" }
 

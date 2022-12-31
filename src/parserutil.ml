@@ -2,6 +2,7 @@ open Parser
 
 let pretty_token = function
 | IDENT i -> "IDENT(" ^ i ^ ")"
+| CONSTRUCTOR i -> "CONSTRUCTOR(" ^ i ^ ")"
 | STRING str -> "STRING(" ^ str ^ ")"
 | INT i -> "INT(" ^ Int.to_string i ^ ")" 
 | FLOAT f -> "FLOAT"

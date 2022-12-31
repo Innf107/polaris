@@ -12,6 +12,7 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | MissingRowFields of (string * ty) list * (string * ty) list * ty * ty
                 | ArgCountMismatchInDefinition of name * ty list * int
                 | NonFunTypeInLetRec of name * ty
+                | CannotUnwrapNonData of ty
 
 exception TypeError of loc * type_error
 

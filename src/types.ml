@@ -18,6 +18,7 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | MissingRowFields of (string * ty) list * (string * ty) list * ty * ty
                 | ArgCountMismatchInDefinition of name * ty list * int
                 | NonFunTypeInLetRec of name * ty
+                | CannotUnwrapNonData of ty
 
 exception TypeError of loc * type_error
 
@@ -28,6 +29,7 @@ module UnifSet = Set.Make(struct
 end)
 
 type ty_constraint = Unify of loc * ty * ty
+                   | Unwrap of loc * ty * ty
 
 type global_env = {
   var_types : ty NameMap.t;
@@ -91,6 +93,10 @@ end
 let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
     env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
+
+let unwrap_constraint : local_env -> loc -> ty -> ty -> unit =
+  fun env loc ty1 ty2 ->
+    env.constraints := Difflist.snoc !(env.constraints) (Unwrap (loc, ty1, ty2))
 
 let fresh_unif_raw_with raw_name =
   let index = Unique.fresh() in
@@ -416,6 +422,11 @@ let rec infer : local_env -> expr -> ty =
     | Ascription (_, expr, ty) ->
       check env ty expr;
       ty
+    | Unwrap (loc, expr) ->
+      let ty = infer env expr in
+      let result_ty = fresh_unif () in
+      unwrap_constraint env loc ty result_ty;
+      result_ty
 
 
 and check : local_env -> ty -> expr -> unit =
@@ -679,12 +690,29 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
     in
     go original_ty1 original_ty2
 
-let solve_constraints : ty_constraint list -> Subst.t =
-  fun constraints ->
+let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
+  fun loc env state ty1 ty2 ->
+    match partial_apply state ty1 with
+    | TyConstructor(name, args) ->
+      let var_names, underlying_type_raw = begin match NameMap.find_opt name env.data_definitions with
+      | None -> panic __LOC__ (Loc.pretty loc ^ ": Data constructor '" ^ Name.pretty name ^ "' not found in unwrap expression. This should have been caught earlier!")
+      | Some (var_names, underlying_type_raw) -> var_names, underlying_type_raw 
+      end in
+      let underlying_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq var_names) (List.to_seq args))) underlying_type_raw in
+      solve_unify loc state underlying_type ty2
+    | ty -> 
+      (* TODO: Maybe we should try to defer this until later when we have more type information
+         and only *throw* an error then? *)
+      raise (TypeError(loc, CannotUnwrapNonData ty))
+
+let solve_constraints : local_env -> ty_constraint list -> Subst.t =
+  fun env constraints ->
   let unify_state = { subst = ref UniqueMap.empty } in
   List.iter begin function
     | Unify (loc, ty1, ty2) -> 
       solve_unify loc unify_state ty1 ty2
+    | Unwrap (loc, ty1, ty2) ->
+      solve_unwrap loc env unify_state ty1 ty2
     end constraints;
   Subst.of_map !(unify_state.subst)  
 
@@ -733,7 +761,7 @@ let typecheck_top_level : global_env -> expr -> global_env =
       data_definitions = NameMap.empty;
     } in
 
-    let subst = solve_constraints (Difflist.to_list !(local_env.constraints)) in
+    let subst = solve_constraints local_env (Difflist.to_list !(local_env.constraints)) in
 
     let global_env = { 
       global_env with 

@@ -4,4 +4,4 @@ data T = { x : Number, y : String }
 
 let t : T = T({ x = 5, y = "a" })
 
-print((t.x, t.y))
+print((t!.x, t!.y))

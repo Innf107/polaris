@@ -231,6 +231,8 @@ module Template = struct
     (* Types *)
     | Ascription of loc * expr * ty
 
+    | Unwrap of loc * expr  (* e! *)
+
   and list_comp_clause =
     | DrawClause of pattern * expr (* p <- e *)
     | FilterClause of expr            (* e *)
@@ -306,6 +308,7 @@ module Template = struct
           | Match(_, scrut_expr, branch_exprs) -> M.append (go scrut_expr) (fold monoid (fun (_, expr) -> go expr) branch_exprs)
           | LetModuleSeq _ -> M.empty
           | Ascription (_, expr, _) -> go expr
+          | Unwrap(_, expr) -> go expr
           in
           M.append result remaining
         in
@@ -448,6 +451,7 @@ module Template = struct
       "module " ^ pretty_name name ^ " = " ^ MExpr.pretty mexpr
     | Ascription (_, expr, ty) ->
       "(" ^ pretty expr ^ " : " ^ pretty_type ty ^ ")"
+    | Unwrap(_, expr) -> pretty expr ^ "!"
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
@@ -461,7 +465,7 @@ module Template = struct
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _, _) | LetEnvSeq(loc, _, _) 
     | LetDataSeq (loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
-    | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _)
+    | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _)
     -> loc
     | ModSubscript (ext, _, _) -> mod_subscript_loc ext
 
@@ -659,6 +663,9 @@ module Template = struct
             let mod_name, state = self#traverse_name state mod_name in
             let field_name, state = self#traverse_name state field_name in
             ModSubscript(ext, mod_name, field_name), state
+          | Unwrap(loc, expr) ->
+            let expr, state = self#traverse_expr state expr in
+            Unwrap(loc, expr), state
           in
           self#expr state transformed
 

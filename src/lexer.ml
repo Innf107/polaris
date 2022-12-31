@@ -26,7 +26,8 @@ type lex_kind =
   | InOp of string
   | InString of string
   | InSingleString of string
-  | InBang of string
+  | InBangStart
+  | InProgCall of string
   | InEnv of string
   | InNumber of string
   | InDecimal of string
@@ -235,7 +236,7 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
       set_state (InSingleString "") state lexbuf;
       continue ()
     | Some('!') ->
-      set_state (InBang "") state lexbuf;
+      set_state InBangStart state lexbuf;
       continue ()
     | Some('$') ->
       set_state (InEnv "") state lexbuf;
@@ -341,18 +342,31 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | None ->
       raise (LexError UnterminatedString)
     end
-  | InBang str -> begin match peek_char lexbuf with
+  | InBangStart -> begin match peek_char lexbuf with
     | Some('=') ->
       let _ = next_char lexbuf in
       set_state (Default) state lexbuf;
       BANGEQUALS
+    | Some('.') ->
+      set_state Default state lexbuf;
+      BANG
     | Some(c) when is_prog_char c ->
       let _ = next_char lexbuf in
-      set_state (InBang (str ^ string_of_char c)) state lexbuf;
+      set_state (InProgCall (string_of_char c)) state lexbuf;
+      continue ()
+    | _ ->
+      set_state Default state lexbuf;
+      BANG
+    end
+  | InProgCall str -> begin match peek_char lexbuf with
+    
+    | Some(c) when is_prog_char c ->
+      let _ = next_char lexbuf in
+      set_state (InProgCall (str ^ string_of_char c)) state lexbuf;
       continue ()
     | _ ->
       set_state (Default) state lexbuf;
-      BANG str
+      PROGCALL str
     end
   | InEnv str -> begin match peek_char lexbuf with
     | Some(c) when is_env_char c ->

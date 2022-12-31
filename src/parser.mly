@@ -24,8 +24,9 @@ type expr_or_fun_def_ext =
 %token <string> STRING
 %token <int>    INT
 %token <float>  FLOAT
-%token <string> BANG
+%token <string> PROGCALL
 %token <string> ENVVAR
+%token BANG "!"
 %token LET IN
 %token TRUE FALSE
 %token LAMBDA "\\"
@@ -195,9 +196,13 @@ binop5:
 
 expr6:
     | IDENT ":=" expr { Assign(loc $startpos $endpos, $1, $3) }
-    | expr6 "." IDENT { Subscript(loc $startpos $endpos, $1, $3) }
-    | expr6 "[" expr "]" { DynLookup(loc $startpos $endpos, $1, $3) }
-    | expr6 "(" sep_trailing(COMMA, expr) ")" { App(loc $startpos $endpos, $1, $3) }
+    | expr7 { $1 }
+
+expr7:
+    | expr7 "." IDENT { Subscript(loc $startpos $endpos, $1, $3) }
+    | expr7 "[" expr "]" { DynLookup(loc $startpos $endpos, $1, $3) }
+    | expr7 "(" sep_trailing(COMMA, expr) ")" { App(loc $startpos $endpos, $1, $3) }
+    | expr7 "!" { Unwrap(loc $startpos $endpos, $1) }
     | expr_leaf { $1 }
 
 expr_leaf:
@@ -251,7 +256,7 @@ expr_leaf:
                     LetRecSeq(loc $startpos $endpos, Some $4, name, params, body)    
         }
 
-    | BANG expr_leaf* { ProgCall(loc $startpos $endpos, $1, $2) }
+    | PROGCALL expr_leaf* { ProgCall(loc $startpos $endpos, $1, $2) }
     | NOT expr_leaf { Not(loc $startpos $endpos, $2) }
     | "[" expr ".." expr "]" { Range(loc $startpos $endpos, $2, $4) }
     | IF expr SEMI* THEN SEMI* expr SEMI* ELSE SEMI* expr { If(loc $startpos $endpos, $2, $6, $10) }

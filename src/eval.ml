@@ -596,6 +596,12 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
     (* Ascriptions don't affect the evaluator. 
        These have been checked by the type checker already *)
     eval_expr env expr
+  | Unwrap (loc, expr) ->
+    let value = eval_expr env expr in
+    begin match value with
+    | DataConV (_, underlying) -> underlying
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to unwrap non data constructor value: " ^ Value.pretty value)
+    end
 
 and eval_app env loc fun_v arg_vals = 
   match fun_v with

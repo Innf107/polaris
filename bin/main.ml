@@ -235,6 +235,8 @@ let handle_errors print_fun f =
                      ^ "    but it's type suggests that it should have " ^ string_of_int (List.length types)
     | NonFunTypeInLetRec(fun_name, ty) ->
       Loc.pretty loc ^ ": The function definition for '" ^ Name.pretty fun_name ^ "' is declared as a function but has a non-function type."
+    | CannotUnwrapNonData ty ->
+      Loc.pretty loc ^ ": Trying to unwrap invalid type '" ^ Renamed.pretty_type ty ^ "'\n    Unwrapping is only possible for types defined in a data declaration"
   end
 let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;

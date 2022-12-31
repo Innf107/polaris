@@ -380,6 +380,7 @@ let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.
         let expr = rename_expr exports scope expr in
         let ty, _ = rename_type loc scope ty in
         Ascription (loc, expr, ty)
+    | Unwrap(loc, expr) -> Unwrap(loc, rename_expr exports scope expr)
 
 and rename_seq_state (exports : (module_exports * Renamed.expr list) FilePathMap.t) (scope : RenameScope.t) (exprs : Parsed.expr list) : Renamed.expr list * RenameScope.t = 
     let open RenameScope in

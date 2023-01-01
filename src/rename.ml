@@ -58,6 +58,12 @@ module RenameScope = struct
         with
             Not_found -> raise (RenameError.VarNotFound (var, loc))
 
+    let lookup_data (scope : t) (loc : loc) (data : string) : name =
+        try 
+            find data scope.variables 
+        with
+            Not_found -> raise (RenameError.TyConNotFound (data, loc))        
+
     let lookup_mod_var (scope : t) (loc : loc) (var : string) : name * t =
         try
             find var scope.module_vars
@@ -209,9 +215,12 @@ let rec rename_mod_expr : (module_exports * Renamed.expr list) FilePathMap.t
         | Some (mod_exports, body) ->
             let scope = 
                 StringMap.fold 
-                    (fun name renamed r -> RenameScope.insert_var name renamed  r) 
-                    mod_exports.exported_names 
-                    RenameScope.empty
+                    (fun name renamed r -> RenameScope.insert_var name renamed r) 
+                    mod_exports.exported_variables
+                (StringMap.fold
+                    (fun name renamed r -> RenameScope.insert_data_constructor name renamed r)
+                    mod_exports.exported_datas
+                    RenameScope.empty)
             in
             Import ((loc, mod_exports, body), path), scope
         end
@@ -480,7 +489,8 @@ let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.
 
 let rename_exports : RenameScope.t -> Parsed.export_item list -> Renamed.export_item list = 
     fun scope -> List.map begin function
-        (Parsed.ExportVal (loc, name)) -> Renamed.ExportVal (loc, RenameScope.lookup_var scope loc name)
+        | Parsed.ExportVal (loc, name) -> Renamed.ExportVal (loc, RenameScope.lookup_var scope loc name)
+        | Parsed.ExportData (loc, name) -> Renamed.ExportData (loc, RenameScope.lookup_data scope loc name)
     end
     
 

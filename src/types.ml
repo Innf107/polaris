@@ -176,10 +176,10 @@ let rec eval_module_env : local_env -> module_expr -> global_env =
     | Some contents -> contents
     end
   | Import ((_, mod_exports, _), path) -> 
-    { var_types = mod_exports.exported_types;
+    { var_types = mod_exports.exported_variable_types;
       (* TODO: Allow modules to export other modules and include them here *)
       module_var_contents = NameMap.empty;
-      data_definitions = NameMap.empty
+      data_definitions = mod_exports.exported_data_definitions
     }
   | SubModule (loc, mod_expr, name) ->
     let parent_env = eval_module_env env mod_expr in

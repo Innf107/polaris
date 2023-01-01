@@ -101,7 +101,8 @@ semis(p):
     p SEMI* { $1 }
 
 export_item:
-    IDENT { ExportVal (loc $startpos $endpos, $1) }
+    | IDENT { ExportVal (loc $startpos $endpos, $1) }
+    | CONSTRUCTOR { ExportData (loc $startpos $endpos, $1) }
 
 export_list:
     EXPORT "{" sep_trailing(semis(COMMA), semis(export_item)) "}" { $3 }

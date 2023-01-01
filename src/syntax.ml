@@ -162,8 +162,11 @@ module Template = struct
     | DataPat of loc * name * pattern
 
   type module_exports = {
-      exported_names : name StringMap.t;
-      exported_types : ty NameMap.t;
+      exported_variables : name StringMap.t;
+      exported_variable_types : ty NameMap.t;
+
+      exported_datas : name StringMap.t;
+      exported_data_definitions : (name list * ty) NameMap.t
     }
 
   type binop = 
@@ -332,6 +335,7 @@ module Template = struct
   }
 
   type export_item = ExportVal of loc * name
+                   | ExportData of loc * name
 
   type header = {
       usage: string option

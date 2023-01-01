@@ -557,7 +557,9 @@ let rec occurs subst u = Ty.collect monoid_or begin function
 type unify_state = {
   (* This uses a 'ref' instead of a mutable field to allow the
      possibility of adding immutable fields later *)
-  subst : ty UniqueMap.t ref
+  subst : ty UniqueMap.t ref;
+
+  deferred_constraints : ty_constraint Difflist.t ref option
 }
 
 let partial_apply state ty =
@@ -701,20 +703,34 @@ let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
       let underlying_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq var_names) (List.to_seq args))) underlying_type_raw in
       solve_unify loc state underlying_type ty2
     | ty -> 
-      (* TODO: Maybe we should try to defer this until later when we have more type information
-         and only *throw* an error then? *)
-      raise (TypeError(loc, CannotUnwrapNonData ty))
+      (* Defer this constraint if possible. If not (i.e. we already deferred this one) we throw a type error *)
+      match state.deferred_constraints with
+      | None -> raise (TypeError(loc, CannotUnwrapNonData ty))
+      | Some deferred_constraint_ref ->
+        deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (Unwrap(loc, ty, ty2))
 
 let solve_constraints : local_env -> ty_constraint list -> Subst.t =
   fun env constraints ->
-  let unify_state = { subst = ref UniqueMap.empty } in
-  List.iter begin function
-    | Unify (loc, ty1, ty2) -> 
-      solve_unify loc unify_state ty1 ty2
-    | Unwrap (loc, ty1, ty2) ->
-      solve_unwrap loc env unify_state ty1 ty2
-    end constraints;
-  Subst.of_map !(unify_state.subst)  
+    let go unify_state constraints = 
+      List.iter begin function
+        | Unify (loc, ty1, ty2) -> 
+          solve_unify loc unify_state ty1 ty2
+        | Unwrap (loc, ty1, ty2) ->
+          solve_unwrap loc env unify_state ty1 ty2
+        end constraints;
+    in
+    let subst_ref = ref UniqueMap.empty in
+
+    let initial_deferred_constraint_ref = ref Difflist.empty in
+    let initial_unify_state = { subst = subst_ref; deferred_constraints = Some initial_deferred_constraint_ref } in
+    (* We try to solve the constraints once, collect any deferred ones and try again *)
+    go initial_unify_state constraints;
+    
+    let updated_unify_state = { subst = subst_ref; deferred_constraints = None } in
+    go updated_unify_state (Difflist.to_list !initial_deferred_constraint_ref);
+
+    Subst.of_map !subst_ref
+
 
 let free_unifs : ty -> UnifSet.t =
   Ty.collect (monoid_set (module UnifSet)) begin function

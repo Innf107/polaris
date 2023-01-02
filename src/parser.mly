@@ -9,8 +9,6 @@ module L = MenhirLib.LexerUtil
 
 let loc = Loc.from_pos
 
-let equal_token : token -> token -> bool = (=)
-
 (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working.
     (See the parsing rule of the same name) *)
 type expr_or_fun_def_ext =
@@ -201,6 +199,8 @@ expr6:
 
 expr7:
     | expr7 "." IDENT { Subscript(loc $startpos $endpos, $1, $3) }
+    | CONSTRUCTOR "." IDENT { ModSubscript(loc $startpos $endpos, $1, $3) }
+    | CONSTRUCTOR "." CONSTRUCTOR { ModSubscriptDataCon((), loc $startpos $endpos, $1, $3) }
     | expr7 "[" expr "]" { DynLookup(loc $startpos $endpos, $1, $3) }
     | expr7 "(" sep_trailing(COMMA, expr) ")" { App(loc $startpos $endpos, $1, $3) }
     | expr7 "!" { Unwrap(loc $startpos $endpos, $1) }
@@ -327,15 +327,16 @@ ty1:
     | "(" ")"                                               { Ty.unit }
     | ty2                                                   { $1 }
 
-ty2:
+ty2:    
     | CONSTRUCTOR                                           { match $1 with
                                                                 | "Number" -> Number
                                                                 | "Bool" -> Bool
                                                                 | "String" -> String
                                                                 | _ -> TyConstructor($1, [])
                                                             }
+    | CONSTRUCTOR "." CONSTRUCTOR                           { ModSubscriptTyCon((), $1, $3, []) }
     | IDENT                                                 { TyVar($1) }
-    | CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")"                 { match $1 with 
+    | CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")"           { match $1 with 
                                                                 | "List" | "Promise" -> 
                                                                     begin match $3 with 
                                                                     | [ty] -> begin match $1 with
@@ -347,8 +348,9 @@ ty2:
                                                                     end
                                                                 | _ -> TyConstructor($1, $3)
                                                             }
-    | "{" sep_trailing(COMMA, record_entry) "}"             { Record (RowClosed(Array.of_list $2)) }
-    | "{" sep_trailing(COMMA, record_entry) "|" IDENT "}"   { Record (RowVar(Array.of_list $2, $4)) }
+    | CONSTRUCTOR "." CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")"   { ModSubscriptTyCon((), $1, $3, $5) }
+    | "{" sep_trailing(COMMA, record_entry) "}"                     { Record (RowClosed(Array.of_list $2)) }
+    | "{" sep_trailing(COMMA, record_entry) "|" IDENT "}"           { Record (RowVar(Array.of_list $2, $4)) }
 
 record_entry:
     IDENT ":" ty { ($1, $3) }

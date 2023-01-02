@@ -24,7 +24,7 @@ let rec parse_rename_typecheck : driver_options
                               -> RenameScope.t
                               -> Renamed.header * Renamed.expr list * RenameScope.t * Types.global_env
 = fun options lexbuf scope ->
-  trace_driver ("Lexing with filename '" ^ options.filename);
+  trace_driver (lazy ("Lexing with filename '" ^ options.filename));
   Lexing.set_filename lexbuf options.filename;
   
   if options.print_tokens then
@@ -38,7 +38,7 @@ let rec parse_rename_typecheck : driver_options
   else
     ();
 
-  trace_driver "Parsing...";
+  trace_driver (lazy "Parsing...");
   let header, ast = 
     let lex_state = Lexer.new_lex_state () in
     match
@@ -69,7 +69,7 @@ let rec parse_rename_typecheck : driver_options
       (Seq.map (fun (file, (header, ast, scope, env)) -> (file, (Modules.build_export_map header ast scope env, ast))) 
       (List.to_seq items_for_exports)) in
 
-  trace_driver "Renaming...";
+  trace_driver (lazy "Renaming...");
   let renamed_header, renamed, new_scope = Rename.rename_scope import_map scope header ast in 
   if options.print_renamed then begin
     print_endline "~~~~~~~~Renamed AST~~~~~~~";
@@ -78,7 +78,7 @@ let rec parse_rename_typecheck : driver_options
   end
   else ();
 
-  trace_driver "Typechecking...";
+  trace_driver (lazy "Typechecking...");
   let type_env = Types.typecheck renamed_header renamed in
 
   renamed_header, renamed, new_scope, type_env
@@ -87,7 +87,7 @@ let rec parse_rename_typecheck : driver_options
 let run_env (options : driver_options) (lexbuf : Lexing.lexbuf) (env : eval_env) (scope : RenameScope.t) : value * eval_env * RenameScope.t = 
   let renamed_header, renamed, new_scope, _new_ty_env = parse_rename_typecheck options lexbuf scope in
   
-  trace_driver "Evaluating...";
+  trace_driver (lazy "Evaluating...");
   let env = Eval.eval_header env renamed_header in
   let res, new_env = Eval.eval_seq_state env renamed in
   res, new_env, new_scope

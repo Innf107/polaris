@@ -1,5 +1,8 @@
 open Syntax
 
+let _export_category, trace_exports = Trace.make ~flag:"exports" ~prefix:"Exports" 
+
+
 let extract_import_paths_mod =
   Parsed.MExpr.collect_list begin function
   | Import (_, path) -> [path]
@@ -33,6 +36,9 @@ let build_export_map header exprs rename_scope global_env =
 
   let exported_variables_seq, exported_variable_types_seq = Seq.split (Seq.filter_map Fun.id variable_entries) in
   let exported_datas_seq, exported_data_efinitions_seq = Seq.split (Seq.filter_map Fun.id data_entries) in
+
+  trace_exports (lazy ("Exported variables: [" ^ String.concat ", " (List.map (fun (x, ty) -> "(" ^ Name.pretty x ^ " : " ^ Renamed.pretty_type ty ^ ")") (List.of_seq exported_variable_types_seq)) ^ "]"));
+  trace_exports (lazy ("Exported data constructors: [" ^ String.concat ", " (List.map (fun (_, x) -> Name.pretty x) (List.of_seq exported_datas_seq)) ^ "]"));
 
   Renamed.{ 
     exported_variables = StringMap.of_seq exported_variables_seq; 

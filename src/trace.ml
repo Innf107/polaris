@@ -26,5 +26,5 @@ let make ~flag ~prefix =
   enabled_map := CategoryMap.add flag false !enabled_map;
   flag, fun msg ->
     if get_enabled flag then
-      prerr_endline ("[" ^ prefix ^ "]: " ^ msg)
+      prerr_endline ("[" ^ prefix ^ "]: " ^ Lazy.force msg)
 

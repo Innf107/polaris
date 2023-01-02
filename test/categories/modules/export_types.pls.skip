@@ -5,5 +5,5 @@ export {
 
 data Test = { x : Number }
 
-let f(r : Test) = !r.x
+let f(r : Test) = r!.x
 

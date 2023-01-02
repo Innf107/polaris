@@ -297,6 +297,8 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
       else !(lookup_var env loc x)
   | DataConstructor (loc, name) ->
     PartialDataConV(name)
+  | ModSubscriptDataCon (void, _, _, _) ->
+    absurd void
   | App (loc, f, args) ->
     (* See Note [left-to-right evaluation] *)
     let f_val = eval_expr env f in

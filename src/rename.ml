@@ -60,7 +60,7 @@ module RenameScope = struct
 
     let lookup_data (scope : t) (loc : loc) (data : string) : name =
         try 
-            find data scope.variables 
+            find data scope.data_constructors 
         with
             Not_found -> raise (RenameError.TyConNotFound (data, loc))        
 
@@ -102,6 +102,17 @@ let rename_type loc (scope : RenameScope.t) original_type =
             end;
             let args = List.map rename_nonbinding args in
             TyConstructor(name, args)
+        | ModSubscriptTyCon((), mod_name, name, args) -> 
+            let _, module_export_scope = RenameScope.lookup_mod_var scope loc mod_name in
+            let name = RenameScope.lookup_data module_export_scope loc name in
+
+            let args = List.map rename_nonbinding args in
+
+            (* The renamed name is guaranteed to be unique among all modules so we just get rid of the
+               ModSubscriptTyCon for later passes
+               TODO: The module might still be useful for debugging, so we should probably include it in the name somehow 
+            *)
+               TyConstructor(name, args)
         | TyVar(tv) -> begin match RenameMap.find_opt tv scope.ty_vars with
             | Some tv' -> TyVar(tv')
             | None -> match RenameMap.find_opt tv scope.ty_constructors with
@@ -263,6 +274,13 @@ let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.
             (* TODO: With polymorphic variants this should return a 'VariantConstructor' *)
             panic __LOC__ (Loc.pretty loc ^ ": Polymorphic variants are not implemented yet! Maybe you misspelled a data constructor?")
         end
+    | ModSubscriptDataCon ((), loc, mod_name, name) ->
+        let _, module_export_scope = RenameScope.lookup_mod_var scope loc mod_name in
+
+        let name = RenameScope.lookup_data module_export_scope loc name in
+        (* We get rid of the module subscript expression part, since the data constructor name
+           is guaranteed to be unique among all modules so we don't need it after the renamer anymore *)
+        DataConstructor(loc, name)
     | App (loc, f, args) -> App (loc, rename_expr exports scope f, List.map (rename_expr exports scope) args)
     
     | Lambda (loc, xs, e) ->
@@ -281,20 +299,12 @@ let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.
     | RecordLit (loc, kvs) -> RecordLit (loc, List.map (fun (k, e) -> (k, rename_expr exports scope e)) kvs)
 
     (* TODO: What about nested module subscripts? *)
-    | Subscript (loc, (Var (var_loc, name) | DataConstructor(var_loc, name)), key) ->
-        begin match RenameScope.lookup_var scope var_loc name with
-        | exception (RenameError.VarNotFound _) -> 
-            begin match RenameScope.lookup_mod_var scope var_loc name with
-            | exception (RenameError.ModuleVarNotFound _) -> raise (RenameError.SubscriptVarNotFound (name, loc))
-            | (renamed, module_export_scope) ->
-                (* TODO: Include the fact that this is looked up in another module in the error message! *)
-                let key_name = RenameScope.lookup_var module_export_scope loc key in
-                ModSubscript (loc, renamed, key_name)
-            end
-        | new_name -> Subscript (loc, Var (var_loc, new_name), key)
-        end
+    | ModSubscript (loc, mod_name, key) ->
+        let mod_name, module_export_scope = RenameScope.lookup_mod_var scope loc mod_name in
+
+        let key_name = RenameScope.lookup_var module_export_scope loc key in
+        ModSubscript (loc, mod_name, key_name)
     | Subscript (loc, expr, key) -> Subscript (loc, rename_expr exports scope expr, key)
-    | ModSubscript (void, _, _) -> absurd void
     | RecordUpdate (loc, expr, kvs) -> RecordUpdate (loc, rename_expr exports scope expr, List.map (fun (x, expr) -> (x, rename_expr exports scope expr)) kvs)
     | RecordExtension (loc, expr, kvs) -> RecordExtension (loc, rename_expr exports scope expr, List.map (fun (x, expr) -> (x, rename_expr exports scope expr)) kvs)
     | DynLookup (loc, mexpr, kexpr) -> DynLookup (loc, rename_expr exports scope mexpr, rename_expr exports scope kexpr)
@@ -487,7 +497,7 @@ let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.
     ; description = flag_def.description
     }, scope
 
-let rename_exports : RenameScope.t -> Parsed.export_item list -> Renamed.export_item list = 
+let rename_exports : RenameScope.t -> Parsed.export_item list -> Renamed.export_item list =
     fun scope -> List.map begin function
         | Parsed.ExportVal (loc, name) -> Renamed.ExportVal (loc, RenameScope.lookup_var scope loc name)
         | Parsed.ExportData (loc, name) -> Renamed.ExportData (loc, RenameScope.lookup_data scope loc name)

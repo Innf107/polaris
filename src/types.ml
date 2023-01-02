@@ -238,7 +238,7 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
 (* The checking judgement for patterns doesn't actually do anything interesting at the moment. *)
 and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
   fun env pat expected_ty ->
-    trace_tc ("checking pattern '" ^ pretty_pattern pat ^ "' : " ^ pretty_type expected_ty);
+    trace_tc (lazy ("checking pattern '" ^ pretty_pattern pat ^ "' : " ^ pretty_type expected_ty));
     match pat with
     (* We need a special case for var patterns to allow polymorphic type patterns. 
       (These would be rejected by unification)
@@ -253,13 +253,22 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
 
 let rec infer : local_env -> expr -> ty =
   fun env expr -> match expr with
-    (* Data constructors and variables can never have the same name
-       so we do not need to treat them separately here *)
-    | Var (loc, x) | DataConstructor(loc, x) -> 
+    | Var (loc, x) -> 
       begin match NameMap.find_opt x env.local_types with
       | Some ty -> instantiate ty
-      | None -> panic __LOC__ ("Unbound variable or data constructor in type checker: '" ^ Name.pretty x ^ "'")
+      | None -> panic __LOC__ ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")
       end
+    | DataConstructor(loc, data_name) ->
+      begin match NameMap.find_opt data_name env.data_definitions with
+      | Some (params, ty) -> 
+        let data_constructor_type = 
+          List.fold_right (fun param ty -> Forall (param, ty)) params
+            (Fun([ty], TyConstructor(data_name, List.map (fun x -> TyVar(x)) params)))
+        in
+        instantiate data_constructor_type
+      | None -> panic __LOC__ ("Unbound data constructor in type checker: '" ^ Name.pretty data_name ^ "'")
+    end
+    | ModSubscriptDataCon (void, _, _, _) -> absurd void
     | App (loc, func, args) ->
       (* We infer the argument types first and then check the function type against that.
          Since most functions are going to be defined in a let binding, it might be more efficient to
@@ -267,7 +276,7 @@ let rec infer : local_env -> expr -> ty =
       
       let arg_tys = List.map (infer env) args in
       let result_ty = fresh_unif() in
-      trace_tc ("[Infer App(..)]: Expected fun ty: " ^ pretty_type (Fun (arg_tys, result_ty)));
+      trace_tc (lazy ("[Infer App(..)]: Expected fun ty: " ^ pretty_type (Fun (arg_tys, result_ty))));
       check env (Fun (arg_tys, result_ty)) func;
       result_ty
     | Lambda (loc, args, body) -> 
@@ -469,7 +478,7 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
       in
 
 
-      trace_tc ("[Infer (LetRec(Seq) ..)]: " ^ Name.pretty fun_name ^ " : " ^ pretty_type (Fun (arg_tys, result_ty)));
+      trace_tc (lazy ("[Infer (LetRec(Seq) ..)]: " ^ Name.pretty fun_name ^ " : " ^ pretty_type (Fun (arg_tys, result_ty))));
 
       let fun_ty = match mty with
       | Some ty -> ty
@@ -502,16 +511,20 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
       Fun.id
     | LetModuleSeq(loc, name, mod_expr) ->
       let module_env = eval_module_env env mod_expr in
-      (* TODO: This should *not* be merged with the current environment,
-         since we still want modules to be qualified (at least by default) *)
-      fun env -> { env with module_var_contents = NameMap.add name module_env env.module_var_contents }
+      (* Variables should *not* be merged with the current environment,
+         since we still want modules to be qualified (at least by default) 
+         
+         At the same time, we *do* remove module subscripts from types and data constructors
+         so we *need to merge these* with the current environment. 
+         (This is fine since data constructor names are always unique, even across modules)
+      *)
+      fun env -> 
+        { env with 
+            module_var_contents = NameMap.add name module_env env.module_var_contents;
+            data_definitions = NameMap.union (fun _ _ x -> Some x) env.data_definitions module_env.data_definitions;
+        }
     | LetDataSeq(loc, data_name, params, ty) ->
-      let data_constructor_type = 
-        List.fold_right (fun param ty -> Forall (param, ty)) params
-          (Fun([ty], TyConstructor(data_name, List.map (fun x -> TyVar(x)) params)))
-      in
       insert_data_definition data_name params ty
-      << insert_var data_name data_constructor_type
       
     | ProgCall (loc, prog, args) ->
       List.iter (check env String) args;
@@ -567,12 +580,12 @@ let partial_apply state ty =
 
 let bind : unify_state -> Unique.t -> name -> ty -> unit =
   fun state u name ty ->
-    trace_subst (pretty_type (Unif (u, name)) ^ " := " ^ pretty_type ty);
+    trace_subst (lazy (pretty_type (Unif (u, name)) ^ " := " ^ pretty_type ty));
     state.subst := UniqueMap.add u ty (UniqueMap.map (replace_unif u ty) !(state.subst)) 
 
 let solve_unify : loc -> unify_state -> ty -> ty -> unit =
   fun loc state original_ty1 original_ty2 ->
-    trace_unify (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2);
+    trace_unify (lazy (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2));
 
     let rec go ty1 ty2 = 
       (* `remaining_cont` is called with the remaining fields from both rows,
@@ -751,7 +764,7 @@ let generalize : ty -> ty =
       (free_unifs ty) 
       ty
     in
-    trace_subst ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty');
+    trace_subst (lazy ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty'));
     ty'
     
 let typecheck_top_level : global_env -> expr -> global_env =

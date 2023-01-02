@@ -1,7 +1,7 @@
 
 type category
 
-val make : flag:string -> prefix:string -> (category * (string -> unit))
+val make : flag:string -> prefix:string -> (category * (string Lazy.t  -> unit))
 
 val get_categories : unit -> string list
 

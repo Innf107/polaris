@@ -49,7 +49,10 @@ module Template = struct
     | List of ty
     | Promise of ty
     | Record of row
-    (* TODO: type classes *)
+    (* We keep subscript type constructors before renaming, but just replace them
+       by their (unique!) type constructor in the original module afterwards,
+       where mod_subscript_tycon_ext is instantiated to void *)
+    | ModSubscriptTyCon of mod_subscript_tycon_ext * name * name * ty list
   and row =
     | RowClosed of (string * ty) array
     | RowUnif of (string * ty) array * (Unique.t * name)
@@ -90,10 +93,12 @@ module Template = struct
               M.append (fold monoid (go << snd) (Array.to_list fields)) (go (Skol (u, name)))
             | Record (RowVar (fields, var)) ->
               M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (TyVar var))
-            | TyConstructor (name, args) ->
+            | TyConstructor (_name, args) ->
+              fold monoid go args
+            | ModSubscriptTyCon (_ext, _mod_name, _name, args) ->
               fold monoid go args
             (* non-recursive cases *)
-            | TyVar _ | Unif _ | Skol _ | Number | Bool | String  -> M.empty
+            | TyVar _ | Unif _ | Skol _ | Number | Bool | String -> M.empty
           in
           M.append result remaining
         in
@@ -145,6 +150,8 @@ module Template = struct
           let extension_type = transform trans (Skol (u, name)) in
           replace_row_extension fields extension_type
         | TyConstructor (name, args) -> TyConstructor (name, List.map (transform trans) args)
+        | ModSubscriptTyCon (ext, mod_name, name, args) -> 
+          ModSubscriptTyCon (ext, mod_name, name, List.map (transform trans) args)
         (* Non-recursive cases *)
         | (TyVar _ | Unif _ | Skol _ | Number | Bool | String) as ty -> ty
         in
@@ -182,6 +189,9 @@ module Template = struct
     (* Lambda calculus *)
     | Var of loc * name                     (* x *)
     | DataConstructor of loc * name         (* X *)
+    (* The renamer replaces these by the data constructor with the (unique)
+       name from the module where it is defined. This sets mod_subscript_tycon_ext to void *)
+    | ModSubscriptDataCon of mod_subscript_tycon_ext * loc * name * name (* M.X *)
     | App of loc * expr * expr list         (* e (e₁, .., eₙ) *)
     | Lambda of loc * pattern list * expr   (* \(p₁, .., pₙ) -> e*)
     (* Literals *)
@@ -195,7 +205,7 @@ module Template = struct
     (* Records *)
     | RecordLit of loc * (string * expr) list  (* #{x₁: e₁, .., xₙ: eₙ}*)
     | Subscript of loc * expr * string      (* e.x *)
-    | ModSubscript of mod_subscript_ext * name * name     (* M.x *)
+    | ModSubscript of loc * name * name     (* M.x *)
     | RecordUpdate of loc * expr * (string * expr) list (* #{r with x₁: e₁, .., xₙ: eₙ} *)
     | RecordExtension of loc * expr * (string * expr) list (* #{r extend x₁: e₁, .., xₙ: eₙ} *)
 
@@ -277,7 +287,7 @@ module Template = struct
         let rec go expr = 
           let result = get expr in
           let remaining = match expr with
-          | Var _ | DataConstructor _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
+          | Var _ | DataConstructor _ | ModSubscriptDataCon _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
           | UnitLit _ | NullLit _ | ModSubscript _ | LetDataSeq _ -> M.empty
           | App(_, fexpr, arg_exprs) -> M.append (go fexpr) (fold monoid go arg_exprs) 
           | Lambda(_, _, expr) -> go expr
@@ -350,6 +360,8 @@ module Template = struct
     (* TODO: Add a flag to disambiguate 0-argument type constructors and type variables *)
     | TyConstructor (name, []) -> pretty_name name
     | TyConstructor (name, args) -> pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_type args) ^ ")"
+    | ModSubscriptTyCon(_ext, mod_name, name, args) -> 
+      pretty_name mod_name ^ "." ^ pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_type args) ^ ")"
     | TyVar var -> pretty_name var
     | Unif (u, name) -> pretty_name name ^ "$" ^ Unique.display u
     | Skol (u, name) -> pretty_name name ^ "@" ^ Unique.display u
@@ -377,6 +389,7 @@ module Template = struct
   let rec pretty = function
     | Var (_, x) -> pretty_name x
     | DataConstructor(_, x) -> pretty_name x
+    | ModSubscriptDataCon(_, _, mod_name, name) -> pretty_name mod_name ^ "." ^ pretty_name name
     | App (_, f, args) ->
         pretty f ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")"
     | Lambda (_, params, e) ->
@@ -461,7 +474,7 @@ module Template = struct
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
 
   let get_loc = function
-    | Var (loc, _) | DataConstructor(loc, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
+    | Var (loc, _) | DataConstructor(loc, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
     | Subscript(loc, _, _) | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
     | BinOp(loc, _, _, _) | Not(loc, _)
@@ -469,9 +482,8 @@ module Template = struct
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _, _) | LetEnvSeq(loc, _, _) 
     | LetDataSeq (loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
-    | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _)
+    | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _) | ModSubscript (loc, _, _)
     -> loc
-    | ModSubscript (ext, _, _) -> mod_subscript_loc ext
 
   let get_pattern_loc = function
     | VarPat (loc, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
@@ -519,6 +531,10 @@ module Template = struct
           | DataConstructor (loc, name) ->
             let name, state = self#traverse_name state name in
             DataConstructor (loc, name), state
+          | ModSubscriptDataCon (ext, loc, mod_name, name) ->
+            let mod_name, state = self#traverse_name state mod_name in
+            let name, state = self#traverse_name state name in
+            ModSubscriptDataCon (ext, loc, mod_name, name), state
           | App (loc, fun_expr, arg_exprs) ->
             let fun_expr, state = self#traverse_expr state fun_expr in
             let (arg_exprs, state) = self#traverse_list self#traverse_expr state arg_exprs in
@@ -728,6 +744,11 @@ module Template = struct
           let name, state = self#traverse_name state name in
           let arg_types, state = self#traverse_list self#traverse_type state arg_types in
           TyConstructor(name, arg_types), state
+        | ModSubscriptTyCon(ext, mod_name, name, arg_types) ->
+          let mod_name, state = self#traverse_name state mod_name in
+          let name, state = self#traverse_name state name in
+          let arg_types, state = self#traverse_list self#traverse_type state arg_types in
+          ModSubscriptTyCon(ext, mod_name, name, arg_types), state
         | Unif(unique, name) ->
           let name, state = self#traverse_name state name in
           Unif(unique, name), state
@@ -840,25 +861,24 @@ end [@@ttg_template]
 
 module Parsed = Template (struct
   type name = string
-  type mod_subscript_ext = void
-  let mod_subscript_loc = absurd
 
   let pretty_name x = x
 
   type import_ext = loc
   let import_ext_loc x = x
+
+  type mod_subscript_tycon_ext = unit
 end) [@@ttg_pass]
 
 module Renamed = Template (struct
   type name = Name.t
-
-  type mod_subscript_ext = loc
-  let mod_subscript_loc loc = loc
   
   let pretty_name = Name.pretty
 
   type import_ext = loc * module_exports * expr list
   let import_ext_loc (loc, _, _) = loc
+
+  type mod_subscript_tycon_ext = void
 end) [@@ttg_pass]
 
 type module_exports = Renamed.module_exports

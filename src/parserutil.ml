@@ -63,3 +63,4 @@ let pretty_token = function
 | EXPORT -> "EXPORT"
 | FORALL -> "FORALL"
 | DATA -> "DATA"
+| TYPE -> "TYPE"

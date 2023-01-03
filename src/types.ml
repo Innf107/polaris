@@ -34,14 +34,16 @@ type ty_constraint = Unify of loc * ty * ty
 type global_env = {
   var_types : ty NameMap.t;
   module_var_contents : global_env NameMap.t;
-  data_definitions : (name list * ty) NameMap.t
+  data_definitions : (name list * ty) NameMap.t;
+  type_aliases : (name list * ty) NameMap.t;
 }
 
 type local_env = {
   local_types : ty NameMap.t;
   constraints : ty_constraint Difflist.t ref;
   module_var_contents : global_env NameMap.t;
-  data_definitions : (name list * ty) NameMap.t
+  data_definitions : (name list * ty) NameMap.t;
+  type_aliases : (name list * ty) NameMap.t;
 }
 
 
@@ -120,6 +122,11 @@ let insert_data_definition : name -> name list -> ty -> local_env -> local_env =
   fun constructor params underlying_type env ->
     { env with data_definitions = NameMap.add constructor (params, underlying_type) env.data_definitions }
 
+let insert_type_alias : name -> name list -> ty -> local_env -> local_env =
+  fun constructor params underlying_type env ->
+    { env with type_aliases = NameMap.add constructor (params, underlying_type) env.type_aliases }
+
+
 let replace_tvar : name -> ty -> ty -> ty =
   fun var replacement -> Ty.transform begin function
     (* We rely on the renamer and generalization to eliminate
@@ -179,7 +186,8 @@ let rec eval_module_env : local_env -> module_expr -> global_env =
     { var_types = mod_exports.exported_variable_types;
       (* TODO: Allow modules to export other modules and include them here *)
       module_var_contents = NameMap.empty;
-      data_definitions = mod_exports.exported_data_definitions
+      data_definitions = mod_exports.exported_data_definitions;
+      type_aliases = mod_exports.exported_type_aliases;
     }
   | SubModule (loc, mod_expr, name) ->
     let parent_env = eval_module_env env mod_expr in
@@ -370,7 +378,7 @@ let rec infer : local_env -> expr -> ty =
       check env res_ty el;
       res_ty
     | Seq (_, exprs) -> infer_seq env exprs
-    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
+    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
     | Let (_, p, e1, e2) ->
       let ty, env_trans = infer_pattern env p in
       (* Lets are non-recursive, so we use the *unaltered* environment *)
@@ -525,7 +533,8 @@ and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
         }
     | LetDataSeq(loc, data_name, params, ty) ->
       insert_data_definition data_name params ty
-      
+    | LetTypeSeq(loc, alias_name, params, ty) ->
+      insert_type_alias alias_name params ty
     | ProgCall (loc, prog, args) ->
       List.iter (check env String) args;
       Fun.id
@@ -583,8 +592,8 @@ let bind : unify_state -> Unique.t -> name -> ty -> unit =
     trace_subst (lazy (pretty_type (Unif (u, name)) ^ " := " ^ pretty_type ty));
     state.subst := UniqueMap.add u ty (UniqueMap.map (replace_unif u ty) !(state.subst)) 
 
-let solve_unify : loc -> unify_state -> ty -> ty -> unit =
-  fun loc state original_ty1 original_ty2 ->
+let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
+  fun loc env state original_ty1 original_ty2 ->
     trace_unify (lazy (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2));
 
     let rec go ty1 ty2 = 
@@ -698,8 +707,28 @@ let solve_unify : loc -> unify_state -> ty -> ty -> unit =
           end
         end
       | (Record (RowVar _), _ | _, Record (RowVar _)) -> 
-        panic __LOC__ "Uninstantiated variable row found during unification"
-      | TyVar _, _ | _, TyVar _ -> panic __LOC__ "Uninstantiated type variable found during unification"
+        panic __LOC__ (Loc.pretty loc ^ ": Uninstantiated variable row found during unification")
+      | TyVar _, _ | _, TyVar _ -> panic __LOC__ (Loc.pretty loc ^ ": Uninstantiated type variable found during unification")
+      | TypeAlias (name, args), other_type ->
+        let params, underlying_type = match NameMap.find_opt name env.type_aliases with
+        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound type alias '" ^ Name.pretty name ^ "' in type checker. This should have been caught earlier!")
+        | Some (params, underlying_type) -> params, underlying_type
+        in
+        if List.compare_lengths args params <> 0 then begin
+          panic __LOC__ (Loc.pretty loc ^ ": Wrong number of arguments to type alias " ^ Name.pretty name ^ " in type checker. (Expected: " ^ string_of_int (List.length params) ^ ", Actual: " ^ string_of_int (List.length args) ^ " This should have been caught earlier!")
+        end;
+        let real_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args))) underlying_type in
+        go real_type other_type
+      | other_type, TypeAlias (name, args) ->
+        let params, underlying_type = match NameMap.find_opt name env.type_aliases with
+        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound type alias '" ^ Name.pretty name ^ "' in type checker. This should have been caught earlier!")
+        | Some (params, underlying_type) -> params, underlying_type
+        in
+        if List.compare_lengths args params <> 0 then begin
+          panic __LOC__ (Loc.pretty loc ^ ": Wrong number of arguments to type alias " ^ Name.pretty name ^ " in type checker. (Expected: " ^ string_of_int (List.length params) ^ ", Actual: " ^ string_of_int (List.length args) ^ " This should have been caught earlier!")
+        end;
+        let real_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args))) underlying_type in
+        go other_type real_type  
       | _ -> raise (TypeError (loc, UnableToUnify ((partial_apply state ty1, partial_apply state ty2), 
                                                    (partial_apply state original_ty1, partial_apply state original_ty2))))
     in
@@ -714,7 +743,7 @@ let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | Some (var_names, underlying_type_raw) -> var_names, underlying_type_raw 
       end in
       let underlying_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq var_names) (List.to_seq args))) underlying_type_raw in
-      solve_unify loc state underlying_type ty2
+      solve_unify loc env state underlying_type ty2
     | ty -> 
       (* Defer this constraint if possible. If not (i.e. we already deferred this one) we throw a type error *)
       match state.deferred_constraints with
@@ -727,7 +756,7 @@ let solve_constraints : local_env -> ty_constraint list -> Subst.t =
     let go unify_state constraints = 
       List.iter begin function
         | Unify (loc, ty1, ty2) -> 
-          solve_unify loc unify_state ty1 ty2
+          solve_unify loc env unify_state ty1 ty2
         | Unwrap (loc, ty1, ty2) ->
           solve_unwrap loc env unify_state ty1 ty2
         end constraints;
@@ -774,6 +803,7 @@ let typecheck_top_level : global_env -> expr -> global_env =
         module_var_contents = global_env.module_var_contents;
         constraints = ref Difflist.empty;
         data_definitions = global_env.data_definitions;
+        type_aliases = global_env.type_aliases;
       } in
     
     let local_env_trans = infer_seq_expr local_env expr in
@@ -788,12 +818,12 @@ let typecheck_top_level : global_env -> expr -> global_env =
       module_var_contents = NameMap.empty;
       constraints = local_env.constraints; 
       data_definitions = NameMap.empty;
+      type_aliases = NameMap.empty;
     } in
 
     let subst = solve_constraints local_env (Difflist.to_list !(local_env.constraints)) in
 
     let global_env = { 
-      global_env with 
         var_types = 
           NameMap.union (fun _ _ x -> Some x) 
             (global_env.var_types) 
@@ -806,6 +836,10 @@ let typecheck_top_level : global_env -> expr -> global_env =
           NameMap.union (fun _ _ x -> Some x)
             (global_env.data_definitions)
             temp_local_env.data_definitions;
+        type_aliases =
+          NameMap.union (fun _ _ x -> Some x)
+            (global_env.type_aliases)
+            temp_local_env.type_aliases
       } in
     global_env
 
@@ -834,7 +868,12 @@ let typecheck header exprs =
       (Primops.PrimOpMap.to_seq Primops.primops))
   in
   (* TODO: Maybe primops should be part of an implicitly imported module? *)
-  let global_env = { var_types = prim_types; module_var_contents = NameMap.empty; data_definitions = NameMap.empty } in
+  let global_env = { 
+    var_types = prim_types; 
+    module_var_contents = NameMap.empty; 
+    data_definitions = NameMap.empty;
+    type_aliases = NameMap.empty;
+  } in
 
   let global_env = typecheck_header header global_env in
 

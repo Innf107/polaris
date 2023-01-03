@@ -518,7 +518,7 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
       eval_expr env e3
 
   | Seq (_, exprs) -> eval_seq env exprs
-  | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ -> raise (Panic "let assignment found outside of sequence expression")
+  | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
   | Let (loc, pat, e1, e2) ->
     let scrut = eval_expr env e1 in
@@ -647,7 +647,7 @@ and eval_seq_cont : 'r. eval_env -> Renamed.expr list -> (eval_env -> (Renamed.e
     let module_val = eval_mod_expr env me in
     let env = insert_module_var x module_val env in
     eval_seq_cont env exprs cont
-  | LetDataSeq (loc, _, _, _) :: exprs -> 
+  | (LetDataSeq (loc, _, _, _) | LetTypeSeq (loc, _, _, _)) :: exprs -> 
     (* Types are erased at runtime, so we don't need to do anything clever here *)
     eval_seq_cont env exprs cont
   (* Single program calls are just evaluated like pipes *)

@@ -7,6 +7,8 @@ module StringMap = Map.Make(String)
 
 type name = { name : string; index : Unique.t }
 
+type type_constructor_sort = DataConSort | TypeAliasSort
+
 module Name = struct
   type t = name
 
@@ -39,6 +41,9 @@ module Template = struct
     | Fun of ty list * ty
     | TyVar of name
     | TyConstructor of name * ty list
+    (* Type aliases are kept around as long as possible to improve error messages, but we need to differentiate
+       between these and real type constructors *)
+    | TypeAlias of name * ty list
     (* The 'name' is just kept around for error messages but *completely ignored* when typechecking *)
     | Unif of Unique.t * name
     | Skol of Unique.t * name
@@ -95,6 +100,8 @@ module Template = struct
               M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (TyVar var))
             | TyConstructor (_name, args) ->
               fold monoid go args
+            | TypeAlias (_name, args) ->
+              fold monoid go args  
             | ModSubscriptTyCon (_ext, _mod_name, _name, args) ->
               fold monoid go args
             (* non-recursive cases *)
@@ -150,6 +157,7 @@ module Template = struct
           let extension_type = transform trans (Skol (u, name)) in
           replace_row_extension fields extension_type
         | TyConstructor (name, args) -> TyConstructor (name, List.map (transform trans) args)
+        | TypeAlias (name, args) -> TypeAlias (name, List.map (transform trans) args)
         | ModSubscriptTyCon (ext, mod_name, name, args) -> 
           ModSubscriptTyCon (ext, mod_name, name, List.map (transform trans) args)
         (* Non-recursive cases *)
@@ -172,8 +180,10 @@ module Template = struct
       exported_variables : name StringMap.t;
       exported_variable_types : ty NameMap.t;
 
-      exported_datas : name StringMap.t;
-      exported_data_definitions : (name list * ty) NameMap.t
+      exported_ty_constructors : (name * int * type_constructor_sort) StringMap.t;
+      exported_data_definitions : (name list * ty) NameMap.t;
+
+      exported_type_aliases : (name list * ty) NameMap.t;
     }
 
   type binop = 
@@ -224,7 +234,8 @@ module Template = struct
     | LetSeq of loc * pattern * expr              (* let p = e (Only valid inside `Seq` expressions) *)
     | LetRecSeq of loc * ty option * name * pattern list * expr  (* [let f : ty]; let f(x, .., x) = e*)
     | LetEnvSeq of loc * string * expr            (* let $x = e *)
-    | LetDataSeq of loc * name * name list * ty   (* data x(x, .., x) = t *)
+    | LetDataSeq of loc * name * name list * ty   (* data X(x, .., x) = t *)
+    | LetTypeSeq of loc * name * name list * ty   (* type X(x, .., x) = t *)
     (* Mutable local definitions *)
     | Let of loc * pattern * expr * expr              (* let p = e1 in e2 (valid everywhere) *)
     | LetRec of loc * ty option * name * pattern list * expr * expr  (* [let f : ty]; let f(x, .., x) = e*)
@@ -288,7 +299,7 @@ module Template = struct
           let result = get expr in
           let remaining = match expr with
           | Var _ | DataConstructor _ | ModSubscriptDataCon _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
-          | UnitLit _ | NullLit _ | ModSubscript _ | LetDataSeq _ -> M.empty
+          | UnitLit _ | NullLit _ | ModSubscript _ | LetDataSeq _ | LetTypeSeq _ -> M.empty
           | App(_, fexpr, arg_exprs) -> M.append (go fexpr) (fold monoid go arg_exprs) 
           | Lambda(_, _, expr) -> go expr
           | ListLit(_, exprs) -> fold monoid go exprs
@@ -345,7 +356,7 @@ module Template = struct
   }
 
   type export_item = ExportVal of loc * name
-                   | ExportData of loc * name
+                   | ExportType of loc * name
 
   type header = {
       usage: string option
@@ -360,6 +371,8 @@ module Template = struct
     (* TODO: Add a flag to disambiguate 0-argument type constructors and type variables *)
     | TyConstructor (name, []) -> pretty_name name
     | TyConstructor (name, args) -> pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_type args) ^ ")"
+    | TypeAlias (name, []) -> pretty_name name
+    | TypeAlias (name, args) -> pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_type args) ^ ")"
     | ModSubscriptTyCon(_ext, mod_name, name, args) -> 
       pretty_name mod_name ^ "." ^ pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_type args) ^ ")"
     | TyVar var -> pretty_name var
@@ -446,6 +459,9 @@ module Template = struct
     | LetEnvSeq (_, x, e) -> "let $" ^ x ^ " = " ^ pretty e
     | LetDataSeq (_, varname, [], ty) -> "data " ^ pretty_name varname ^ " = " ^ pretty_type ty
     | LetDataSeq (_, varname, params, ty) -> "data " ^ pretty_name varname ^ "(" ^ String.concat ", " (List.map pretty_name params) ^ ") = " ^ pretty_type ty
+    | LetTypeSeq (_, varname, [], ty) -> "type " ^ pretty_name varname ^ " = " ^ pretty_type ty
+    | LetTypeSeq (_, varname, params, ty) -> "type " ^ pretty_name varname ^ "(" ^ String.concat ", " (List.map pretty_name params) ^ ") = " ^ pretty_type ty
+
 
     | Let (_, x, e1, e2) ->
         "let " ^ pretty_pattern x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
@@ -480,7 +496,7 @@ module Template = struct
     | BinOp(loc, _, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _, _) | LetEnvSeq(loc, _, _) 
-    | LetDataSeq (loc, _, _, _) | Let(loc, _, _, _)
+    | LetDataSeq (loc, _, _, _) | LetTypeSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _) | ModSubscript (loc, _, _)
     -> loc
@@ -625,6 +641,11 @@ module Template = struct
             let params, state = self#traverse_list self#traverse_name state params in
             let ty, state = self#traverse_type state ty in
             LetDataSeq(loc, data_name, params, ty), state
+          | LetTypeSeq(loc, data_name, params, ty) ->
+            let data_name, state = self#traverse_name state data_name in
+            let params, state = self#traverse_list self#traverse_name state params in
+            let ty, state = self#traverse_type state ty in
+            LetTypeSeq(loc, data_name, params, ty), state  
           | Let(loc, pattern, expr, rest_expr) ->
             let pattern, state = self#traverse_pattern state pattern in
             let expr, state = self#traverse_expr state expr in
@@ -744,6 +765,10 @@ module Template = struct
           let name, state = self#traverse_name state name in
           let arg_types, state = self#traverse_list self#traverse_type state arg_types in
           TyConstructor(name, arg_types), state
+        | TypeAlias(name, arg_types) ->
+          let name, state = self#traverse_name state name in
+          let arg_types, state = self#traverse_list self#traverse_type state arg_types in
+          TypeAlias(name, arg_types), state  
         | ModSubscriptTyCon(ext, mod_name, name, arg_types) ->
           let mod_name, state = self#traverse_name state mod_name in
           let name, state = self#traverse_name state name in

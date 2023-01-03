@@ -67,6 +67,7 @@ type expr_or_fun_def_ext =
 %token MODULE IMPORT EXPORT
 %token FORALL
 %token DATA
+%token TYPE
 %token EOF
 
 
@@ -100,7 +101,7 @@ semis(p):
 
 export_item:
     | IDENT { ExportVal (loc $startpos $endpos, $1) }
-    | CONSTRUCTOR { ExportData (loc $startpos $endpos, $1) }
+    | CONSTRUCTOR { ExportType (loc $startpos $endpos, $1) }
 
 export_list:
     EXPORT "{" sep_trailing(semis(COMMA), semis(export_item)) "}" { $3 }
@@ -267,6 +268,8 @@ expr_leaf:
     | MODULE CONSTRUCTOR "=" mod_expr { LetModuleSeq(loc $startpos $endpos, $2, $4) }
     | DATA CONSTRUCTOR "=" ty { LetDataSeq(loc $startpos $endpos, $2, [], $4) }
     | DATA CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetDataSeq(loc $startpos $endpos, $2, $4, $7) }
+    | TYPE CONSTRUCTOR "=" ty { LetTypeSeq(loc $startpos $endpos, $2, [], $4) }
+    | TYPE CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetTypeSeq(loc $startpos $endpos, $2, $4, $7) }
 
 
 (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)

@@ -1,1 +1,1 @@
-test/categories/types/scoped_tyvars2.pls:3:4 - 3:42: Type variable or constructor not found: 'a'
+test/categories/types/scoped_tyvars2.pls:3:4-3:42: Type variable or constructor not found: 'a'

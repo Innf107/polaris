@@ -1,4 +1,4 @@
-test/categories/records/update_new.pls:4:10 - 4:10: Mismatched row fields.
+test/categories/records/update_new.pls:4:10-4:10: Mismatched row fields.
 Missing Mutual row fields '{y : Number}'
                       and '{}'
                       respectively.

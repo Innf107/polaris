@@ -58,26 +58,12 @@ module Subst : sig
 
   val of_map : ty UniqueMap.t -> t
 
-  val empty : t
-
-  val extend : Unique.t -> ty -> t -> t
-
-  val merge : t -> t -> t
-
-  val concat : t list -> t
-
   val apply : t -> ty -> ty
 
 end = struct
   type t = ty UniqueMap.t 
 
-  let empty = UniqueMap.empty
-
   let of_map m = m
-
-  let merge = UniqueMap.union (fun _ _ x -> Some x)
-
-  let concat list = List.fold_right merge list empty
 
   let apply subst = Ty.transform begin function
     | Unif (u, _) as ty ->
@@ -87,8 +73,6 @@ end = struct
       end
     | ty -> ty
     end
-
-    let extend = UniqueMap.add  
 end
 
 

@@ -28,11 +28,6 @@ let fatal_error (message : string) =
   print_endline message;
   exit 1
 
-let warning (message : string) =
-  print_endline "~~~~~~~~~~~~~WARNING~~~~~~~~~~~~~~";
-  print_endline message;
-  print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-
 let repl_error (message : string) = 
   print_endline ("\x1b[38;2;255;0;0m\x02ERROR\x1b[0m\x02:\n" ^ message);
 

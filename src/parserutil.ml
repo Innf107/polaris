@@ -64,3 +64,4 @@ let pretty_token = function
 | FORALL -> "FORALL"
 | DATA -> "DATA"
 | TYPE -> "TYPE"
+| BACKTICK -> "BACKTICK"

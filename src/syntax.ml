@@ -53,23 +53,25 @@ module Template = struct
     | Tuple of ty array
     | List of ty
     | Promise of ty
-    | Record of row
+    | RecordClosed of (string * ty) array
+    | RecordUnif of (string * ty) array * (Unique.t * name)
+    | RecordSkol of (string * ty) array * (Unique.t * name)
+    | RecordVar of (string * ty) array * name
+    | VariantClosed of (string * ty list) array
+    | VariantUnif of (string * ty list) array * (Unique.t * name)
+    | VariantSkol of (string * ty list) array * (Unique.t * name)
+    | VariantVar of (string * ty list) array * name
     (* We keep subscript type constructors before renaming, but just replace them
        by their (unique!) type constructor in the original module afterwards,
        where mod_subscript_tycon_ext is instantiated to void *)
     | ModSubscriptTyCon of mod_subscript_tycon_ext * name * name * ty list
-  and row =
-    | RowClosed of (string * ty) array
-    | RowUnif of (string * ty) array * (Unique.t * name)
-    | RowSkol of (string * ty) array * (Unique.t * name)
-    | RowVar of (string * ty) array * name
 
   let (-->) xs y = Fun (xs, y)
 
   module Ty = struct 
     type t = ty
     
-    let unit = Record (RowClosed [||])
+    let unit = RecordClosed [||]
 
     (** Recursively apply a list returning operation over every constructor of 
       a type and concatenate the results with a provided monoid implementation.
@@ -87,17 +89,23 @@ module Template = struct
             | Tuple tys ->
               mconcat monoid (Array.to_list (Array.map go tys))
             | List ty | Promise ty -> go ty
-            | Record (RowClosed fields) ->
-              mconcat monoid (Array.to_list (Array.map (go << snd) fields))
+            | RecordClosed fields -> mconcat monoid (Array.to_list (Array.map (go << snd) fields))
+            | VariantClosed fields ->
+              mconcat monoid (Array.to_list (Array.map (fold monoid go << snd) fields))
             (* We traverse the variable as if it was its own node, so
                callers only need to handle `Unif` to handle all unification variables *)
-            | Record (RowUnif (fields, (u, name))) ->
+            | RecordUnif (fields, (u, name)) ->
               M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (Unif (u, name)))
+            | VariantUnif (fields, (u, name)) ->
+              M.append (mconcat monoid (Array.to_list (Array.map (fold monoid go << snd) fields))) (go (Unif (u, name)))
             (* We do the same for skolems *)
-            | Record (RowSkol (fields, (u, name))) ->
+            | RecordSkol (fields, (u, name)) ->
               M.append (fold monoid (go << snd) (Array.to_list fields)) (go (Skol (u, name)))
-            | Record (RowVar (fields, var)) ->
-              M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (TyVar var))
+            | VariantSkol (fields, (u, name)) ->
+              M.append (fold monoid (fold monoid go << snd) (Array.to_list fields)) (go (Skol (u, name)))
+            | RecordVar (fields, var) -> M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (TyVar var))
+            | VariantVar (fields, var) ->
+              M.append (mconcat monoid (Array.to_list (Array.map (fold monoid go << snd) fields))) (go (TyVar var))
             | TyConstructor (_name, args) ->
               fold monoid go args
             | TypeAlias (_name, args) ->
@@ -118,20 +126,33 @@ module Template = struct
       fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
   
 
-    let replace_row_extension fields = function
-    | Unif (u, name) -> Record (RowUnif (fields, (u, name)))
-    | TyVar var -> Record (RowVar (fields, var))
-    | Skol (u, name) -> Record (RowSkol (fields, (u, name)))
-    | Record (RowClosed fields2) ->
-      Record (RowClosed (Array.append fields fields2))
-    | Record (RowUnif (fields2, unif)) ->
-      Record (RowUnif (Array.append fields fields2, unif))
-    | Record (RowSkol (fields2, skol)) ->
-      Record (RowSkol (Array.append fields fields2, skol))
-    | Record (RowVar (fields2, var)) ->
-      Record (RowVar (Array.append fields fields2, var))
-    | ty -> panic __LOC__ ("Row extension variable replaced with non-row type")
+    let replace_record_extension fields = function
+    | Unif (u, name) -> RecordUnif (fields, (u, name))
+    | TyVar var -> RecordVar (fields, var)
+    | Skol (u, name) -> RecordSkol (fields, (u, name))
+    | RecordClosed fields2 ->
+      RecordClosed (Array.append fields fields2)
+    | RecordUnif (fields2, unif) ->
+      RecordUnif (Array.append fields fields2, unif)
+    | RecordSkol (fields2, skol) ->
+      RecordSkol (Array.append fields fields2, skol)
+    | RecordVar (fields2, var) ->
+      RecordVar (Array.append fields fields2, var)
+    | ty -> panic __LOC__ ("Record extension variable replaced with non-record type")
 
+    let replace_variant_extension fields = function
+    | Unif (u, name) -> VariantUnif (fields, (u, name))
+    | TyVar var -> VariantVar (fields, var)
+    | Skol (u, name) -> VariantSkol (fields, (u, name))
+    | VariantClosed fields2 ->
+      VariantClosed (Array.append fields fields2)
+    | VariantUnif (fields2, unif) ->
+      VariantUnif (Array.append fields fields2, unif)
+    | VariantSkol (fields2, skol) ->
+      VariantSkol (Array.append fields fields2, skol)
+    | VariantVar (fields2, var) ->
+      VariantVar (Array.append fields fields2, var)
+    | ty -> panic __LOC__ ("Variant extension variable replaced with non-variant type")
 
     (* Recursively apply a transformation function over every node of a type 
        (in a bottom-up fashion / post-order traversal). *)
@@ -143,19 +164,32 @@ module Template = struct
         | Tuple tys -> Tuple (Array.map (transform trans) tys)
         | List ty -> List (transform trans ty)
         | Promise ty -> Promise (transform trans ty)
-        | Record (RowClosed tys) -> Record (RowClosed (Array.map (fun (x, ty) -> (x, transform trans ty)) tys))
-        | Record (RowUnif (fields, (u, name))) -> 
+        | RecordClosed tys -> RecordClosed (Array.map (fun (x, ty) -> (x, transform trans ty)) tys)
+        | VariantClosed tys -> VariantClosed (Array.map (fun (x, tys) -> (x, List.map (transform trans) tys)) tys)
+        | RecordUnif (fields, (u, name)) -> 
           let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
           let extension_type = transform trans (Unif (u, name)) in
-          replace_row_extension fields extension_type
-        | Record (RowVar (fields, var)) ->
+          replace_record_extension fields extension_type
+        | VariantUnif (fields, (u, name)) -> 
+          let fields = Array.map (fun (x, ty) -> (x, List.map(transform trans) ty)) fields in
+          let extension_type = transform trans (Unif (u, name)) in
+          replace_variant_extension fields extension_type  
+        | RecordVar (fields, var) ->
           let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
           let extension_type = transform trans (TyVar var) in
-          replace_row_extension fields extension_type
-        | Record (RowSkol (fields, (u, name))) ->
+          replace_record_extension fields extension_type
+        | VariantVar (fields, var) ->
+          let fields = Array.map (fun (x, ty) -> (x, List.map (transform trans) ty)) fields in
+          let extension_type = transform trans (TyVar var) in
+          replace_variant_extension fields extension_type    
+        | RecordSkol (fields, (u, name)) ->
           let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
           let extension_type = transform trans (Skol (u, name)) in
-          replace_row_extension fields extension_type
+          replace_record_extension fields extension_type
+        | VariantSkol (fields, (u, name)) ->
+          let fields = Array.map (fun (x, ty) -> (x, List.map (transform trans) ty)) fields in
+          let extension_type = transform trans (Skol (u, name)) in
+          replace_variant_extension fields extension_type  
         | TyConstructor (name, args) -> TyConstructor (name, List.map (transform trans) args)
         | TypeAlias (name, args) -> TypeAlias (name, List.map (transform trans) args)
         | ModSubscriptTyCon (ext, mod_name, name, args) -> 
@@ -202,6 +236,9 @@ module Template = struct
     (* The renamer replaces these by the data constructor with the (unique)
        name from the module where it is defined. This sets mod_subscript_tycon_ext to void *)
     | ModSubscriptDataCon of mod_subscript_tycon_ext * loc * name * name (* M.X *)
+    (* Data Constructors vs Variant Constructors are resolved in the renamer.
+       `X` is a Variant Constructor iff there is no Data Constructor named `X` in scope. *)
+    | VariantConstructor of loc * string * expr list     (* X *)
     | App of loc * expr * expr list         (* e (e₁, .., eₙ) *)
     | Lambda of loc * pattern list * expr   (* \(p₁, .., pₙ) -> e*)
     (* Literals *)
@@ -300,6 +337,8 @@ module Template = struct
           let remaining = match expr with
           | Var _ | DataConstructor _ | ModSubscriptDataCon _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
           | UnitLit _ | NullLit _ | ModSubscript _ | LetDataSeq _ | LetTypeSeq _ -> M.empty
+          | VariantConstructor(_, _, args) ->
+            fold monoid go args
           | App(_, fexpr, arg_exprs) -> M.append (go fexpr) (fold monoid go arg_exprs) 
           | Lambda(_, _, expr) -> go expr
           | ListLit(_, exprs) -> fold monoid go exprs
@@ -384,10 +423,17 @@ module Template = struct
     | Tuple tys -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty_type tys)) ^ ")"
     | List ty -> "List(" ^ pretty_type ty ^ ")"
     | Promise ty -> "Promise(" ^ pretty_type ty ^ ")"
-    | Record (RowClosed fields) -> "{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ "}"
-    | Record (RowUnif (fields, (u, name))) -> "{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Unif (u, name)) ^ "}"
-    | Record (RowSkol (fields, (u, name))) -> "{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Skol (u, name)) ^ "}"
-    | Record (RowVar (fields, name)) -> "{" ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_name name ^ "}"
+    (* There is no difference between empty records and unit, so to make typechecking easier,
+       this type is represented as an empty record, but for the sake of error messages, it is printed as '()' *)
+    | RecordClosed [||] -> "()"
+    | RecordClosed fields -> "{ " ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " }"
+    | RecordUnif (fields, (u, name)) -> "{ " ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Unif (u, name)) ^ " }"
+    | RecordSkol (fields, (u, name)) -> "{ " ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Skol (u, name)) ^ " }"
+    | RecordVar (fields, name) -> "{ " ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_name name ^ " }"
+    | VariantClosed fields -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " >"
+    | VariantUnif (fields, (u, name)) -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " | " ^ pretty_type (Unif (u, name)) ^ " >"
+    | VariantSkol (fields, (u, name)) -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " | " ^ pretty_type (Skol (u, name)) ^ " >"
+    | VariantVar (fields, name) -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " | " ^ pretty_name name ^ " >"
 
   let rec pretty_pattern = function
     | VarPat (_, x) -> pretty_name x
@@ -402,6 +448,7 @@ module Template = struct
   let rec pretty = function
     | Var (_, x) -> pretty_name x
     | DataConstructor(_, x) -> pretty_name x
+    | VariantConstructor(_, x, args) -> "`" ^ x ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")"
     | ModSubscriptDataCon(_, _, mod_name, name) -> pretty_name mod_name ^ "." ^ pretty_name name
     | App (_, f, args) ->
         pretty f ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")"
@@ -490,7 +537,7 @@ module Template = struct
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
 
   let get_loc = function
-    | Var (loc, _) | DataConstructor(loc, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
+    | Var (loc, _) | DataConstructor(loc, _) | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
     | Subscript(loc, _, _) | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
     | BinOp(loc, _, _, _) | Not(loc, _)
@@ -547,6 +594,9 @@ module Template = struct
           | DataConstructor (loc, name) ->
             let name, state = self#traverse_name state name in
             DataConstructor (loc, name), state
+          | VariantConstructor (loc, name, args) ->
+            let args, state = self#traverse_list self#traverse_expr state args in
+            VariantConstructor (loc, name, args), state
           | ModSubscriptDataCon (ext, loc, mod_name, name) ->
             let mod_name, state = self#traverse_name state mod_name in
             let name, state = self#traverse_name state name in
@@ -789,7 +839,7 @@ module Template = struct
         | Promise(ty) ->
           let ty, state = self#traverse_type state ty in
           List(ty), state
-        | Record (RowClosed fields) ->
+        | RecordClosed fields ->
           let fields, state = self#traverse_list 
             (fun state (field, ty) ->
               let ty, state = self#traverse_type state ty in
@@ -798,8 +848,18 @@ module Template = struct
             state 
             (Array.to_list fields) 
           in
-          Record (RowClosed (Array.of_list fields)), state
-        | Record (RowVar (fields, var)) ->
+          RecordClosed (Array.of_list fields), state
+        | VariantClosed fields ->
+          let fields, state = self#traverse_list 
+            (fun state (field, tys) ->
+              let tys, state = self#traverse_list self#traverse_type state tys in
+              (field, tys), state
+              ) 
+            state 
+            (Array.to_list fields) 
+          in
+          VariantClosed (Array.of_list fields), state  
+        | RecordVar (fields, var) ->
           let fields, state = self#traverse_list 
             (fun state (field, ty) ->
               let ty, state = self#traverse_type state ty in
@@ -812,8 +872,19 @@ module Template = struct
             types and properly merge the transformed results back to give a single record type
             TODO: Maybe this should be configurable? *)
           let var, state = self#traverse_type state (TyVar var) in
-          Ty.replace_row_extension (Array.of_list fields) var, state
-        | Record (RowUnif (fields, (unique, var))) ->
+          Ty.replace_record_extension (Array.of_list fields) var, state
+        | VariantVar (fields, var) ->
+          let fields, state = self#traverse_list 
+            (fun state (field, tys) ->
+              let tys, state = self#traverse_list self#traverse_type state tys in
+              (field, tys), state
+              ) 
+            state 
+            (Array.to_list fields) 
+          in
+          let var, state = self#traverse_type state (TyVar var) in
+          Ty.replace_variant_extension (Array.of_list fields) var, state  
+        | RecordUnif (fields, (unique, var)) ->
           let fields, state = self#traverse_list 
             (fun state (field, ty) ->
               let ty, state = self#traverse_type state ty in
@@ -823,8 +894,19 @@ module Template = struct
             (Array.to_list fields) 
           in
           let var, state = self#traverse_type state (Unif (unique, var)) in
-          Ty.replace_row_extension (Array.of_list fields) var, state
-        | Record (RowSkol (fields, (unique, var))) ->
+          Ty.replace_record_extension (Array.of_list fields) var, state
+        | VariantUnif (fields, (unique, var)) ->
+          let fields, state = self#traverse_list 
+            (fun state (field, tys) ->
+              let tys, state = self#traverse_list self#traverse_type state tys in
+              (field, tys), state
+              ) 
+            state 
+            (Array.to_list fields) 
+          in
+          let var, state = self#traverse_type state (Unif (unique, var)) in
+          Ty.replace_variant_extension (Array.of_list fields) var, state  
+        | RecordSkol (fields, (unique, var)) ->
           let fields, state = self#traverse_list 
             (fun state (field, ty) ->
               let ty, state = self#traverse_type state ty in
@@ -834,7 +916,18 @@ module Template = struct
             (Array.to_list fields) 
           in
           let var, state = self#traverse_type state (Skol (unique, var)) in
-          Ty.replace_row_extension (Array.of_list fields) var, state  
+          Ty.replace_record_extension (Array.of_list fields) var, state
+        | VariantSkol (fields, (unique, var)) ->
+          let fields, state = self#traverse_list 
+            (fun state (field, tys) ->
+              let tys, state = self#traverse_list self#traverse_type state tys in
+              (field, tys), state
+              ) 
+            state 
+            (Array.to_list fields) 
+          in
+          let var, state = self#traverse_type state (Skol (unique, var)) in
+          Ty.replace_variant_extension (Array.of_list fields) var, state    
         in
         self#ty state transformed
 

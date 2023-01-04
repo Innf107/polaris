@@ -86,10 +86,16 @@ let rename_type loc (scope : RenameScope.t) original_type =
         | Promise(ty) -> Promise(rename_nonbinding ty)
         | Tuple(tys) -> Tuple(Array.map rename_nonbinding tys)
         | Fun(tys1, ty) -> Fun(List.map rename_nonbinding tys1, rename_nonbinding ty)
-        | Record(RowClosed tys) -> Record(RowClosed (Array.map (fun (x, ty) -> (x, rename_nonbinding ty)) tys))
-        | Record(RowVar (tys, varname)) -> 
+        | RecordClosed tys -> RecordClosed (Array.map (fun (x, ty) -> (x, rename_nonbinding ty)) tys)
+        | VariantClosed tys -> VariantClosed (Array.map (fun (x, ty) -> (x, List.map rename_nonbinding ty)) tys)
+        | RecordVar (tys, varname) -> 
             begin match RenameMap.find_opt varname scope.ty_vars with
-            | Some varname -> Record(RowVar (Array.map (fun (x, ty) -> (x, rename_nonbinding ty)) tys, varname))
+            | Some varname -> RecordVar (Array.map (fun (x, ty) -> (x, rename_nonbinding ty)) tys, varname)
+            | None -> raise (RenameError.TyVarNotFound(varname, loc))
+            end
+        | VariantVar (tys, varname) -> 
+            begin match RenameMap.find_opt varname scope.ty_vars with
+            | Some varname -> VariantVar (Array.map (fun (x, ty) -> (x, List.map rename_nonbinding ty)) tys, varname)
             | None -> raise (RenameError.TyVarNotFound(varname, loc))
             end
         | TyConstructor(name, args) ->
@@ -125,8 +131,8 @@ let rename_type loc (scope : RenameScope.t) original_type =
         | Parsed.Forall _ -> raise (RenameError.HigherRankType(ty, loc))
         | Unif(_) -> panic __LOC__ ("Unification variable found after parsing. How did this happen wtf?")
         | Skol(_) -> panic __LOC__ ("Skolem found after parsing. How did this happen wtf?")
-        | Record(RowUnif _) -> panic __LOC__ ("Unification variable record found after parsing. How did this happen wtf?")
-        | Record(RowSkol _) -> panic __LOC__ ("Skolem record found after parsing. How did this happen wtf?")
+        | RecordUnif _ | VariantUnif _ -> panic __LOC__ ("Unification variable row found after parsing. How did this happen wtf?")
+        | RecordSkol _ | VariantSkol _ -> panic __LOC__ ("Skolem row found after parsing. How did this happen wtf?")
         in
         match ty with
         | Parsed.Forall(tv, ty) ->
@@ -272,13 +278,24 @@ let rec rename_expr (exports : (module_exports * Renamed.expr list) FilePathMap.
         if Primops.is_primop var_name
         then Var(loc, {name=var_name; index=Name.primop_index})
         else Var (loc, lookup_var scope loc var_name)
+    | VariantConstructor(loc, name, args) ->
+        let args = List.map (rename_expr exports scope) args in
+        VariantConstructor(loc, name, args)
     | DataConstructor (loc, constructor_name) ->
         begin match RenameMap.find_opt constructor_name scope.data_constructors with
         | Some constructor_name ->
             DataConstructor (loc, constructor_name)
         | None ->
-            (* TODO: With polymorphic variants this should return a 'VariantConstructor' *)
-            panic __LOC__ (Loc.pretty loc ^ ": Polymorphic variants are not implemented yet! Maybe you misspelled a data constructor?")
+            VariantConstructor (loc, constructor_name, [])
+        end
+    (* We need this special case since data constructors are represented as unapplied values
+       (similar to variables), whereas variant constructors always have to appear fully applied.
+       (Otherwise their type would be ambiguous if we want to allow `A to be equivalent to `A() ) *)
+    | App (loc, DataConstructor (constructor_loc, constructor_name), args) ->
+        let args = List.map (rename_expr exports scope) args in
+        begin match RenameMap.find_opt constructor_name scope.data_constructors with
+        | Some constructor_name -> App(loc, DataConstructor(constructor_loc, constructor_name), args)
+        | None -> VariantConstructor(loc, constructor_name, args)
         end
     | ModSubscriptDataCon ((), loc, mod_name, name) ->
         let _, module_export_scope = RenameScope.lookup_mod_var scope loc mod_name in

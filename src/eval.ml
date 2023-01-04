@@ -55,6 +55,7 @@ and value =
   | DataConV of name * value
   (* Data constructors can be used like functions *)
   | PartialDataConV of name
+  | VariantConstructorV of string * value list
 
 let unitV = RecordV (RecordVImpl.empty)
 let isUnitV = function
@@ -135,6 +136,8 @@ module Value = struct
       constructor_name.name ^ "(" ^ pretty value ^ ")" 
     | PartialDataConV(constructor_name) ->
       "<constructor: " ^ Name.pretty constructor_name ^ ">"
+    | VariantConstructorV(constructor_name, args) ->
+      "<" ^ constructor_name ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")>"
 
 
   let rec as_args (fail : t -> 'a) (x : t) : string list =
@@ -142,7 +145,8 @@ module Value = struct
     | StringV v -> [v]
     | NumV _ | BoolV _ -> [pretty x]
     (* TODO: Should records/maps be converted to JSON? *)
-    | ClosureV _ | PrimOpV _ | NullV | TupleV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ -> fail x
+    | ClosureV _ | PrimOpV _ | NullV | TupleV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _
+    | VariantConstructorV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
@@ -164,7 +168,7 @@ let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
     | NullV     -> { env with env_vars = EnvMap.remove var env.env_vars }
     | StringV x -> { env with env_vars = EnvMap.add var x env.env_vars }
     | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
-    | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _
+    | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ | VariantConstructorV _
       -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
 
 let insert_module_var : name -> runtime_module -> eval_env -> eval_env =
@@ -297,6 +301,9 @@ and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
       else !(lookup_var env loc x)
   | DataConstructor (loc, name) ->
     PartialDataConV(name)
+  | VariantConstructor (loc, name, args) ->
+    let arg_vals = List.map (eval_expr env) args in
+    VariantConstructorV(name, arg_vals)
   | ModSubscriptDataCon (void, _, _, _) ->
     absurd void
   | App (loc, f, args) ->

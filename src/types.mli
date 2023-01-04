@@ -9,7 +9,8 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
                 | WrongNumberOfArgs of ty list * ty list * ty * ty
                 | NonProgCallInPipe of expr
-                | MissingRowFields of (string * ty) list * (string * ty) list * ty * ty
+                | MissingRecordFields of (string * ty) list * (string * ty) list * ty * ty
+                | MissingVariantConstructors of (string * ty list) list * (string * ty list) list * ty * ty
                 | ArgCountMismatchInDefinition of name * ty list * int
                 | NonFunTypeInLetRec of name * ty
                 | CannotUnwrapNonData of ty

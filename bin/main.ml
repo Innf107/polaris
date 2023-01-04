@@ -220,11 +220,16 @@ let handle_errors print_fun f =
     | NonProgCallInPipe expr ->
       (* TODO: Is this even possible? *)
       Loc.pretty loc ^ ": Non program call expression in a pipe."
-    | MissingRowFields (remaining1, remaining2, original_ty1, original_ty2) ->
-      Loc.pretty loc ^ ": Mismatched row fields.\n"
-                     ^ "Missing Mutual row fields '" ^ Renamed.pretty_type (Record (RowClosed (Array.of_list remaining2))) ^ "'\n"
-                     ^ "                      and '" ^ Renamed.pretty_type (Record (RowClosed (Array.of_list remaining1))) ^ "'\n"
-                     ^ "                      respectively."
+    | MissingRecordFields (remaining1, remaining2, original_ty1, original_ty2) ->
+      Loc.pretty loc ^ ": Mismatched record fields.\n"
+                     ^ "Missing mutual record fields '" ^ Renamed.pretty_type (RecordClosed (Array.of_list remaining2)) ^ "'\n"
+                     ^ "                         and '" ^ Renamed.pretty_type (RecordClosed (Array.of_list remaining1)) ^ "'\n"
+                     ^ "                         respectively."
+    | MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2) ->
+    Loc.pretty loc ^ ": Mismatched variant constructors.\n"
+                    ^ "Missing mutual variant constructors '" ^ Renamed.pretty_type (VariantClosed (Array.of_list remaining2)) ^ "'\n"
+                    ^ "                                and '" ^ Renamed.pretty_type (VariantClosed (Array.of_list remaining1)) ^ "'\n"
+                    ^ "                                respectively."                
     | ArgCountMismatchInDefinition (fun_name, types, count) ->
       Loc.pretty loc ^ ": The function '" ^ Name.pretty fun_name ^ "' is declared with " ^ string_of_int count ^ " parameters\n"
                      ^ "    but it's type suggests that it should have " ^ string_of_int (List.length types)

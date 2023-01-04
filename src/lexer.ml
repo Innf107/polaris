@@ -236,6 +236,8 @@ let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | Some('\'') ->
       set_state (InSingleString "") state lexbuf;
       continue ()
+    | Some('`') ->
+      BACKTICK
     | Some('!') ->
       set_state InBangStart state lexbuf;
       continue ()

@@ -68,6 +68,7 @@ type expr_or_fun_def_ext =
 %token FORALL
 %token DATA
 %token TYPE
+%token BACKTICK "`"
 %token EOF
 
 
@@ -215,6 +216,8 @@ expr_leaf:
     | TRUE { BoolLit(loc $startpos $endpos, true) }
     | FALSE { BoolLit(loc $startpos $endpos, false) }
     | CONSTRUCTOR { DataConstructor(loc $startpos $endpos, $1) }
+    | "`" CONSTRUCTOR                                   { VariantConstructor(loc $startpos $endpos, $2, []) }
+    | "`" CONSTRUCTOR "(" sep_trailing(COMMA, expr) ")" { VariantConstructor(loc $startpos $endpos, $2, $4) }
     | IDENT { Var(loc $startpos $endpos, $1) }
     | ENVVAR { EnvVar(loc $startpos $endpos, $1) }
     | "[" expr1 "|" LET pattern "<-" expr list_comp_clauses "]" 
@@ -352,8 +355,14 @@ ty2:
                                                                 | _ -> TyConstructor($1, $3)
                                                             }
     | CONSTRUCTOR "." CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")"   { ModSubscriptTyCon((), $1, $3, $5) }
-    | "{" sep_trailing(COMMA, record_entry) "}"                     { Record (RowClosed(Array.of_list $2)) }
-    | "{" sep_trailing(COMMA, record_entry) "|" IDENT "}"           { Record (RowVar(Array.of_list $2, $4)) }
+    | "{" sep_trailing(COMMA, record_entry) "}"                     { RecordClosed(Array.of_list $2) }
+    | "{" sep_trailing(COMMA, record_entry) "|" IDENT "}"           { RecordVar(Array.of_list $2, $4) }
+    | "<" sep_trailing(COMMA, variant_entry) ">"                    { VariantClosed(Array.of_list $2) }
+    | "<" sep_trailing(COMMA, variant_entry) "|" IDENT ">"          { VariantVar(Array.of_list $2, $4) }
 
 record_entry:
     IDENT ":" ty { ($1, $3) }
+
+variant_entry:
+    | CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")" { ($1, $3) }
+    | CONSTRUCTOR                                 { ($1, []) }

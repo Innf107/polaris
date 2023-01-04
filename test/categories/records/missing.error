@@ -1,4 +1,4 @@
-test/categories/records/missing.pls:3:2-3:2: Mismatched row fields.
-Missing Mutual row fields '{}'
-                      and '{y : Number}'
-                      respectively.
+test/categories/records/missing.pls:3:2-3:2: Mismatched record fields.
+Missing mutual record fields '()'
+                         and '{ y : Number }'
+                         respectively.

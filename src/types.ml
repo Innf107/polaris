@@ -15,7 +15,8 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
                 | WrongNumberOfArgs of ty list * ty list * ty * ty
                 | NonProgCallInPipe of expr
-                | MissingRowFields of (string * ty) list * (string * ty) list * ty * ty
+                | MissingRecordFields of (string * ty) list * (string * ty) list * ty * ty
+                | MissingVariantConstructors of (string * ty list) list * (string * ty list) list * ty * ty
                 | ArgCountMismatchInDefinition of name * ty list * int
                 | NonFunTypeInLetRec of name * ty
                 | CannotUnwrapNonData of ty
@@ -260,6 +261,11 @@ let rec infer : local_env -> expr -> ty =
         instantiate data_constructor_type
       | None -> panic __LOC__ ("Unbound data constructor in type checker: '" ^ Name.pretty data_name ^ "'")
     end
+    | VariantConstructor(loc, constructor_name, args) ->
+      let arg_types = List.map (infer env) args in
+      let ext_field = fresh_unif_raw () in
+      (* Variant (RowUnif [constructor_name, arg_types], ext_field) *)
+      VariantUnif ([|(constructor_name, arg_types)|], ext_field)
     | ModSubscriptDataCon (void, _, _, _) -> absurd void
     | App (loc, func, args) ->
       (* We infer the argument types first and then check the function type against that.
@@ -292,11 +298,11 @@ let rec infer : local_env -> expr -> ty =
       Tuple (Array.map (infer env) (Array.of_list exprs))
     | RecordLit (_, fields) ->
       let ty_fields = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list fields) in
-      Record (RowClosed ty_fields)
+      RecordClosed ty_fields
     | Subscript (_, expr, name) -> 
       let val_ty = fresh_unif () in
       let (u, u_name) = fresh_unif_raw () in
-      check env (Record (RowUnif ([|name, val_ty|], (u, u_name)))) expr;
+      check env (RecordUnif ([|name, val_ty|], (u, u_name))) expr;
       val_ty
     | ModSubscript (_, mod_name, key_name) ->
       begin match NameMap.find_opt mod_name env.module_var_contents with
@@ -309,14 +315,14 @@ let rec infer : local_env -> expr -> ty =
     | RecordUpdate (_, expr, field_updates) ->
       let update_tys = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_updates) in
       let unif_raw = fresh_unif_raw () in
-      let record_ty = (Record (RowUnif (update_tys, unif_raw))) in
+      let record_ty = RecordUnif (update_tys, unif_raw) in
       check env record_ty expr;
       record_ty      
     | RecordExtension (_, expr, field_exts) ->
       let field_tys = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_exts) in
       let (u, u_name) = fresh_unif_raw () in
       check env (Unif (u, u_name)) expr;
-      Record (RowUnif (field_tys, (u, u_name)))
+      RecordUnif (field_tys, (u, u_name))
     | DynLookup _ -> todo __LOC__
     | BinOp (_, expr1, (Add | Sub | Mul | Div), expr2) ->
       check env Number expr1;
@@ -583,12 +589,17 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
     let rec go ty1 ty2 = 
       (* `remaining_cont` is called with the remaining fields from both rows,
         that is the fields that are not part of the other row. 
-        Closed rows will generally error on this, but unif rows might continue 
+        Closed rows will generally error on this, but unif rows might continue.
+
+        This takes a parameter `unify_fields` that specifies how to unify the row fields.
+        For records, this should usually just be `go`, but for variants, where
+        individual constructors can take multiple arguments, this should be `go_variant` which is 
+        essentially just `List.iter2 go` with parameter count checks
         *)
       (* TODO: Use maps instead of lists to make this more efficient. 
          This might be a bit harder than it sounds, since we have to make sure to
          treat duplicate labels correctly (With the semantics described by Leijen et al) *)
-      let unify_rows fields1 fields2 remaining_cont =
+      let unify_rows unify_fields fields1 fields2 remaining_cont =
         let rec go_rows remaining1 = function
           | (field1, ty1)::fields1, fields2 ->
             begin match Util.extract (fun (x, _) -> x = field1) fields2 with
@@ -596,7 +607,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
                keep it around for `remaining_cont` *)
             | None -> go_rows ((field1, ty1) :: remaining1) (fields1, fields2)
             | Some ((field2, ty2), fields2) ->
-              go ty1 ty2;
+              unify_fields ty1 ty2;
               go_rows remaining1 (fields1, fields2)
             end
           | [], remaining2 -> match remaining1, remaining2 with
@@ -604,6 +615,12 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
             | _ -> remaining_cont remaining1 remaining2
         in
         go_rows [] (Array.to_list fields1, Array.to_list fields2)
+      in
+      let go_variant params1 params2 =
+        if List.compare_lengths params1 params2 <> 0 then
+          todo __LOC__
+        else
+          List.iter2 go params1 params2
       in
       match ty1, ty2 with
       | Unif (u, name), ty | ty, Unif (u, name) -> 
@@ -655,43 +672,78 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), (original_ty1, original_ty2))))
       | (Number, Number) | (Bool, Bool) | (String, String) -> ()
       | Skol (u1, _), Skol (u2, _) when Unique.equal u1 u2 -> ()
-      | Record (RowClosed fields1), Record (RowClosed fields2) ->
-        unify_rows fields1 fields2 (fun remaining1 remaining2 -> 
-          raise (TypeError (loc, MissingRowFields (remaining1, remaining2, original_ty1, original_ty2))))
-      | Record (RowUnif (fields1, (u, name))), Record (RowClosed fields2) ->
+      | RecordClosed fields1, RecordClosed fields2 ->
+        unify_rows go fields1 fields2 (fun remaining1 remaining2 -> 
+          raise (TypeError (loc, MissingRecordFields (remaining1, remaining2, original_ty1, original_ty2))))
+      | VariantClosed fields1, VariantClosed fields2 ->
+        unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
+          raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2))))
+      | RecordUnif (fields1, (u, name)), RecordClosed fields2 ->
         begin match UniqueMap.find_opt u !(state.subst) with
         | Some subst_ty -> go (replace_unif u subst_ty ty1) ty2
         | None -> 
-          unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
+          unify_rows go fields1 fields2 begin fun remaining1 remaining2 ->
             match remaining1 with
-            | [] -> bind state u name (Record (RowClosed (Array.of_list remaining2)))
-            | _ -> raise (TypeError (loc, MissingRowFields (remaining1, [], original_ty1, original_ty2)))
+            | [] -> bind state u name (RecordClosed (Array.of_list remaining2))
+            | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], original_ty1, original_ty2)))
           end
         end
-      | Record (RowClosed fields1), Record (RowUnif (fields2, (u, name))) ->
+      | VariantUnif (fields1, (u, name)), VariantClosed fields2 ->
+        begin match UniqueMap.find_opt u !(state.subst) with
+        | Some subst_ty -> go (replace_unif u subst_ty ty1) ty2
+        | None ->
+          unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
+            match remaining1 with
+            | [] -> bind state u name (VariantClosed (Array.of_list remaining2))
+            | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
+          end
+        end
+      | RecordClosed fields1, RecordUnif (fields2, (u, name)) ->
         begin match UniqueMap.find_opt u !(state.subst) with
         | Some subst_ty -> go ty1 (replace_unif u subst_ty ty2) 
         | None -> 
-          unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
+          unify_rows go fields1 fields2 begin fun remaining1 remaining2 ->
             match remaining2 with
-            | [] -> bind state u name (Record (RowClosed (Array.of_list remaining1)))
-            | _ -> raise (TypeError (loc, MissingRowFields ([], remaining2, original_ty1, original_ty2)))
+            | [] -> bind state u name (RecordClosed (Array.of_list remaining1))
+            | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, original_ty1, original_ty2)))
           end
         end
-      | Record (RowUnif (fields1, (u1, name1))), Record (RowUnif (fields2, (u2, name2))) ->
+      | VariantClosed fields1, VariantUnif (fields2, (u, name)) ->
+        begin match UniqueMap.find_opt u !(state.subst) with
+        | Some subst_ty -> go ty1 (replace_unif u subst_ty ty2) 
+        | None -> 
+          unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
+            match remaining2 with
+            | [] -> bind state u name (VariantClosed (Array.of_list remaining1))
+            | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, original_ty1, original_ty2)))
+          end
+        end  
+      | RecordUnif (fields1, (u1, name1)), RecordUnif (fields2, (u2, name2)) ->
         begin match UniqueMap.find_opt u1 !(state.subst) with
         | Some subst_ty -> go (replace_unif u1 subst_ty ty1) ty2
         | None -> match UniqueMap.find_opt u2 !(state.subst) with
           | Some subst_ty -> go ty1 (replace_unif u2 subst_ty ty2)
           | None ->
-            unify_rows fields1 fields2 begin fun remaining1 remaining2 ->
+            unify_rows go fields1 fields2 begin fun remaining1 remaining2 ->
               let new_u, new_name = fresh_unif_raw_with "µ" in
-              bind state u1 name1 (Record (RowUnif (Array.of_list remaining2, (new_u, new_name))));
-              bind state u2 name2 (Record (RowUnif (Array.of_list remaining1, (new_u, new_name))))
+              bind state u1 name1 (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
+              bind state u2 name2 (RecordUnif (Array.of_list remaining1, (new_u, new_name)))
           end
         end
-      | (Record (RowVar _), _ | _, Record (RowVar _)) -> 
-        panic __LOC__ (Loc.pretty loc ^ ": Uninstantiated variable row found during unification")
+      | VariantUnif (fields1, (u1, name1)), VariantUnif (fields2, (u2, name2)) ->
+        begin match UniqueMap.find_opt u1 !(state.subst) with
+        | Some subst_ty -> go (replace_unif u1 subst_ty ty1) ty2
+        | None -> match UniqueMap.find_opt u2 !(state.subst) with
+          | Some subst_ty -> go ty1 (replace_unif u2 subst_ty ty2)
+          | None ->
+            unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
+              let new_u, new_name = fresh_unif_raw_with "µ" in
+              bind state u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
+              bind state u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
+          end
+        end  
+      | (RecordVar _, _ | _, RecordVar _ | VariantVar _, _ | _, VariantVar _) -> 
+        panic __LOC__ (Loc.pretty loc ^ ": Uninstantiated row variable found during unification")
       | TyVar _, _ | _, TyVar _ -> panic __LOC__ (Loc.pretty loc ^ ": Uninstantiated type variable found during unification")
       | TypeAlias (name, args), other_type ->
         let params, underlying_type = match NameMap.find_opt name env.type_aliases with

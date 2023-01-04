@@ -1,0 +1,3 @@
+test/categories/types/alias_param_missing.pls:5:4-5:29: Invalid number of arguments supplied to type constructor 'T_5'.
+    The type constructor takes 2 arguments
+                 but was given 0

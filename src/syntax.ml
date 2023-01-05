@@ -28,6 +28,8 @@ module Name = struct
     else
       Unique.compare x.index y.index
 
+  let equal x y = compare x y = 0
+
   let fresh (name : string) = { name; index = Unique.fresh () }
   let refresh (name : t) = { name with index = Unique.fresh() }
   
@@ -209,6 +211,7 @@ module Template = struct
     | OrPat of loc * pattern * pattern
     | TypePat of loc * pattern * ty
     | DataPat of loc * name * pattern
+    | VariantPat of loc * string * pattern list
 
   type module_exports = {
       exported_variables : name StringMap.t;
@@ -444,6 +447,7 @@ module Template = struct
     | OrPat (_, p1, p2) -> "(" ^ pretty_pattern p1 ^ " | " ^ pretty_pattern p2 ^ ")"
     | TypePat (_, pat, ty) -> "(" ^ pretty_pattern pat ^ " : " ^ pretty_type ty ^ ")"
     | DataPat (_, name, pattern) -> pretty_name name ^ "(" ^ pretty_pattern pattern ^ ")"
+    | VariantPat (_, name, patterns) -> "`" ^ name ^ "(" ^ String.concat ", " (List.map pretty_pattern patterns) ^ ")"
 
   let rec pretty = function
     | Var (_, x) -> pretty_name x
@@ -551,6 +555,7 @@ module Template = struct
   let get_pattern_loc = function
     | VarPat (loc, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
     | NumPat (loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _) | DataPat (loc, _, _)
+    | VariantPat(loc, _, _)
     -> loc
 
 
@@ -791,6 +796,9 @@ module Template = struct
           let constructor_name, state = self#traverse_name state constructor_name in
           let patterns, state = self#traverse_pattern state pattern in
           DataPat(loc, constructor_name, patterns), state
+        | VariantPat(loc, unqualified_name, patterns) ->
+          let patterns, state = self#traverse_list self#traverse_pattern state patterns in
+          VariantPat(loc, unqualified_name, patterns), state
         in
         self#pattern state transformed
 

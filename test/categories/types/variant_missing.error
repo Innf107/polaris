@@ -1,0 +1,4 @@
+test/categories/types/variant_missing.pls:7:10-7:10: Mismatched variant constructors.
+Missing mutual variant constructors '<  >'
+                                and '< C() >'
+                                respectively.

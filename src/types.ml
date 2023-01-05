@@ -79,7 +79,22 @@ end
 
 let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
-    env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
+    match ty1, ty2 with
+    (* We can skip obviously equal constraints. 
+       This will make debugging vastly simpler and might improve performance a little. *)
+    | (Number, Number) | (Bool, Bool)| (String, String) -> ()
+    | (TyVar name1, TyVar name2) when Name.equal name1 name2 -> ()
+    | (Unif(u1, _), Unif(u2, _)) | (Skol(u1, _), Skol(u2, _)) when Unique.equal u1 u2 -> ()
+    | _ -> env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
+
+(* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2.
+   
+  Right now, subsumption doesn't do anything interesting, since there is no
+   subtyping at all yet. This might change in the future, so type checking should
+   already use `subsumes` instead of `unify` whenever possible, even if it doesn't make
+   a difference yet. *)
+let subsumes : local_env -> loc -> ty -> ty -> unit =
+  unify
 
 let unwrap_constraint : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
@@ -129,6 +144,17 @@ let replace_tvars : ty NameMap.t -> ty -> ty =
     | ty -> ty
     end
 
+let instantiate_type_alias : local_env -> name -> ty list -> ty =
+  fun env name args ->
+    let params, underlying_type = match NameMap.find_opt name env.type_aliases with
+    | None -> panic __LOC__ ("Unbound type alias '" ^ Name.pretty name ^ "' in type checker. This should have been caught earlier!")
+    | Some (params, underlying_type) -> params, underlying_type
+    in
+    if List.compare_lengths args params <> 0 then begin
+      panic __LOC__ ("Wrong number of arguments to type alias " ^ Name.pretty name ^ " in type checker. (Expected: " ^ string_of_int (List.length params) ^ ", Actual: " ^ string_of_int (List.length args) ^ " This should have been caught earlier!")
+    end;
+    replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args))) underlying_type
+    
 
 let rec instantiate_with_function : ty -> (ty * (ty -> ty)) =
   function
@@ -223,7 +249,8 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
       let env_trans = check_pattern env pattern underlying_type in
 
       data_type, env_trans      
-
+    | VariantPat(loc, constructor_name, patterns) ->
+      todo __LOC__
       
       
 
@@ -232,17 +259,79 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
 and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
   fun env pat expected_ty ->
     trace_tc (lazy ("checking pattern '" ^ pretty_pattern pat ^ "' : " ^ pretty_type expected_ty));
-    match pat with
+
+    let defer_to_inference () =
+      let ty, trans = infer_pattern env pat in
+      subsumes env (get_pattern_loc pat) ty expected_ty;
+      trans
+    in
+    match pat, expected_ty with
     (* We need a special case for var patterns to allow polymorphic type patterns. 
       (These would be rejected by unification)
       This is not necessary for any of the other patterns, since these cannot check against
       polytypes anyway *)
-    | VarPat (_, var) -> 
+    | VarPat (_, var), _ -> 
       insert_var var expected_ty
-    | _ ->
-      let ty, trans = infer_pattern env pat in
-      unify env (get_pattern_loc pat) ty expected_ty;
-      trans
+    | ConsPat (_, head, tail), List(elem_ty) ->
+      let head_trans = check_pattern env head elem_ty in
+      let tail_trans = check_pattern env tail (List(elem_ty)) in
+      tail_trans << head_trans
+    | ConsPat (loc, _, _), _ -> defer_to_inference ()
+    | ListPat (_, patterns), List(elem_ty) ->
+      let transformers = List.map (fun pat -> check_pattern env pat elem_ty) patterns in
+      Util.compose transformers
+    | ListPat _, _ -> defer_to_inference ()
+    | TuplePat (loc, patterns), Tuple arg_tys ->
+      if List.compare_length_with patterns (Array.length arg_tys) <> 0 then
+        todo __LOC__
+      else
+        let transformers = List.map2 (check_pattern env) patterns (Array.to_list arg_tys) in
+        Util.compose transformers
+    | TuplePat _, _ -> defer_to_inference ()
+    | NumPat(_, _), Number -> Fun.id
+    | NumPat _, _ -> defer_to_inference ()
+    | OrPat(_, left, right), _ ->
+      let left_trans = check_pattern env left expected_ty in
+      let right_trans = check_pattern env right expected_ty in
+      right_trans << left_trans
+    | TypePat(loc, pattern, ty), _ ->
+      subsumes env loc ty expected_ty;
+      check_pattern env pattern ty
+    | DataPat(loc, data_name, underlying_pattern), TyConstructor(constr_name, args) when Name.equal data_name constr_name ->
+      begin match NameMap.find_opt data_name env.data_definitions with
+      | None -> panic __LOC__ "Unbound data constructor in type checker"
+      | Some (type_params, underlying_type_raw) -> 
+        let underlying_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq type_params) (List.to_seq args))) underlying_type_raw in
+        check_pattern env underlying_pattern underlying_type
+      end
+    | DataPat _, _ -> defer_to_inference ()
+    | VariantPat(loc, name, args), _ -> 
+      todo __LOC__
+
+(** Split a function type into its components.
+    If the type is not statically known to be a function, this is achieved by unifying
+    with a function type consisting of type variables (This is why the number of arguments has to be known beforehand). *)
+let rec split_fun_ty : local_env -> loc -> int -> ty -> (ty list * ty) =
+  fun env loc arg_count -> function
+  | Fun(args, result) -> 
+    (* TODO: Should we check that the argument count matches here? *)
+    (args, result)
+  | TypeAlias(alias_name, args) -> 
+    let real_type = instantiate_type_alias env alias_name args in
+    (* We continue recursively, unwrapping every layer of type synonym until we hit either a function
+       or a non-alias type that we can unify with a function type.
+       This guarantees that type synonyms for functions taking polytypes behave correctly
+       (if rank N types are ever implemented) *)
+    split_fun_ty env loc arg_count real_type
+  | ty ->
+    let argument_types = List.init arg_count (fun _ -> fresh_unif ()) in
+    let result_type = fresh_unif () in
+    (* TODO: Is the order correct here? Does it even matter? 
+       If this is known to be a function (or function alias), we handle it separately
+       anyways, so this case should only be triggered (and not fail no matter what we do)
+       if the function is a unification variable *)
+    subsumes env loc ty (Fun(argument_types, result_type));
+    (argument_types, result_type)
 
 let rec infer : local_env -> expr -> ty =
   fun env expr -> match expr with
@@ -267,15 +356,19 @@ let rec infer : local_env -> expr -> ty =
       (* Variant (RowUnif [constructor_name, arg_types], ext_field) *)
       VariantUnif ([|(constructor_name, arg_types)|], ext_field)
     | ModSubscriptDataCon (void, _, _, _) -> absurd void
-    | App (loc, func, args) ->
-      (* We infer the argument types first and then check the function type against that.
-         Since most functions are going to be defined in a let binding, it might be more efficient to
-        infer the function type first and either match on that directly or unify with a function type to get the argument types *)
-      
-      let arg_tys = List.map (infer env) args in
-      let result_ty = fresh_unif() in
-      trace_tc (lazy ("[Infer App(..)]: Expected fun ty: " ^ pretty_type (Fun (arg_tys, result_ty))));
-      check env (Fun (arg_tys, result_ty)) func;
+    | App (loc, fun_expr, args) ->
+      (* We infer the function type and then match the arguments against that.
+         This is more efficient than inferring the arguments first, since most functions
+         are just going to be functions with existing types, so this reduces the amount of
+         unification variables and constraints.
+
+         It also makes it possible to add rank N types later, since polytypes can be checked for
+         but not inferred. *)
+      let fun_ty = infer env fun_expr in
+      let (arg_tys, result_ty) = split_fun_ty env loc (List.length args) fun_ty in
+
+      List.iter2 (check env) arg_tys args;
+
       result_ty
     | Lambda (loc, args, body) -> 
       let arg_tys, transformers = List.split (List.map (fun p -> infer_pattern env p) args) in
@@ -358,13 +451,13 @@ let rec infer : local_env -> expr -> ty =
       check env Number last;
       List Number
     | ListComp (_, result, clauses) ->
-      let env = infer_list_comp env clauses in
+      let env = check_list_comp env clauses in
       let ty = infer env result in
       List ty
     | If (_, cond, th, el) ->
       check env Bool cond;
       let res_ty = infer env th in
-      (* With subtyping (even subsumption), this might not be correct *)
+      (* TODO: With subtyping (even subsumption), this might not be correct *)
       check env res_ty el;
       res_ty
     | Seq (_, exprs) -> infer_seq env exprs
@@ -375,8 +468,8 @@ let rec infer : local_env -> expr -> ty =
       check env ty e1;
       infer (env_trans env) e2  
     | LetRec (loc, mty, fun_name, pats, body, rest) ->
-      (* We defer to `infer_seq_expr` here, since the core logic is exactly the same *)
-      let env_trans = infer_seq_expr env (LetRecSeq(loc, mty, fun_name, pats, body)) in
+      (* We defer to `check_seq_expr` here, since the core logic is exactly the same *)
+      let env_trans = check_seq_expr env (LetRecSeq(loc, mty, fun_name, pats, body)) in
       infer (env_trans env) rest
     | LetEnv (_, envvar, e1, e2) ->
       check env String e1;
@@ -418,7 +511,7 @@ let rec infer : local_env -> expr -> ty =
       check env (Promise expr_ty) expr;
       expr_ty
     | Match (_, scrut, body) ->
-      (* TODO: Do exhaustiveness checking. This should probably be done in the renamer *)
+      (* TODO: Do exhaustiveness checking. *)
       let scrut_ty = infer env scrut in
       let result_ty = fresh_unif () in
       body |> List.iter begin fun (pat, expr) -> 
@@ -438,24 +531,129 @@ let rec infer : local_env -> expr -> ty =
 
 and check : local_env -> ty -> expr -> unit =
   fun env expected_ty expr ->
-    let expected_skolem_ty = skolemize expected_ty in
-    let ty = infer env expr in
-    unify env (get_loc expr) ty expected_skolem_ty
+    let expected_ty = skolemize expected_ty in
 
-and infer_list_comp : local_env -> list_comp_clause list -> local_env =
+    let defer_to_inference () =
+      let ty = infer env expr in
+      subsumes env (get_loc expr) ty expected_ty
+    in
+    match expr, expected_ty with
+    | Var _, _ -> defer_to_inference ()
+    | DataConstructor _, _ -> defer_to_inference ()
+    (* Variant constructors would be a bit complicated to check directly
+       and we wouldn't gain much, so we just defer to inference. *)
+    | VariantConstructor _, _ -> defer_to_inference ()
+    | ModSubscriptDataCon (void, _, _, _), _ -> absurd void
+    | App _, _ -> defer_to_inference ()
+    | Lambda(loc, param_patterns, body), expected_ty ->
+      let (param_tys, result_ty) = split_fun_ty env loc (List.length param_patterns) expected_ty in
+      let env_transformer = Util.compose (List.map2 (check_pattern env) param_patterns param_tys) in
+      check (env_transformer env) result_ty body
+    | StringLit _, String -> ()
+    | NumLit _, Number -> ()
+    | UnitLit _, RecordClosed [||] -> ()
+    | ListLit (loc, elems), List(elem_ty) ->
+      List.iter (check env elem_ty) elems
+    | TupleLit (loc, elems), Tuple(elem_tys) ->
+      List.iter2 (check env) (Array.to_list elem_tys) elems
+      (* Record literals would be hard to check directly since the fields are order independent,
+         so we just defer to inference and let the unifier deal with this. *)
+    | RecordLit _, _ -> defer_to_inference ()
+    (* Right now, this case is necessary to match type aliases for literal types (e.g. String).
+       We could do this manually, but we still need this, since with typeclasses
+       there might be actual subtypes for String! (e.g. `forall a. C a => a` where String implements C)
+       
+       We could check these directly with subsume, but `defer_to_inference` will do this for us and also works for
+       cases with parameters *)
+    | (StringLit _ | NumLit _ | BoolLit _ | UnitLit _ | ListLit _ | TupleLit _), _ -> defer_to_inference ()
+    | Subscript(loc, expr, field), expected_ty -> 
+      let ext_field = fresh_unif_raw () in
+      let record_ty = RecordUnif ([|field, expected_ty|], ext_field) in
+      check env record_ty expr;
+    | ModSubscript _, _ -> defer_to_inference ()
+    (* TODO: I'm not sure if we can do this more intelligently / efficiently in check mode *)
+    | RecordUpdate _, _ -> defer_to_inference ()
+    (* TODO: This can probably be done more efficiently *)
+    | RecordExtension _, _ -> defer_to_inference ()
+    | DynLookup _, _ -> todo __LOC__
+    | BinOp (_, expr1, Cons, expr2), List(elem_ty) ->
+      check env elem_ty expr1;
+      check env (List elem_ty) expr2;
+    | BinOp _, _ -> defer_to_inference ()
+    | Not (_, expr), Bool ->
+      check env Bool expr;
+    | Not _, _ -> defer_to_inference ()
+    | Range (_, first, last), List(Number) ->
+      check env Number first;
+      check env Number last;
+    | Range _, _ -> defer_to_inference ()
+    | ListComp (_, result, clauses), (List elem_ty) ->
+      let env = check_list_comp env clauses in
+      check env elem_ty result;
+    | ListComp _, _ -> defer_to_inference ()
+    | If (_, cond, then_branch, else_branch), expected_ty ->
+      check env Bool cond;
+      check env expected_ty then_branch;
+      check env expected_ty else_branch;
+    | Seq (loc, exprs), expected_ty ->
+      check_seq env loc expected_ty exprs 
+    | (LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _), _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
+    | Let (_, p, e1, e2), expected_ty ->
+      let ty, env_trans = infer_pattern env p in
+      (* Lets are non-recursive, so we use the *unaltered* environment *)
+      check env ty e1;
+      check (env_trans env) expected_ty e2  
+    | LetRec (loc, mty, fun_name, pats, body, rest), expected_ty ->
+      (* We defer to `check_seq_expr` here, since the core logic is exactly the same *)
+      let env_trans = check_seq_expr env (LetRecSeq(loc, mty, fun_name, pats, body)) in
+      check (env_trans env) expected_ty rest
+    | LetEnv (_, envvar, e1, e2), expected_ty ->
+      check env String e1;
+      check env expected_ty e2
+    | Assign (loc, var, expr), expected_ty ->
+      let var_ty = match NameMap.find_opt var env.local_types with
+        | Some ty -> ty
+        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound variable in typechecker (assignment): '" ^ Name.pretty var ^ "'")
+      in
+      check env var_ty expr;
+      subsumes env loc expected_ty Ty.unit
+    | ProgCall _, _ -> defer_to_inference ()
+    | Pipe _, _ -> defer_to_inference ()
+    | EnvVar _, _ -> defer_to_inference ()
+    | Async (_, expr), Promise(elem_ty) ->
+      check env elem_ty expr
+    | Async _, _ -> defer_to_inference ()
+    | Await (_, expr), expected_ty ->
+      check env (Promise expected_ty) expr;
+    | Match (_, scrut, body), expected_ty ->
+      (* TODO: Do exhaustiveness checking. *)
+      let scrut_ty = infer env scrut in
+      body |> List.iter begin fun (pat, expr) -> 
+        let env_trans = check_pattern env pat scrut_ty in
+        check (env_trans env) expected_ty expr  
+      end
+    | Ascription (loc, expr, ty), expected_ty ->
+      check env ty expr;
+      subsumes env loc ty expected_ty  
+    | Unwrap (loc, expr), expected_ty ->
+      let ty = infer env expr in
+      unwrap_constraint env loc ty expected_ty
+    | NullLit _, _ -> Util.todo __LOC__
+  
+and check_list_comp : local_env -> list_comp_clause list -> local_env =
     fun env -> function
     | [] -> env
     | (FilterClause expr :: clauses) ->
       check env Bool expr;
-      infer_list_comp env clauses
+      check_list_comp env clauses
     | (DrawClause(pat, expr) :: clauses) ->
       let ty, env_trans = infer_pattern env pat in
       (* We use the *unaltered* environment, since
          draw clauses are non-recursive *)
       check env (List ty) expr;
-      infer_list_comp (env_trans env) clauses
+      check_list_comp (env_trans env) clauses
 
-and infer_seq_expr : local_env -> expr -> (local_env -> local_env) =
+and check_seq_expr : local_env -> expr -> (local_env -> local_env) =
     fun env expr -> match expr with
     | LetSeq (loc, pat, e) ->
       let ty, env_trans = infer_pattern env pat in
@@ -544,15 +742,30 @@ and infer_seq : local_env -> expr list -> ty =
     | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ as expr] ->
       (* If the last expression in an expression block is a
          LetSeq* expresion, we don't need to carry the environment transformations,
-         but we do have to make sure to check the expression with `infer_seq_expr`, 
+         but we do have to make sure to check the expression with `check_seq_expr`, 
          so it is not passed to `infer`
         *)
-      let _ : _ = infer_seq_expr env expr in
+      let _ : _ = check_seq_expr env expr in
       Ty.unit
     | [ expr ] -> infer env expr
     | expr :: exprs -> 
-      let env_trans = infer_seq_expr env expr in
+      let env_trans = check_seq_expr env expr in
       infer_seq (env_trans env) exprs
+and check_seq : local_env -> loc -> ty -> expr list -> unit =
+  fun env loc expected_ty exprs -> match exprs with
+  | [] -> subsumes env loc expected_ty Ty.unit
+  | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ as expr] ->
+    (* If the last expression in an expression block is a
+       LetSeq* expresion, we don't need to carry the environment transformations,
+       but we do have to make sure to check the expression with `check_seq_expr`, 
+       so it is not passed to `check`
+      *)
+    let _ : _ = check_seq_expr env expr in
+    ()
+  | [ expr ] -> check env expected_ty expr
+  | expr :: exprs ->
+    let env_trans = check_seq_expr env expr in
+    check_seq (env_trans env) loc expected_ty exprs
 
 let rec occurs subst u = Ty.collect monoid_or begin function
       | Unif (u2, _) -> 
@@ -746,24 +959,10 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
         panic __LOC__ (Loc.pretty loc ^ ": Uninstantiated row variable found during unification")
       | TyVar _, _ | _, TyVar _ -> panic __LOC__ (Loc.pretty loc ^ ": Uninstantiated type variable found during unification")
       | TypeAlias (name, args), other_type ->
-        let params, underlying_type = match NameMap.find_opt name env.type_aliases with
-        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound type alias '" ^ Name.pretty name ^ "' in type checker. This should have been caught earlier!")
-        | Some (params, underlying_type) -> params, underlying_type
-        in
-        if List.compare_lengths args params <> 0 then begin
-          panic __LOC__ (Loc.pretty loc ^ ": Wrong number of arguments to type alias " ^ Name.pretty name ^ " in type checker. (Expected: " ^ string_of_int (List.length params) ^ ", Actual: " ^ string_of_int (List.length args) ^ " This should have been caught earlier!")
-        end;
-        let real_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args))) underlying_type in
+        let real_type = instantiate_type_alias env name args in
         go real_type other_type
       | other_type, TypeAlias (name, args) ->
-        let params, underlying_type = match NameMap.find_opt name env.type_aliases with
-        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound type alias '" ^ Name.pretty name ^ "' in type checker. This should have been caught earlier!")
-        | Some (params, underlying_type) -> params, underlying_type
-        in
-        if List.compare_lengths args params <> 0 then begin
-          panic __LOC__ (Loc.pretty loc ^ ": Wrong number of arguments to type alias " ^ Name.pretty name ^ " in type checker. (Expected: " ^ string_of_int (List.length params) ^ ", Actual: " ^ string_of_int (List.length args) ^ " This should have been caught earlier!")
-        end;
-        let real_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args))) underlying_type in
+        let real_type = instantiate_type_alias env name args in
         go other_type real_type  
       | _ -> raise (TypeError (loc, UnableToUnify ((partial_apply state ty1, partial_apply state ty2), 
                                                    (partial_apply state original_ty1, partial_apply state original_ty2))))
@@ -842,7 +1041,7 @@ let typecheck_top_level : global_env -> expr -> global_env =
         type_aliases = global_env.type_aliases;
       } in
     
-    let local_env_trans = infer_seq_expr local_env expr in
+    let local_env_trans = check_seq_expr local_env expr in
     
     (* This is *extremely hacky* right now.
         We temporarily construct a fake local environment to figure out the top-level local type bindings.

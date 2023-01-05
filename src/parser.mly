@@ -310,6 +310,10 @@ pattern_leaf:
     | "[" sep_trailing(COMMA, pattern) "]" { ListPat(loc $startpos $endpos, $2) }
     | IDENT { VarPat(loc $startpos $endpos, $1) }
     | CONSTRUCTOR "(" pattern ")" { DataPat(loc $startpos $endpos, $1, $3) }
+    | CONSTRUCTOR "(" sep_trailing(COMMA, pattern) ")"      { VariantPat(loc $startpos $endpos, $1, $3) }
+    | CONSTRUCTOR                                           { VariantPat(loc $startpos $endpos, $1, []) }
+    | "`" CONSTRUCTOR "(" sep_trailing(COMMA, pattern) ")"  { VariantPat(loc $startpos $endpos, $2, $4) }
+    | "`" CONSTRUCTOR                                       { VariantPat(loc $startpos $endpos, $2, []) }        
     | INT { NumPat(loc $startpos $endpos, float_of_int $1) }
     | FLOAT { NumPat(loc $startpos $endpos, $1) }
     | "(" pattern ")" { $2 }

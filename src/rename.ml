@@ -204,14 +204,24 @@ let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in functio
         , (fun scope -> ty_trans (p_ty_trans scope))
         )
     | DataPat(loc, constructor_name, pattern) ->
-        let constructor_name = match RenameMap.find_opt constructor_name scope.data_constructors with
-        | Some name -> name
-        | None -> panic __LOC__ (Loc.pretty loc ^ ": Polymorphic variants are not implemented yet! Maybe you misspelled a data constructor?")
-        in
-        let patterns, scope_transformer, type_transformer = rename_pattern scope pattern in
-        ( DataPat(loc, constructor_name, patterns)
-        , scope_transformer
-        , type_transformer
+        let pattern, scope_transformer, type_transformer = rename_pattern scope pattern in
+        begin match RenameMap.find_opt constructor_name scope.data_constructors with
+        | Some constructor_name -> 
+            ( DataPat(loc, constructor_name, pattern)
+            , scope_transformer
+            , type_transformer
+            )
+        | None -> 
+            ( VariantPat(loc, constructor_name, [pattern])
+            , scope_transformer
+            , type_transformer
+            )
+        end
+    | VariantPat(loc, constructor_name, patterns) ->
+        let patterns, scope_transformers, type_transformers = Util.split3 (List.map (rename_pattern scope) patterns) in
+        ( VariantPat(loc, constructor_name, patterns)
+        , Util.compose scope_transformers
+        , Util.compose type_transformers
         )
         
 

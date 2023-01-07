@@ -54,28 +54,6 @@ let replace_unif : Unique.t -> ty -> ty -> ty =
     | ty -> ty
     end
 
-module Subst : sig
-  type t
-
-  val of_map : ty UniqueMap.t -> t
-
-  val apply : t -> ty -> ty
-
-end = struct
-  type t = ty UniqueMap.t 
-
-  let of_map m = m
-
-  let apply subst = Ty.transform begin function
-    | Unif (u, _) as ty ->
-      begin match UniqueMap.find_opt u subst with
-      | None -> ty
-      | Some ty' -> ty'
-      end
-    | ty -> ty
-    end
-end
-
 
 let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
@@ -772,7 +750,7 @@ let rec occurs subst u = Ty.collect monoid_or begin function
         if Unique.equal u u2 then
           true
         else
-          begin match UniqueMap.find_opt u2 !subst with
+          begin match Subst.find u2 subst with
           | None -> false
           | Some ty -> occurs subst u ty
           end
@@ -782,18 +760,18 @@ let rec occurs subst u = Ty.collect monoid_or begin function
 type unify_state = {
   (* This uses a 'ref' instead of a mutable field to allow the
      possibility of adding immutable fields later *)
-  subst : ty UniqueMap.t ref;
+  subst : Subst.t;
 
   deferred_constraints : ty_constraint Difflist.t ref option
 }
 
 let partial_apply state ty =
-  Subst.apply (Subst.of_map !(state.subst)) ty
+  Subst.apply state.subst ty
 
 let bind : unify_state -> Unique.t -> name -> ty -> unit =
   fun state u name ty ->
     trace_subst (lazy (pretty_type (Unif (u, name)) ^ " := " ^ pretty_type ty));
-    state.subst := UniqueMap.add u ty (UniqueMap.map (replace_unif u ty) !(state.subst)) 
+    Subst.add u ty state.subst
 
 let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
   fun loc env state original_ty1 original_ty2 ->
@@ -837,7 +815,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       in
       match ty1, ty2 with
       | Unif (u, name), ty | ty, Unif (u, name) -> 
-        begin match UniqueMap.find_opt u !(state.subst) with
+        begin match Subst.find u state.subst with
         | Some subst_ty -> go subst_ty ty
         | None ->
           begin match ty with
@@ -846,7 +824,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
           *)
           | Unif (u2, _) when u = u2 -> ()
           | Unif (u2, _) -> 
-            begin match UniqueMap.find_opt u2 !(state.subst) with
+            begin match Subst.find u2 state.subst with
             | Some subst_ty -> go (Unif (u, name)) subst_ty
             | None -> bind state u name ty
             end
@@ -892,7 +870,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
           raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2))))
       | RecordUnif (fields1, (u, name)), RecordClosed fields2 ->
-        begin match UniqueMap.find_opt u !(state.subst) with
+        begin match Subst.find u state.subst with
         | Some subst_ty -> go (replace_unif u subst_ty ty1) ty2
         | None -> 
           unify_rows go fields1 fields2 begin fun remaining1 remaining2 ->
@@ -902,7 +880,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
           end
         end
       | VariantUnif (fields1, (u, name)), VariantClosed fields2 ->
-        begin match UniqueMap.find_opt u !(state.subst) with
+        begin match Subst.find u state.subst with
         | Some subst_ty -> go (replace_unif u subst_ty ty1) ty2
         | None ->
           unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
@@ -912,7 +890,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
           end
         end
       | RecordClosed fields1, RecordUnif (fields2, (u, name)) ->
-        begin match UniqueMap.find_opt u !(state.subst) with
+        begin match Subst.find u state.subst with
         | Some subst_ty -> go ty1 (replace_unif u subst_ty ty2) 
         | None -> 
           unify_rows go fields1 fields2 begin fun remaining1 remaining2 ->
@@ -922,7 +900,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
           end
         end
       | VariantClosed fields1, VariantUnif (fields2, (u, name)) ->
-        begin match UniqueMap.find_opt u !(state.subst) with
+        begin match Subst.find u state.subst with
         | Some subst_ty -> go ty1 (replace_unif u subst_ty ty2) 
         | None -> 
           unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
@@ -932,9 +910,9 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
           end
         end  
       | RecordUnif (fields1, (u1, name1)), RecordUnif (fields2, (u2, name2)) ->
-        begin match UniqueMap.find_opt u1 !(state.subst) with
+        begin match Subst.find u1 state.subst with
         | Some subst_ty -> go (replace_unif u1 subst_ty ty1) ty2
-        | None -> match UniqueMap.find_opt u2 !(state.subst) with
+        | None -> match Subst.find u2 state.subst with
           | Some subst_ty -> go ty1 (replace_unif u2 subst_ty ty2)
           | None ->
             unify_rows go fields1 fields2 begin fun remaining1 remaining2 ->
@@ -944,9 +922,9 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
           end
         end
       | VariantUnif (fields1, (u1, name1)), VariantUnif (fields2, (u2, name2)) ->
-        begin match UniqueMap.find_opt u1 !(state.subst) with
+        begin match Subst.find u1 state.subst with
         | Some subst_ty -> go (replace_unif u1 subst_ty ty1) ty2
-        | None -> match UniqueMap.find_opt u2 !(state.subst) with
+        | None -> match Subst.find u2 state.subst with
           | Some subst_ty -> go ty1 (replace_unif u2 subst_ty ty2)
           | None ->
             unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
@@ -996,17 +974,17 @@ let solve_constraints : local_env -> ty_constraint list -> Subst.t =
           solve_unwrap loc env unify_state ty1 ty2
         end constraints;
     in
-    let subst_ref = ref UniqueMap.empty in
+    let subst = Subst.make () in
 
     let initial_deferred_constraint_ref = ref Difflist.empty in
-    let initial_unify_state = { subst = subst_ref; deferred_constraints = Some initial_deferred_constraint_ref } in
+    let initial_unify_state = { subst = subst; deferred_constraints = Some initial_deferred_constraint_ref } in
     (* We try to solve the constraints once, collect any deferred ones and try again *)
     go initial_unify_state constraints;
     
-    let updated_unify_state = { subst = subst_ref; deferred_constraints = None } in
+    let updated_unify_state = { subst = subst; deferred_constraints = None } in
     go updated_unify_state (Difflist.to_list !initial_deferred_constraint_ref);
 
-    Subst.of_map !subst_ref
+    subst
 
 
 let free_unifs : ty -> UnifSet.t =

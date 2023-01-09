@@ -259,6 +259,10 @@ let rec match_pat_opt (pat : Renamed.pattern) (scrut : value) : (eval_env -> eva
     end
   | DataPat(_, constructor_name, pattern), DataConV(val_constructor_name, underlying) when constructor_name = val_constructor_name ->
     match_pat_opt pattern underlying
+  | VariantPat(_, constructor_name, patterns), VariantConstructorV(val_constructor_name, values)
+    when constructor_name = val_constructor_name ->
+      let* transformations = Util.sequence_options (List.map2 match_pat_opt patterns values) in
+      Some(Util.compose transformations)
   | _ -> None
 
 let match_pat pat scrut locs =

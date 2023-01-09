@@ -10,6 +10,7 @@ let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix: "Subst"
 type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                                  (* ^           ^ full original types *)
                                  (* | specific mismatch               *)
+                | DifferentVariantConstrArgs of string * ty list * ty list * ty * ty
                 | MismatchedTyCon of name * name * ty * ty
                 | Impredicative of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
@@ -23,7 +24,6 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
 
 exception TypeError of loc * type_error
 
-module UniqueMap = Map.Make(Unique)
 module UnifSet = Set.Make(struct
   type t = Unique.t * name
   let compare (u1, _) (u2, _) = Unique.compare u1 u2
@@ -228,9 +228,56 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
 
       data_type, env_trans      
     | VariantPat(loc, constructor_name, patterns) ->
-      todo __LOC__
+      (* See Note [Inferring Variant Patterns] *)
+      let pattern_types, env_transformers = List.split (List.map (infer_pattern env) patterns) in
+
+      let extension_unif = fresh_unif_raw () in
+
+      VariantUnif([|(constructor_name, pattern_types)|], extension_unif), Util.compose env_transformers
       
-      
+(* Note [Inferring Variant Patterns]
+  Inference for variant patterns is quite complicated.
+
+  Naively, one might think that a pattern for constructor `A
+  should just be inferred to have the closed variant type type < A() >, since this is exactly what it matches.
+
+  While this would work quite well for let-bound patterns, this breaks down for match expressions.
+  Every pattern in a match expression is checked against the type of the scrutinee, meaning every pattern
+  needs to have the same type.
+
+  For example, with this approach, the following, obviously sensible declaration would be rejected
+
+  let f(x) = match x {
+    A -> 0
+    B -> 1
+    _ -> 2
+  }
+
+  The obvious type for `f` would be `forall r. < A, B | r > -> Number`.
+  This leads to the natural conclusion that variant patterns (e.g `A) should always be inferred to 
+  an *open* variant type instead (< A | r0 >).
+
+  With this, the example above infers the correct type, but at the cost of breaking correctness!
+
+  let f(x) = match x {
+    A -> 0
+    B -> 1
+  }
+
+  This declaration should be inferred to have type `< A, B > -> Number`, but this approach infers the
+  open type `forall r. < A, B | r > -> Number` even thoough the function has no way to handle
+  any constructors besides `A and `B!
+
+  Now, how do we infer patterns such that variants are always open when they could match additional 
+  constructors at runtime and closed when they could not?
+
+  We cheat.
+
+  Instead of determining this through type inference and unification, we always infer open variant types 
+  and later apply separate exhaustiveness analysis to the match expression to close any rows that would be
+  non-exhaustive with an open variant type.
+  This is the same approach that is taken by OCaml (https://github.com/ocaml/ocaml/blob/trunk/typing/parmatch.ml#L1392)
+*)
 
 
 (* The checking judgement for patterns doesn't actually do anything interesting at the moment. *)
@@ -284,7 +331,7 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
       end
     | DataPat _, _ -> defer_to_inference ()
     | VariantPat(loc, name, args), _ -> 
-      todo __LOC__
+      defer_to_inference ()
 
 (** Split a function type into its components.
     If the type is not statically known to be a function, this is achieved by unifying
@@ -798,7 +845,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
                keep it around for `remaining_cont` *)
             | None -> go_rows ((field1, ty1) :: remaining1) (fields1, fields2)
             | Some ((field2, ty2), fields2) ->
-              unify_fields ty1 ty2;
+              unify_fields field2 ty1 ty2;
               go_rows remaining1 (fields1, fields2)
             end
           | [], remaining2 -> match remaining1, remaining2 with
@@ -807,9 +854,9 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
         in
         go_rows [] (Array.to_list fields1, Array.to_list fields2)
       in
-      let go_variant params1 params2 =
+      let go_variant constructor_name params1 params2 =
         if List.compare_lengths params1 params2 <> 0 then
-          todo __LOC__
+          raise (TypeError (loc, DifferentVariantConstrArgs(constructor_name, params1, params2, original_ty1, original_ty2)))
         else
           List.iter2 go params1 params2
       in
@@ -863,17 +910,19 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), (original_ty1, original_ty2))))
       | (Number, Number) | (Bool, Bool) | (String, String) -> ()
       | Skol (u1, _), Skol (u2, _) when Unique.equal u1 u2 -> ()
+      (* closed, closed *)
       | RecordClosed fields1, RecordClosed fields2 ->
-        unify_rows go fields1 fields2 (fun remaining1 remaining2 -> 
+        unify_rows (fun _ -> go) fields1 fields2 (fun remaining1 remaining2 -> 
           raise (TypeError (loc, MissingRecordFields (remaining1, remaining2, original_ty1, original_ty2))))
       | VariantClosed fields1, VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
           raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2))))
+      (* unif, closed *)
       | RecordUnif (fields1, (u, name)), RecordClosed fields2 ->
         begin match Subst.find u state.subst with
         | Some subst_ty -> go (replace_unif u subst_ty ty1) ty2
         | None -> 
-          unify_rows go fields1 fields2 begin fun remaining1 remaining2 ->
+          unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
             match remaining1 with
             | [] -> bind state u name (RecordClosed (Array.of_list remaining2))
             | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], original_ty1, original_ty2)))
@@ -889,11 +938,12 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
             | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
           end
         end
+      (* closed, unif *)
       | RecordClosed fields1, RecordUnif (fields2, (u, name)) ->
         begin match Subst.find u state.subst with
         | Some subst_ty -> go ty1 (replace_unif u subst_ty ty2) 
         | None -> 
-          unify_rows go fields1 fields2 begin fun remaining1 remaining2 ->
+          unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
             match remaining2 with
             | [] -> bind state u name (RecordClosed (Array.of_list remaining1))
             | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, original_ty1, original_ty2)))
@@ -909,13 +959,14 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
             | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, original_ty1, original_ty2)))
           end
         end  
+      (* unif, unif *)
       | RecordUnif (fields1, (u1, name1)), RecordUnif (fields2, (u2, name2)) ->
         begin match Subst.find u1 state.subst with
         | Some subst_ty -> go (replace_unif u1 subst_ty ty1) ty2
         | None -> match Subst.find u2 state.subst with
           | Some subst_ty -> go ty1 (replace_unif u2 subst_ty ty2)
           | None ->
-            unify_rows go fields1 fields2 begin fun remaining1 remaining2 ->
+            unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
               let new_u, new_name = fresh_unif_raw_with "µ" in
               bind state u1 name1 (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
               bind state u2 name2 (RecordUnif (Array.of_list remaining1, (new_u, new_name)))
@@ -933,6 +984,71 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
               bind state u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
           end
         end  
+      (* unif, skolem *)
+      (* This is almost exactly like the (unif, closed) case, except that we need to carry the
+         skolem extension field over *)
+      | RecordUnif (fields1, (unif_unique, unif_name)), RecordSkol (fields2, (skol_unique, skol_name)) ->
+        begin match Subst.find unif_unique state.subst with
+        | Some subst_ty -> go (replace_unif unif_unique subst_ty ty1) ty2
+        | None -> 
+          unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
+            match remaining1 with
+            | [] -> bind state unif_unique unif_name (RecordSkol (Array.of_list remaining2, (skol_unique, skol_name)))
+            | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], original_ty1, original_ty2)))
+          end
+        end
+      | VariantUnif (fields1, (unif_unique, unif_name)), VariantSkol (fields2, (skol_unique, skol_name)) ->
+        begin match Subst.find unif_unique state.subst with
+        | Some subst_ty -> go (replace_unif unif_unique subst_ty ty1) ty2
+        | None -> 
+          unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
+            match remaining1 with
+            | [] -> bind state unif_unique unif_name (VariantUnif (Array.of_list remaining2, (skol_unique, skol_name)))
+            | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
+          end
+        end
+      (* skolem, unif *)
+      (* This is almost exactly like the (closed, unif) case, except that we need to carry the
+         skolem extension field over *)
+      | RecordSkol (fields1, (skolem_unique, skolem_name)), RecordUnif (fields2, (unif_unique, unif_name)) -> 
+        begin match Subst.find unif_unique state.subst with
+        | Some subst_ty -> go ty1 (replace_unif unif_unique subst_ty ty2) 
+        | None -> 
+          unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
+            match remaining2 with
+            | [] -> bind state unif_unique unif_name (RecordSkol (Array.of_list remaining1, (skolem_unique, skolem_name)))
+            | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, original_ty1, original_ty2)))
+          end
+        end
+      | VariantSkol (fields1, (skolem_unique, skolem_name)), VariantUnif (fields2, (unif_unique, unif_name)) -> 
+        begin match Subst.find unif_unique state.subst with
+        | Some subst_ty -> go ty1 (replace_unif unif_unique subst_ty ty2) 
+        | None -> 
+          unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
+            match remaining2 with
+            | [] -> bind state unif_unique unif_name (VariantSkol (Array.of_list remaining1, (skolem_unique, skolem_name)))
+            | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, original_ty1, original_ty2)))
+          end
+        end  
+      (* skolem, skolem *)
+      (* Skolem rows only unify if the skolem fields match and
+          all fields unify (similar to closed rows) *)
+      | RecordSkol (fields1, (skolem1_unique, skolem1_name)), RecordSkol (fields2, (skolem2_unique, skolem2_name)) ->
+        (* We unify the skolems to generate a more readable error message.
+           TODO: Maybe a custom error message is clearer? *)
+        go (Skol (skolem1_unique, skolem1_name)) (Skol (skolem2_unique, skolem2_name));
+        unify_rows (fun _ -> go) fields1 fields2 (fun remaining1 remaining2 -> 
+          raise (TypeError (loc, MissingRecordFields (remaining1, remaining2, original_ty1, original_ty2))))
+      | VariantSkol (fields1, (skolem1_unique, skolem1_name)), VariantSkol (fields2, (skolem2_unique, skolem2_name)) ->
+        (* We unify the skolems to generate a more readable error message.
+           TODO: Maybe a custom error message is clearer? *)
+        go (Skol (skolem1_unique, skolem1_name)) (Skol (skolem2_unique, skolem2_name));
+        unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 -> 
+          raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2)))) 
+      (* closed, skolem *)
+      (* skolem, closed *)
+      (* Unifying a skolem and closed record is always impossible so we don't need a dedicated case here. *)
+          
       | (RecordVar _, _ | _, RecordVar _ | VariantVar _, _ | _, VariantVar _) -> 
         panic __LOC__ (Loc.pretty loc ^ ": Uninstantiated row variable found during unification")
       | TyVar _, _ | _, TyVar _ -> panic __LOC__ (Loc.pretty loc ^ ": Uninstantiated type variable found during unification")
@@ -1006,7 +1122,7 @@ let generalize : ty -> ty =
       (free_unifs ty) 
       ty
     in
-    trace_subst (lazy ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty'));
+    trace_tc (lazy ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty'));
     ty'
     
 let typecheck_top_level : global_env -> expr -> global_env =

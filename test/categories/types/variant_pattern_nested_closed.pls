@@ -4,4 +4,4 @@ let f(x, y) = match (x, y) {
     (Nothing, Err(a)) -> a
 }
 
-f(Nothing, C)
+print(f(Nothing, C))

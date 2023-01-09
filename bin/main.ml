@@ -195,6 +195,15 @@ let handle_errors print_fun f =
                      ^ "                    and '" ^ Renamed.pretty_type ty2 ^ "'\n"
                      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
                      ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"
+    | DifferentVariantConstrArgs (constructor_name, types1, types2, original_type1, original_type2) ->
+      Loc.pretty loc ^ ": Unable to unify an instance of the variant constructor '" ^ constructor_name ^ "'\n"
+                     ^ "                                             with " ^ string_of_int (List.length types1) ^ " fields\n"
+                     ^ "    with an instance of the same constructor with " ^ string_of_int (List.length types2) ^ " fields\n"
+                     ^ "    Specifically: Unable to match\n"
+                     ^ "        argument types (" ^ String.concat ", " (List.map Renamed.pretty_type types1) ^ ")\n"
+                     ^ "                  with (" ^ String.concat ", " (List.map Renamed.pretty_type types2) ^ ")\n"
+                     ^ "    While trying to unify '" ^ Renamed.pretty_type original_type1 ^ "'\n"
+                     ^ "                      and '" ^ Renamed.pretty_type original_type2 ^ "'"
     | MismatchedTyCon (constr_name1, constr_name2, original_ty1, original_ty2) ->
       Loc.pretty loc ^ ": Unable to match data constructors '" ^ Name.pretty constr_name1 ^ "' and '" ^ Name.pretty constr_name2 ^ "'\n"
                      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"

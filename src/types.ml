@@ -3,9 +3,9 @@ open Syntax.Renamed
 open Util
 open Classes
 
-let _tc_category, trace_tc = Trace.make ~flag:"types" ~prefix:"Types" 
+let _tc_category,    trace_tc    = Trace.make ~flag:"types" ~prefix:"Types" 
 let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
-let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix: "Subst"
+let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix:"Subst"
 
 type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                                  (* ^           ^ full original types *)
@@ -60,7 +60,7 @@ let unify : local_env -> loc -> ty -> ty -> unit =
     match ty1, ty2 with
     (* We can skip obviously equal constraints. 
        This will make debugging vastly simpler and might improve performance a little. *)
-    | (Number, Number) | (Bool, Bool)| (String, String) -> ()
+    | (Number, Number) | (Bool, Bool)| (String, String) | (RecordClosed [||], RecordClosed [||]) -> ()
     | (TyVar name1, TyVar name2) when Name.equal name1 name2 -> ()
     | (Unif(u1, _), Unif(u2, _)) | (Skol(u1, _), Skol(u2, _)) when Unique.equal u1 u2 -> ()
     | _ -> env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
@@ -1110,9 +1110,11 @@ let free_unifs : ty -> UnifSet.t =
     end
 
 (** Generalizes a given type by turning residual unification variables into
-    forall-bound type variables.
-    This is the *only* way to introduce forall types right now, 
-    since explicit type signatures are not yet supported.  *)
+    forall-bound type variables. 
+    This does not currently take the environment into account since only 
+    top-level definitions are generalized and these cannot mention free 
+    unification variables. 
+    This is going to change once we introduce a value restriction!  *)
 let generalize : ty -> ty =
   fun ty -> 
     let ty' = UnifSet.fold 

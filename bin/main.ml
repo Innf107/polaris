@@ -24,12 +24,39 @@ let fail_usage : 'a. string -> 'a =
     print_endline (msg ^ "\n\n" ^ usage_message);
     exit 1
 
-let fatal_error (message : string) = 
-  print_endline message;
+let fatal_error maybe_loc (message : string) =
+  let prefix = match maybe_loc with
+  | Some loc -> "\x1b[1m" ^ Loc.pretty loc ^ ": \x1b[0m"
+  | None -> ""
+  in
+  let suffix = match maybe_loc with
+  | None -> ""
+  | Some loc ->
+    (* TODO: Let's hope this actually opens the correct file in all cases *)
+    let input_file = In_channel.open_text (loc.file) in
+
+    let preceeding, line, succeeding = Errormessage.extract_source_fragment loc input_file
+      (fun error_fragment -> "\x1b[1m\x1b[38;2;255;0;0m" ^ error_fragment ^ "\x1b[0m")
+    in
+    let line_text = string_of_int loc.start_line in
+    let padding = String.make (String.length line_text) ' ' in
+    let line_color = "\x1b[1m\x1b[34m" in
+    
+    "\n"
+    ^ line_color ^ padding   ^ " | \x1b[0m" ^ preceeding ^ "\n"
+    ^ line_color ^ line_text ^ " | \x1b[0m" ^ line       ^ "\n"
+    ^ line_color ^ padding   ^ " | \x1b[0m" ^ succeeding
+  in
+
+  print_endline (prefix ^ "\x1b[38;2;255;0;0m\x02ERROR\x1b[0m\x02:\n" ^ message ^ suffix);
   exit 1
 
-let repl_error (message : string) = 
-  print_endline ("\x1b[38;2;255;0;0m\x02ERROR\x1b[0m\x02:\n" ^ message);
+let repl_error maybe_loc (message : string) =
+  let prefix = match maybe_loc with
+  | Some loc -> "\x1b[1m" ^ Loc.pretty loc ^ ": \x1b0m"
+  | None -> ""
+  in
+  print_endline (prefix ^ "\x1b[38;2;255;0;0m\x02ERROR\x1b[0m\x02:\n" ^ message);
 
 type run_options = {
   interactive   : bool;
@@ -51,152 +78,150 @@ let handle_errors print_fun f =
   try 
     f ()
   with 
-  | Util.Panic msg -> print_fun ("PANIC! The 'impossible' happened (This is a bug, please report it!):\n" ^ msg)
-  | Util.TODO loc -> print_fun ("PANIC! Unresolved compiler TODO at '" ^ loc ^ "'.\nIf you see this, please report it and tell the author to finish their things before releasing them!")
-  | ParseError (loc, msg) -> print_fun ("Parse Error at " ^ Loc.pretty loc ^ ": " ^ msg)
+  | Util.Panic msg -> print_fun None ("PANIC! The 'impossible' happened (This is a bug, please report it!):\n" ^ msg)
+  | Util.TODO loc -> print_fun None ("PANIC! Unresolved compiler TODO at '" ^ loc ^ "'.\nIf you see this, please report it and tell the author to finish their things before releasing them!")
+  | ParseError (loc, msg) -> print_fun (Some loc) ("Parse Error: " ^ msg)
   | SpecificParseError (MismatchedLetName(loc, name1, name2)) ->
-    print_fun(Loc.pretty loc ^ ": Function declared with different names.\n"
+    print_fun (Some loc) ("Function declared with different names.\n"
             ^ "    The type signature calls it:       '" ^ name1 ^ "'\n"
             ^ "    but its definition refers to it as '" ^ name2 ^ "'")
-  | Sys_error msg -> print_fun ("System error: " ^ msg)
+  | Sys_error msg -> print_fun None ("System error: " ^ msg)
   (* RenameError *)
-  | VarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Variable not found: '" ^ x ^ "'")
-  | ModuleVarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Module not found: '" ^ x ^ "'")
-  | TyVarNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Type variable or constructor not found: '" ^ x ^ "'")
-  | TyConNotFound (x, loc) -> print_fun (Loc.pretty loc ^ ": Type constructor not found: '" ^ x ^ "'")
+  | VarNotFound (x, loc) -> print_fun (Some loc) ("Variable not found: '" ^ x ^ "'")
+  | ModuleVarNotFound (x, loc) -> print_fun (Some loc) ("Module not found: '" ^ x ^ "'")
+  | TyVarNotFound (x, loc) -> print_fun (Some loc) ("Type variable or constructor not found: '" ^ x ^ "'")
+  | TyConNotFound (x, loc) -> print_fun (Some loc) ("Type constructor not found: '" ^ x ^ "'")
   | SubscriptVarNotFound (x, loc) -> 
-    print_fun (Loc.pretty loc ^ ": Variable or module not found: '" ^ x ^ "'")
-  | LetSeqInNonSeq (expr, loc) -> print_fun (
-        Loc.pretty loc ^ ": Let expression without 'in' found outside a sequence expression.\n"
-      ^ "    Expression: " ^ Parsed.pretty expr
-      )
+    print_fun (Some loc) ("Variable or module not found: '" ^ x ^ "'")
+  | LetSeqInNonSeq (expr, loc) -> print_fun (Some loc)
+      ( "Let expression without 'in' found outside a sequence expression.\n"
+      ^ "    Expression: " ^ Parsed.pretty expr)
+      
   | SubModuleNotFound (name, loc) ->
-    print_fun (Loc.pretty loc ^ ": Module does not contain a submodule named '" ^ name ^ "'")
+    print_fun (Some loc) ("Module does not contain a submodule named '" ^ name ^ "'")
   | HigherRankType (_ty, loc) ->
-    print_fun (Loc.pretty loc ^ ": Illegal inner forall in type.\n    Polaris does not support higher rank polymorphism")
-  | WrongNumberOfTyConArgs(name, expected_arg_count, args, loc) -> print_fun (
-      Loc.pretty loc ^ ": Invalid number of arguments supplied to type constructor '" ^ Name.pretty name ^ "'.\n"
+    print_fun (Some loc) ("Illegal inner forall in type.\n    Polaris does not support higher rank polymorphism")
+  | WrongNumberOfTyConArgs(name, expected_arg_count, args, loc) ->
+    print_fun (Some loc) ("Invalid number of arguments supplied to type constructor '" ^ Name.pretty name ^ "'.\n"
     ^ "    The type constructor takes " ^ string_of_int expected_arg_count ^ " arguments\n"
     ^ "                 but was given " ^ (string_of_int (List.length args)))
     (* EvalError *)
-  | DynamicVarNotFound (x, loc::locs) -> print_fun (
-        Loc.pretty loc ^ ": Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
+  | DynamicVarNotFound (x, loc::locs) ->
+      print_fun (Some loc) ("Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
       ^ "This is definitely a bug in the interpreter"
       ^ pretty_call_trace locs
       )
-  | NotAValueOfType(ty, value, cxt, loc :: locs) -> print_fun (
-        Loc.pretty loc ^ ": Not a value of type " ^ ty ^ "."
+  | NotAValueOfType(ty, value, cxt, loc :: locs) -> 
+    print_fun (Some loc) ("Not a value of type " ^ ty ^ "."
       ^ "\n    Context: " ^ cxt
       ^ "\n      Value: " ^ Value.pretty value
       ^ "\n" ^ pretty_call_trace locs
       )  
-  | TryingToApplyNonFunction (value, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Trying to apply a value that is not a function: " ^ Value.pretty value
+  | TryingToApplyNonFunction (value, loc::locs) -> print_fun (Some loc) (
+        "Trying to apply a value that is not a function: " ^ Value.pretty value
       ^ "\n" ^ pretty_call_trace locs
     )
-  | TryingToLookupInNonMap (value, key, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Trying to lookup key '" ^ key ^ "' in non-map value: " ^ Value.pretty value
+  | TryingToLookupInNonMap (value, key, loc::locs) -> 
+      print_fun (Some loc) ("Trying to lookup key '" ^ key ^ "' in non-map value: " ^ Value.pretty value
       ^ "\n" ^ pretty_call_trace locs
     )
-  | TryingToLookupDynamicInNonMap (value, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Trying to lookup dynamic key in non map or list value: " ^ Value.pretty value
+  | TryingToLookupDynamicInNonMap (value, loc::locs) -> 
+    print_fun (Some loc) ("Trying to lookup dynamic key in non map or list value: " ^ Value.pretty value
       ^ "\n" ^ pretty_call_trace locs
     )
-  | InvalidMapKey (key, map, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in map: " ^ Value.pretty (RecordV map)
+  | InvalidMapKey (key, map, loc::locs) -> 
+    print_fun (Some loc) ("Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in map: " ^ Value.pretty (RecordV map)
       ^ "\n" ^ pretty_call_trace locs
     )
-  | InvalidListKey (key, list, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in list: " ^ Value.pretty (ListV list)
+  | InvalidListKey (key, list, loc::locs) -> 
+    print_fun (Some loc) ("Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in list: " ^ Value.pretty (ListV list)
       ^ "\n" ^ pretty_call_trace locs
     )
 
-  | MapDoesNotContain (map, key, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Map does not contain key '" ^ key ^ "': " ^ Value.pretty (RecordV map)
+  | MapDoesNotContain (map, key, loc::locs) -> 
+    print_fun (Some loc) ("Map does not contain key '" ^ key ^ "': " ^ Value.pretty (RecordV map)
       ^ "\n" ^ pretty_call_trace locs
     )
-  | InvalidNumberOfArguments (params, vals, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Invalid number of arguments in function call.\n"
+  | InvalidNumberOfArguments (params, vals, loc::locs) -> 
+    print_fun (Some loc) ("Invalid number of arguments in function call.\n"
                      ^ "Expected " ^ Int.to_string (List.length params) ^ " arguments, but received " ^ Int.to_string (List.length vals) ^ ".\n"
                      ^ "    Expected: (" ^ String.concat ", " (List.map Renamed.pretty_pattern params) ^ ")\n"
                      ^ "      Actual: (" ^ String.concat ", " (List.map Value.pretty vals) ^ ")"
                      ^ "\n" ^ pretty_call_trace locs
       )
-  | PrimOpArgumentError (primop_name, vals, msg, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Invalid arguments to builtin function '" ^ primop_name ^ "': " ^ msg ^ "\n"
+  | PrimOpArgumentError (primop_name, vals, msg, loc::locs) -> 
+    print_fun (Some loc) ("Invalid arguments to builtin function '" ^ primop_name ^ "': " ^ msg ^ "\n"
                      ^ "    Arguments: " ^ Value.pretty (ListV vals)
                      ^ "\n" ^ pretty_call_trace locs
     )
-  | InvalidOperatorArgs (op_name, vals, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Invalid arguments for operator '" ^ op_name ^ "'\n"
+  | InvalidOperatorArgs (op_name, vals, loc::locs) -> 
+    print_fun (Some loc) ("Invalid arguments for operator '" ^ op_name ^ "'\n"
                       ^ "    Arguments: " ^ Value.pretty (ListV vals)
                       ^ "\n" ^ pretty_call_trace locs
     )
-  | NonNumberInRangeBounds (start_val, end_val, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Non-number in range bounds.\n"
+  | NonNumberInRangeBounds (start_val, end_val, loc::locs) -> 
+    print_fun (Some loc) ("Non-number in range bounds.\n"
                      ^ "    Range: [" ^ Value.pretty start_val ^ " .. " ^ Value.pretty end_val ^ "]"
                      ^ "\n" ^ pretty_call_trace locs
     )
-  | NonBoolInListComp (value, loc::locs) -> print_fun (
-    Loc.pretty loc ^ ": Non-boolean in list comprehension condition: " ^ Value.pretty value
+  | NonBoolInListComp (value, loc::locs) -> 
+    print_fun (Some loc) ("Non-boolean in list comprehension condition: " ^ Value.pretty value
                    ^ "\n" ^ pretty_call_trace locs
   )
-  | NonListInListComp (value, loc::locs) -> print_fun (
-    Loc.pretty loc ^ ": Trying to draw from a non-list in a list comprehension: " ^ Value.pretty value
+  | NonListInListComp (value, loc::locs) -> 
+    print_fun (Some loc) ("Trying to draw from a non-list in a list comprehension: " ^ Value.pretty value
                    ^ "\n" ^ pretty_call_trace locs
   )
-  | InvalidProcessArg (value, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Argument cannot be passed to an external process in an !-Expression.\n"
+  | InvalidProcessArg (value, loc::locs) -> 
+    print_fun (Some loc) ("Argument cannot be passed to an external process in an !-Expression.\n"
                      ^ "    Argument: " ^ Value.pretty value
                      ^ "\n" ^ pretty_call_trace locs
     )
-  | NonProgCallInPipe (expr, loc::locs) -> print_fun (
-      Loc.pretty loc ^ ": Non-program call expression found in pipe: " ^ Renamed.pretty expr
+  | NonProgCallInPipe (expr, loc::locs) -> 
+    print_fun (Some loc) ("Non-program call expression found in pipe: " ^ Renamed.pretty expr
       ^ "\n" ^ pretty_call_trace locs
     )
-  | RuntimeError (msg, loc::locs) -> print_fun (
-    Loc.pretty loc ^ ": Runtime error: " ^ msg
+  | RuntimeError (msg, loc::locs) -> 
+    print_fun (Some loc) ("Runtime error: " ^ msg
     ^ "\n" ^ pretty_call_trace locs
   )
-  | ModuleNotFound (modName, triedPaths) -> print_fun (
+  | ModuleNotFound (modName, triedPaths) -> print_fun None (
       "Module not found: " ^ modName ^ "\n"
     ^ "Tried paths:"
     ^ "\n    " ^ String.concat "\n    " triedPaths
   )
-  | AwaitNonPromise (value, loc::locs) -> print_fun (
-    Loc.pretty loc ^ ": Trying to await non-promise: " ^ Value.pretty value
+  | AwaitNonPromise (value, loc::locs) -> 
+    print_fun (Some loc) ("Trying to await non-promise: " ^ Value.pretty value
     ^ "\n" ^ pretty_call_trace locs
   )
-  | NonExhaustiveMatch (value, loc::locs) -> print_fun (
-    Loc.pretty loc ^ ": Non-exhaustive pattern match does not cover value: " ^ Value.pretty value
+  | NonExhaustiveMatch (value, loc::locs) -> 
+    print_fun (Some loc) ("Non-exhaustive pattern match does not cover value: " ^ Value.pretty value
   )
   | LexError err -> begin match err with
-    | InvalidOperator (loc, name) -> print_fun (
-        Loc.pretty loc ^ ": Invalid operator: '" ^ name ^ "'"
+    | InvalidOperator (loc, name) -> 
+      print_fun (Some loc) ("Invalid operator: '" ^ name ^ "'"
       )
-    | UnterminatedString -> print_fun (
+    | UnterminatedString -> print_fun None (
         "Unterminated string"
       )
-    | InvalidChar (loc, char) -> print_fun (
-        Loc.pretty loc ^ ": Invalid char '" ^ string_of_char char ^ "'"
-      )
+    | InvalidChar (loc, char) -> print_fun (Some loc) ("Invalid char '" ^ string_of_char char ^ "'")
   end
   (* We can safely abort the program, since this can only ever happen when directly
      running a script *)
   | ArgParseError msg -> print_endline msg; exit 1
 
-  | EnsureFailed (path, loc :: locs) -> print_fun (
-    Loc.pretty loc ^ ": Required command not installed: '" ^ path ^  "'"
+  | EnsureFailed (path, loc :: locs) -> 
+    print_fun (Some loc) ("Required command not installed: '" ^ path ^  "'"
     ^ "\n" ^ pretty_call_trace locs
   )
-  | TypeError (loc, err) -> print_fun begin match err with
+  | TypeError (loc, err) -> print_fun (Some loc) begin match err with
     | UnableToUnify ((ty1, ty2), (original_ty1, original_ty2)) -> 
-      Loc.pretty loc ^ ": Unable to unify types '" ^ Renamed.pretty_type ty1 ^ "'\n"
-                     ^ "                    and '" ^ Renamed.pretty_type ty2 ^ "'\n"
+                       "Unable to unify types '" ^ Renamed.pretty_type ty1 ^ "'\n"
+                     ^ "                  and '" ^ Renamed.pretty_type ty2 ^ "'\n"
                      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
                      ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"
     | DifferentVariantConstrArgs (constructor_name, types1, types2, original_type1, original_type2) ->
-      Loc.pretty loc ^ ": Unable to unify an instance of the variant constructor '" ^ constructor_name ^ "'\n"
+                       "Unable to unify an instance of the variant constructor '" ^ constructor_name ^ "'\n"
                      ^ "                                             with " ^ string_of_int (List.length types1) ^ " fields\n"
                      ^ "    with an instance of the same constructor with " ^ string_of_int (List.length types2) ^ " fields\n"
                      ^ "    Specifically: Unable to match\n"
@@ -205,47 +230,48 @@ let handle_errors print_fun f =
                      ^ "    While trying to unify '" ^ Renamed.pretty_type original_type1 ^ "'\n"
                      ^ "                      and '" ^ Renamed.pretty_type original_type2 ^ "'"
     | MismatchedTyCon (constr_name1, constr_name2, original_ty1, original_ty2) ->
-      Loc.pretty loc ^ ": Unable to match data constructors '" ^ Name.pretty constr_name1 ^ "' and '" ^ Name.pretty constr_name2 ^ "'\n"
+                       "Unable to match data constructors '" ^ Name.pretty constr_name1 ^ "' and '" ^ Name.pretty constr_name2 ^ "'\n"
                      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
                      ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"
 
     | Impredicative ((ty1, ty2), (original_ty1, original_ty2)) ->
-      Loc.pretty loc ^ ": Impredicative instantiation attempted when matching types '" ^ Renamed.pretty_type ty1 ^ "'\n"
+        "Impredicative instantiation attempted\n"
+      ^ "    when matching types '" ^ Renamed.pretty_type ty1 ^ "'\n"
       ^ "                    and '" ^ Renamed.pretty_type ty2 ^ "'\n"
       ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
       ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'\n"
-      ^ "Unification involving ∀-types is not supported (and most likely a bug)"
+      ^ "Unification involving forall-types is not supported (and most likely a bug)"
     | OccursCheck (u, name, ty, original_ty1, original_ty2) -> 
-      Loc.pretty loc ^ ": Unable to construct the infinite type '" ^ Renamed.pretty_type (Unif (u, name)) ^ "'\n"
-                      ^ "                    ~ '" ^ Renamed.pretty_type ty ^ "'\n"
+                        "Unable to construct the infinite type '" ^ Renamed.pretty_type (Unif (u, name)) ^ "'\n"
+                      ^ "                                    ~ '" ^ Renamed.pretty_type ty ^ "'\n"
                       ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
                       ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"    
     | WrongNumberOfArgs (tys1, tys2, original_ty1, original_ty2) ->
-      Loc.pretty loc ^ ": Wrong number of arguments supplied to function.\n"
+                        "Wrong number of arguments supplied to function.\n"
                       ^ "Unable to unify argument types '" ^ String.concat ", " (List.map Renamed.pretty_type tys1) ^ "'\n"
                       ^ "                           and '" ^ String.concat ", " (List.map Renamed.pretty_type tys2) ^ "'\n"
                       ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
                       ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'\n"                             
     | NonProgCallInPipe expr ->
       (* TODO: Is this even possible? *)
-      Loc.pretty loc ^ ": Non program call expression in a pipe."
+      "Non program call expression in a pipe."
     | MissingRecordFields (remaining1, remaining2, original_ty1, original_ty2) ->
-      Loc.pretty loc ^ ": Mismatched record fields.\n"
+                       "Mismatched record fields.\n"
                      ^ "Missing mutual record fields '" ^ Renamed.pretty_type (RecordClosed (Array.of_list remaining2)) ^ "'\n"
                      ^ "                         and '" ^ Renamed.pretty_type (RecordClosed (Array.of_list remaining1)) ^ "'\n"
                      ^ "                         respectively."
     | MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2) ->
-    Loc.pretty loc ^ ": Mismatched variant constructors.\n"
+                      "Mismatched variant constructors.\n"
                     ^ "Missing mutual variant constructors '" ^ Renamed.pretty_type (VariantClosed (Array.of_list remaining2)) ^ "'\n"
                     ^ "                                and '" ^ Renamed.pretty_type (VariantClosed (Array.of_list remaining1)) ^ "'\n"
                     ^ "                                respectively."                
     | ArgCountMismatchInDefinition (fun_name, types, count) ->
-      Loc.pretty loc ^ ": The function '" ^ Name.pretty fun_name ^ "' is declared with " ^ string_of_int count ^ " parameters\n"
+                       "The function '" ^ Name.pretty fun_name ^ "' is declared with " ^ string_of_int count ^ " parameters\n"
                      ^ "    but it's type suggests that it should have " ^ string_of_int (List.length types)
     | NonFunTypeInLetRec(fun_name, ty) ->
-      Loc.pretty loc ^ ": The function definition for '" ^ Name.pretty fun_name ^ "' is declared as a function but has a non-function type."
+      "The function definition for '" ^ Name.pretty fun_name ^ "' is declared as a function but has a non-function type."
     | CannotUnwrapNonData ty ->
-      Loc.pretty loc ^ ": Trying to unwrap invalid type '" ^ Renamed.pretty_type ty ^ "'\n    Unwrapping is only possible for types defined in a data declaration"
+      "Trying to unwrap invalid type '" ^ Renamed.pretty_type ty ^ "'\n    Unwrapping is only possible for types defined in a data declaration"
   end
 let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;
@@ -273,7 +299,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
     print_endline "Welcome to Polaris! Press Ctrl+D or type \"exit(0)\" to exit.";
     let rec go env scope =
       try
-        handle_errors (fun msg -> repl_error msg; go env scope)
+        handle_errors (fun mloc msg -> repl_error mloc msg; go env scope)
           (fun _ -> 
             let prompt = "\x1b[38;5;160mλ>\x1b[0m " in
             match Bestline.bestline prompt with

@@ -1,4 +1,8 @@
-test/categories/records/missing.pls:3:2-3:19: Mismatched record fields.
+test/categories/records/missing.pls:3:2-3:19: ERROR:
+Mismatched record fields.
 Missing mutual record fields '{ y : Number }'
                          and '()'
                          respectively.
+  | 
+3 | f({ x = 5, z = 6 })
+  |  ^^^^^^^^^^^^^^^^^

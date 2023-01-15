@@ -24,9 +24,28 @@ let fail_usage : 'a. string -> 'a =
     print_endline (msg ^ "\n\n" ^ usage_message);
     exit 1
 
+let use_colors () = Unix.isatty Unix.stdout
+  
+
 let fatal_error maybe_loc (message : string) =
+  let open Errormessage in
+  let style = Style.plain
+           |> Style.with_underline '^' Red
+           |> Style.with_color Red
+           |> Style.with_bold 
+  in
+
+  (* We might need to disable colors if we are outputting to something other than a tty *)
+  let style = 
+    if use_colors () then
+      style
+    else
+      style |> Style.disable_color
+  in
+  let text_style = Errormessage.make_text_style ~enable_color:(Style.is_color_enabled style) in
+
   let prefix = match maybe_loc with
-  | Some loc -> "\x1b[1m" ^ Loc.pretty loc ^ ": \x1b[0m"
+  | Some loc -> text_style.bold (Loc.pretty loc ^ ": ")
   | None -> ""
   in
   let suffix = match maybe_loc with
@@ -35,28 +54,31 @@ let fatal_error maybe_loc (message : string) =
     (* TODO: Let's hope this actually opens the correct file in all cases *)
     let input_file = In_channel.open_text (loc.file) in
 
-    let preceeding, line, succeeding = Errormessage.extract_source_fragment loc input_file
-      (fun error_fragment -> "\x1b[1m\x1b[38;2;255;0;0m" ^ error_fragment ^ "\x1b[0m")
+    let previous_line, line, next_line = Errormessage.extract_source_fragment loc input_file style
     in
     let line_text = string_of_int loc.start_line in
     let padding = String.make (String.length line_text) ' ' in
-    let line_color = "\x1b[1m\x1b[34m" in
     
+    let line_color = Custom "\x1b[34m" in
+
     "\n"
-    ^ line_color ^ padding   ^ " | \x1b[0m" ^ preceeding ^ "\n"
-    ^ line_color ^ line_text ^ " | \x1b[0m" ^ line       ^ "\n"
-    ^ line_color ^ padding   ^ " | \x1b[0m" ^ succeeding
+    ^ text_style.bold (text_style.color line_color (padding   ^ " | ")) ^ previous_line ^ "\n"
+    ^ text_style.bold (text_style.color line_color (line_text ^ " | ")) ^ line       ^ "\n"
+    ^ text_style.bold (text_style.color line_color (padding   ^ " | ")) ^ next_line
   in
 
-  print_endline (prefix ^ "\x1b[38;2;255;0;0m\x02ERROR\x1b[0m\x02:\n" ^ message ^ suffix);
+  print_endline (prefix ^ text_style.color Red "ERROR" ^ ":\n" ^ message ^ suffix);
   exit 1
 
 let repl_error maybe_loc (message : string) =
+  let open Errormessage in
+  let text_style = make_text_style ~enable_color:(use_colors ()) in
+
   let prefix = match maybe_loc with
-  | Some loc -> "\x1b[1m" ^ Loc.pretty loc ^ ": \x1b0m"
+  | Some loc -> text_style.bold (Loc.pretty loc ^ ": ")
   | None -> ""
   in
-  print_endline (prefix ^ "\x1b[38;2;255;0;0m\x02ERROR\x1b[0m\x02:\n" ^ message);
+  print_endline (prefix ^ text_style.color Red "ERROR" ^ ":\n" ^ message);
 
 type run_options = {
   interactive   : bool;
@@ -297,11 +319,16 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
   if continue 
   then begin
     print_endline "Welcome to Polaris! Press Ctrl+D or type \"exit(0)\" to exit.";
+
+    let open Errormessage in
+    let text_style = make_text_style (use_colors ()) in
+
+    let prompt_color = Custom "\x1b[31m\x1b[38;5;160m" in
+    let prompt = text_style.color prompt_color "λ> " in
     let rec go env scope =
       try
         handle_errors (fun mloc msg -> repl_error mloc msg; go env scope)
           (fun _ -> 
-            let prompt = "\x1b[38;5;160mλ>\x1b[0m " in
             match Bestline.bestline prompt with
             | None -> 
               exit 0

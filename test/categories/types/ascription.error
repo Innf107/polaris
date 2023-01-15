@@ -1,4 +1,8 @@
-test/categories/types/ascription.pls:4:6-4:6: Unable to unify types 'String'
-                    and 'Number'
+test/categories/types/ascription.pls:4:6-4:6: ERROR:
+Unable to unify types 'String'
+                  and 'Number'
 While trying to unify 'String'
                   and 'Number'
+  | 
+4 | f("a")
+  |      

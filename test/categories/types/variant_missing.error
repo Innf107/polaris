@@ -1,4 +1,8 @@
-test/categories/types/variant_missing.pls:7:10-7:10: Mismatched variant constructors.
+test/categories/types/variant_missing.pls:7:10-7:10: ERROR:
+Mismatched variant constructors.
 Missing mutual variant constructors '<  >'
                                 and '< C() >'
                                 respectively.
+  | 
+7 | print(f(x))
+  |          

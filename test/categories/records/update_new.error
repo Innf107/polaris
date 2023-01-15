@@ -1,4 +1,8 @@
-test/categories/records/update_new.pls:4:10-4:10: Mismatched record fields.
+test/categories/records/update_new.pls:4:10-4:10: ERROR:
+Mismatched record fields.
 Missing mutual record fields '{ y : Number }'
                          and '()'
                          respectively.
+  | 
+4 | print({ r with y = 3 })
+  |          

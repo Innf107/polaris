@@ -1,4 +1,5 @@
-test/categories/types/variant_different_constructors.pls:4:32-4:32: Unable to unify an instance of the variant constructor 'A'
+test/categories/types/variant_different_constructors.pls:4:32-4:32: ERROR:
+Unable to unify an instance of the variant constructor 'A'
                                              with 1 fields
     with an instance of the same constructor with 2 fields
     Specifically: Unable to match
@@ -6,3 +7,6 @@ test/categories/types/variant_different_constructors.pls:4:32-4:32: Unable to un
                   with (Number, Bool)
     While trying to unify '< A(Number) >'
                       and '< A(Number, Bool) >'
+  | 
+4 | let y : < A(Number, Bool) > = x
+  |                                

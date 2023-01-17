@@ -38,6 +38,7 @@ end
 module NameMap = Map.Make(Name)
 
 module Template = struct
+  (* WARNIGN: If any of these diverge between  *)
   type ty =
     | Forall of name * ty
     | Fun of ty list * ty
@@ -397,6 +398,12 @@ module Template = struct
   ; description: string option
   }
 
+  (** WARNING: SHOULD YOU EVER FALL TO THE TEMPTATION OF MAKING
+      export_item DIVERGE BETWEEN Renamed AND Typed, **UPDATE typecheck_exports IN types.ml** 
+      IF YOU DON'T, HAVOC WILL ENSUE AS EXPORT ITEMS WILL BE ALIENATED FROM THEIR ORIGIN
+      AND ENSLAVED AS DIFFERENT TYPES! 
+      DARK MAGIC WILL ENGULF THEIR SOULS AND BREAK YOUR INVARIANTS.
+      SEGMENTATION FAULTS WILL ROAM THE LAND! TURN BACK WHILE YOU CAN! *)
   type export_item = ExportVal of loc * name
                    | ExportType of loc * name
 
@@ -1007,4 +1014,35 @@ module Renamed = Template (struct
   type mod_subscript_tycon_ext = void
 end) [@@ttg_pass]
 
+module Typed = Template (struct
+  type name = Name.t
+    
+  let pretty_name = Name.pretty
+
+  type import_ext = loc * module_exports * expr list
+  let import_ext_loc (loc, _, _) = loc
+
+  type mod_subscript_tycon_ext = void
+end) [@@ttg_pass]
+
 type module_exports = Renamed.module_exports
+
+let coerce_type : Renamed.ty -> Typed.ty =
+  Obj.magic
+
+let coerce_bin_op : Renamed.binop -> Typed.binop =
+  function
+  | Add -> Add
+  | Sub -> Sub
+  | Mul -> Mul
+  | Div -> Div
+  | Concat -> Concat
+  | Cons -> Cons
+  | Equals -> Equals
+  | NotEquals -> NotEquals
+  | LE -> LE
+  | GE -> GE
+  | LT -> LT
+  | GT -> GT
+  | Or -> Or
+  | And -> And

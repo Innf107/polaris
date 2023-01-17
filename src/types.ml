@@ -164,55 +164,78 @@ let skolemize : ty -> ty =
     skolemized
   
 
-let rec eval_module_env : local_env -> module_expr -> global_env =
+let rec eval_module_env : local_env -> module_expr -> global_env * Typed.module_expr =
   fun env -> function
   | ModVar (loc, var) -> 
     begin match NameMap.find_opt var env.module_var_contents with
     | None -> panic __LOC__ (Loc.pretty loc ^ ": Module variable not found in typechecker: '" ^ Name.pretty var ^ "'. This should have been caught earlier!")
-    | Some contents -> contents
+    | Some contents -> contents, ModVar (loc, var)
     end
-  | Import ((_, mod_exports, _), path) -> 
+  | Import ((loc, mod_exports, exprs), path) -> 
+    let mod_exports = todo __LOC__ in
+    let exprs = todo __LOC__ in
+
     { var_types = mod_exports.exported_variable_types;
       (* TODO: Allow modules to export other modules and include them here *)
       module_var_contents = NameMap.empty;
       data_definitions = mod_exports.exported_data_definitions;
       type_aliases = mod_exports.exported_type_aliases;
-    }
+    }, Import ((loc, mod_exports, exprs), path)
   | SubModule (loc, mod_expr, name) ->
-    let parent_env = eval_module_env env mod_expr in
+    let parent_env, mod_expr = eval_module_env env mod_expr in
     match NameMap.find_opt name parent_env.module_var_contents with
     | None -> panic __LOC__ (Loc.pretty loc ^ ": Submodule not found in typechecker: '" ^ Name.pretty name ^ "'. This should have been caught earlier!")
-    | Some contents -> contents
+    | Some contents -> contents, SubModule (loc, mod_expr, name)
 
 
-let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
+let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * Typed.pattern =
   fun env pat -> match pat with
-    | VarPat (_, x) ->
+    | VarPat (loc, varname) ->
       let var_ty = fresh_unif () in
-      var_ty, insert_var x var_ty
-    | ConsPat (_, head_pat, tail_pat) ->
+      ( var_ty
+      , insert_var varname var_ty
+      , VarPat(loc, varname)
+      )
+    | ConsPat (loc, head_pattern, tail_pattern) ->
       let elem_ty = fresh_unif () in
-      let head_trans = check_pattern env head_pat elem_ty in
-      let tail_trans = check_pattern (head_trans env) tail_pat (List elem_ty) in
-      (List elem_ty, head_trans << tail_trans)
-    | ListPat (_, patterns) ->
+      let head_trans, head_pattern = check_pattern env head_pattern elem_ty in
+      let tail_trans, tail_pattern = check_pattern (head_trans env) tail_pattern (List elem_ty) in
+      ( List elem_ty
+      , head_trans << tail_trans
+      , ConsPat(loc, head_pattern, tail_pattern)
+      )
+    | ListPat (loc, patterns) ->
       let elem_ty = fresh_unif () in
-      let trans = List.fold_left (<<) Fun.id (List.map (fun p -> check_pattern env p elem_ty) patterns) in
-      List elem_ty, trans
-    | TuplePat (_, patterns) ->
-      let pat_tys, transformers = List.split (List.map (infer_pattern env) patterns) in
-      let trans = List.fold_left (<<) Fun.id transformers in
-      Tuple (Array.of_list pat_tys), trans
-    | NumPat (_, _) ->
-      Number, Fun.id
-    | OrPat (_, left, right) ->
-      let left_ty, left_trans = infer_pattern env left in 
+      let transformers, patterns = List.split (List.map (fun p -> check_pattern env p elem_ty) patterns) in
+      ( List elem_ty
+      , Util.compose transformers
+      , ListPat (loc, patterns)
+      )
+    | TuplePat (loc, patterns) ->
+      let pattern_types, transformers, patterns = Util.split3 (List.map (infer_pattern env) patterns) in
+      ( Tuple (Array.of_list pattern_types)
+      , Util.compose transformers
+      , TuplePat(loc, patterns)
+      )
+    | NumPat (loc, number) ->
+      ( Number
+      , Fun.id
+      , NumPat(loc, number)
+      )
+    | OrPat (loc, left, right) ->
+      let left_ty, left_trans, left = infer_pattern env left in 
       (* TODO: Make sure both sides bind the same set of variables with the same types *)
-      let right_trans = check_pattern env right left_ty in
-      left_ty, left_trans << right_trans
-    | TypePat(_, pattern, ty) ->
-      let env_trans = check_pattern env pattern ty in
-      ty, env_trans
+      let right_trans, right = check_pattern env right left_ty in
+      ( left_ty
+      , left_trans << right_trans
+      , OrPat(loc, left, right)
+      )
+    | TypePat(loc, pattern, ty) ->
+      let env_trans, pattern = check_pattern env pattern ty in
+      ( ty
+      , env_trans
+      , TypePat(loc, pattern, coerce_type ty)
+      )
     | DataPat(loc, constructor_name, pattern) ->
       let type_variables, underlying_type_raw = match NameMap.find_opt constructor_name env.data_definitions with
       | Some (vars, ty) -> vars, ty
@@ -224,16 +247,22 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
 
       let underlying_type = replace_tvars (NameMap.of_seq (List.to_seq vars_with_unifs)) underlying_type_raw in
 
-      let env_trans = check_pattern env pattern underlying_type in
+      let env_trans, pattern = check_pattern env pattern underlying_type in
 
-      data_type, env_trans      
+      ( data_type
+      , env_trans
+      , DataPat(loc, constructor_name , pattern)
+      ) 
     | VariantPat(loc, constructor_name, patterns) ->
       (* See Note [Inferring Variant Patterns] *)
-      let pattern_types, env_transformers = List.split (List.map (infer_pattern env) patterns) in
+      let pattern_types, env_transformers, patterns = Util.split3 (List.map (infer_pattern env) patterns) in
 
       let extension_unif = fresh_unif_raw () in
 
-      VariantUnif([|(constructor_name, pattern_types)|], extension_unif), Util.compose env_transformers
+      ( VariantUnif([|(constructor_name, pattern_types)|], extension_unif)
+      , Util.compose env_transformers
+      , VariantPat(loc, constructor_name, patterns)
+      )
       
 (* Note [Inferring Variant Patterns]
   Inference for variant patterns is quite complicated.
@@ -281,44 +310,52 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) =
 
 
 (* The checking judgement for patterns doesn't actually do anything interesting at the moment. *)
-and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
-  fun env pat expected_ty ->
-    trace_tc (lazy ("checking pattern '" ^ pretty_pattern pat ^ "' : " ^ pretty_type expected_ty));
+and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) * Typed.pattern =
+  fun env pattern expected_ty ->
+    trace_tc (lazy ("checking pattern '" ^ pretty_pattern pattern ^ "' : " ^ pretty_type expected_ty));
 
     let defer_to_inference () =
-      let ty, trans = infer_pattern env pat in
-      subsumes env (get_pattern_loc pat) ty expected_ty;
-      trans
+      let ty, trans, pattern = infer_pattern env pattern in
+      subsumes env (Typed.get_pattern_loc pattern) ty expected_ty;
+      trans, pattern
     in
-    match pat, expected_ty with
+    match pattern, expected_ty with
     (* We need a special case for var patterns to allow polymorphic type patterns. 
-      (These would be rejected by unification)
-      This is not necessary for any of the other patterns, since these cannot check against
-      polytypes anyway *)
-    | VarPat (_, var), _ -> 
-      insert_var var expected_ty
-    | ConsPat (_, head, tail), List(elem_ty) ->
-      let head_trans = check_pattern env head elem_ty in
-      let tail_trans = check_pattern env tail (List(elem_ty)) in
-      tail_trans << head_trans
+      (These would be rejected by unification) *)
+    | VarPat (loc, var), _ -> 
+      ( insert_var var expected_ty
+      , VarPat(loc, var)
+      )
+    | ConsPat (loc, head, tail), List(elem_ty) ->
+      let head_trans, head = check_pattern env head elem_ty in
+      let tail_trans, tail = check_pattern env tail (List(elem_ty)) in
+      ( tail_trans << head_trans
+      , ConsPat(loc, head, tail)
+      )
     | ConsPat (loc, _, _), _ -> defer_to_inference ()
-    | ListPat (_, patterns), List(elem_ty) ->
-      let transformers = List.map (fun pat -> check_pattern env pat elem_ty) patterns in
-      Util.compose transformers
+    | ListPat (loc, patterns), List(elem_ty) ->
+      let transformers, patterns = List.split (List.map (fun pat -> check_pattern env pat elem_ty) patterns) in
+      ( Util.compose transformers
+      , ListPat(loc, patterns)
+      )
     | ListPat _, _ -> defer_to_inference ()
     | TuplePat (loc, patterns), Tuple arg_tys ->
       if List.compare_length_with patterns (Array.length arg_tys) <> 0 then
         todo __LOC__
       else
-        let transformers = List.map2 (check_pattern env) patterns (Array.to_list arg_tys) in
-        Util.compose transformers
+        let transformers, patterns = List.split (List.map2 (check_pattern env) patterns (Array.to_list arg_tys)) in
+        ( Util.compose transformers
+        , TuplePat(loc, patterns)
+        )
     | TuplePat _, _ -> defer_to_inference ()
-    | NumPat(_, _), Number -> Fun.id
+    | NumPat(loc, number), Number -> Fun.id, NumPat(loc, number)
     | NumPat _, _ -> defer_to_inference ()
-    | OrPat(_, left, right), _ ->
-      let left_trans = check_pattern env left expected_ty in
-      let right_trans = check_pattern env right expected_ty in
-      right_trans << left_trans
+    | OrPat(loc, left, right), _ ->
+      let left_trans, left = check_pattern env left expected_ty in
+      let right_trans, right = check_pattern env right expected_ty in
+      ( right_trans << left_trans
+      , OrPat(loc, left, right)
+      )
     | TypePat(loc, pattern, ty), _ ->
       subsumes env loc ty expected_ty;
       check_pattern env pattern ty
@@ -327,10 +364,13 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) =
       | None -> panic __LOC__ "Unbound data constructor in type checker"
       | Some (type_params, underlying_type_raw) -> 
         let underlying_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq type_params) (List.to_seq args))) underlying_type_raw in
-        check_pattern env underlying_pattern underlying_type
+        let env_trans, underlying_pattern = check_pattern env underlying_pattern underlying_type in
+        ( env_trans
+        , DataPat(loc, data_name, underlying_pattern)
+        )
       end
     | DataPat _, _ -> defer_to_inference ()
-    | VariantPat(loc, name, args), _ -> 
+    | VariantPat _, _ -> 
       defer_to_inference ()
 
 (** Split a function type into its components.
@@ -358,11 +398,14 @@ let rec split_fun_ty : local_env -> loc -> int -> ty -> (ty list * ty) =
     subsumes env loc ty (Fun(argument_types, result_type));
     (argument_types, result_type)
 
-let rec infer : local_env -> expr -> ty =
+let rec infer : local_env -> expr -> ty * Typed.expr =
   fun env expr -> match expr with
     | Var (loc, x) -> 
       begin match NameMap.find_opt x env.local_types with
-      | Some ty -> instantiate ty
+      | Some ty -> 
+        ( instantiate ty
+        , Var(loc, x)
+        )
       | None -> panic __LOC__ ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")
       end
     | DataConstructor(loc, data_name) ->
@@ -372,14 +415,21 @@ let rec infer : local_env -> expr -> ty =
           List.fold_right (fun param ty -> Forall (param, ty)) params
             (Fun([ty], TyConstructor(data_name, List.map (fun x -> TyVar(x)) params)))
         in
-        instantiate data_constructor_type
+        ( instantiate data_constructor_type
+        , DataConstructor(loc, data_name)
+        )
       | None -> panic __LOC__ ("Unbound data constructor in type checker: '" ^ Name.pretty data_name ^ "'")
     end
     | VariantConstructor(loc, constructor_name, args) ->
-      let arg_types = List.map (infer env) args in
+      (* We infer variant constructors to an open variant type.
+        The reasoning behind this is that a constructor A(..) can be used as part of
+        any set of constructors as long as that set contains A(..), so its type should be
+        < A(..) | r0 > *)
+      let arg_types, args = List.split (List.map (infer env) args) in
       let ext_field = fresh_unif_raw () in
-      (* Variant (RowUnif [constructor_name, arg_types], ext_field) *)
-      VariantUnif ([|(constructor_name, arg_types)|], ext_field)
+      ( VariantUnif ([|(constructor_name, arg_types)|], ext_field) 
+      , VariantConstructor(loc, constructor_name, args)
+      )
     | ModSubscriptDataCon (void, _, _, _) -> absurd void
     | App (loc, fun_expr, args) ->
       (* We infer the function type and then match the arguments against that.
@@ -389,128 +439,195 @@ let rec infer : local_env -> expr -> ty =
 
          It also makes it possible to add rank N types later, since polytypes can be checked for
          but not inferred. *)
-      let fun_ty = infer env fun_expr in
+      let fun_ty, fun_expr = infer env fun_expr in
       let (arg_tys, result_ty) = split_fun_ty env loc (List.length args) fun_ty in
 
-      List.iter2 (check env) arg_tys args;
+      let args = List.map2 (check env) arg_tys args in
 
-      result_ty
+      result_ty, App(loc, fun_expr, args)
     | Lambda (loc, args, body) -> 
-      let arg_tys, transformers = List.split (List.map (fun p -> infer_pattern env p) args) in
-      let env = List.fold_left (<<) Fun.id transformers env in 
-      let result_ty = infer env body in
-      Fun (arg_tys, result_ty)
-    | StringLit _ -> String
-    | NumLit _ -> Number
-    | BoolLit _ -> Bool
-    | UnitLit _ -> Ty.unit
+      let arg_tys, transformers, args = Util.split3 (List.map (fun p -> infer_pattern env p) args) in
+      let env = Util.compose transformers env in 
+      let result_ty, body = infer env body in
+      ( Fun (arg_tys, result_ty)
+      , Lambda(loc, args, body) 
+      )
+    | StringLit (loc, literal) -> String, StringLit(loc, literal)
+    | NumLit (loc, literal) -> Number, NumLit (loc, literal)
+    | BoolLit (loc, literal) -> Bool, BoolLit (loc, literal)
+    | UnitLit loc -> Ty.unit, UnitLit loc
     | NullLit _ -> panic __LOC__ "Nulls should be phased out now that we have static types" 
     | ListLit (loc, []) ->
       let elem_ty = fresh_unif () in
-      List elem_ty
+      List elem_ty, ListLit(loc, [])
     | ListLit (loc, (expr :: exprs)) ->
-      let elem_ty = infer env expr in
-      List.iter (check env elem_ty) exprs;
-      List elem_ty
-    | TupleLit (_, exprs) ->
-      Tuple (Array.map (infer env) (Array.of_list exprs))
-    | RecordLit (_, fields) ->
-      let ty_fields = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list fields) in
-      RecordClosed ty_fields
-    | Subscript (_, expr, name) -> 
+      let elem_ty, expr = infer env expr in
+      let exprs = List.map (check env elem_ty) exprs in
+      ( List elem_ty
+      , ListLit (loc, expr :: exprs)
+      )
+    | TupleLit (loc, exprs) ->
+      let elem_types, exprs = List.split (List.map (infer env) exprs) in
+      ( Tuple (Array.of_list elem_types)
+      , TupleLit (loc, exprs)
+      )
+    | RecordLit (loc, fields) ->
+      let typed_fields = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list fields) in
+      ( RecordClosed (Array.map (fun (x, (ty, _)) -> (x, ty)) typed_fields)
+      , RecordLit (loc, Array.to_list (Array.map (fun (x, (_, expr)) -> (x, expr)) typed_fields))
+      )
+    | Subscript (loc, expr, name) -> 
       let val_ty = fresh_unif () in
       let (u, u_name) = fresh_unif_raw () in
-      check env (RecordUnif ([|name, val_ty|], (u, u_name))) expr;
-      val_ty
-    | ModSubscript (_, mod_name, key_name) ->
+      let expr = check env (RecordUnif ([|name, val_ty|], (u, u_name))) expr in
+      ( val_ty
+      , Subscript (loc, expr, name)
+      )
+    | ModSubscript (loc, mod_name, key_name) ->
       begin match NameMap.find_opt mod_name env.module_var_contents with
       | None -> panic __LOC__ ("Module not found while typechecking: '" ^ Name.pretty mod_name ^ "'. This should have been caught earlier!")
       | Some mod_env -> begin match NameMap.find_opt key_name mod_env.var_types with
         | None -> panic __LOC__ ("Module does not contain variable: '" ^ Name.pretty key_name ^ "'. This should have been caught earlier!")
-        | Some ty -> instantiate ty
+        | Some ty -> 
+          ( instantiate ty
+          , ModSubscript (loc, mod_name, key_name)
+          )
         end
       end
-    | RecordUpdate (_, expr, field_updates) ->
-      let update_tys = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_updates) in
+    | RecordUpdate (loc, expr, field_updates) ->
+      let update_typed_fields = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_updates) in
       let unif_raw = fresh_unif_raw () in
-      let record_ty = RecordUnif (update_tys, unif_raw) in
-      check env record_ty expr;
-      record_ty      
-    | RecordExtension (_, expr, field_exts) ->
+
+      let record_ty = RecordUnif (Array.map (fun (x, (ty, _)) -> (x, ty)) update_typed_fields, unif_raw) in
+      let expr = check env record_ty expr in
+      ( record_ty
+      , RecordUpdate (loc, expr, Array.to_list (Array.map (fun (x, (_, expr)) -> (x, expr)) update_typed_fields))
+      )
+    | RecordExtension (loc, expr, field_exts) ->
+      (* TODO: At the moment, we infer record extensions by checking the underlying field
+         against a unification variable and then returning a unification record with the same variable
+         as its extension field. It might be more efficient to infer the underlying type properly and
+         then merging directly *)
       let field_tys = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_exts) in
       let (u, u_name) = fresh_unif_raw () in
-      check env (Unif (u, u_name)) expr;
-      RecordUnif (field_tys, (u, u_name))
+      let expr = check env (Unif (u, u_name)) expr in
+      ( RecordUnif (Array.map (fun (x, (ty, _)) -> (x, ty)) field_tys, (u, u_name))
+      , RecordExtension (loc, expr, Array.to_list (Array.map (fun (x, (_, expr)) -> (x, expr)) field_tys))
+      )
     | DynLookup _ -> todo __LOC__
-    | BinOp (_, expr1, (Add | Sub | Mul | Div), expr2) ->
-      check env Number expr1;
-      check env Number expr2;
-      Number
-    | BinOp (_, expr1, Concat, expr2) ->
+    | BinOp (loc, expr1, ((Add | Sub | Mul | Div) as op), expr2) ->
+      let expr1 = check env Number expr1 in
+      let expr2 = check env Number expr2 in
+      ( Number
+      , BinOp (loc, expr1, coerce_bin_op op, expr2)
+      )
+    | BinOp (loc, expr1, Concat, expr2) ->
       (* TODO: Generalize this to use type classes once they are implemented. 
          Ideally, concat expressions should really just desugar to a type class method *)
-      check env String expr1;
-      check env String expr2;
-      String
-    | BinOp (_, expr1, Cons, expr2) ->
-      let ty1 = infer env expr1 in
-      check env (List ty1) expr2;
-      List ty1
-    | BinOp (_, expr1, (Equals | NotEquals), expr2) ->
-      let ty1 = infer env expr1 in
-      check env ty1 expr2;
-      Bool
-    | BinOp (_, expr1, (LE | GE | LT | GT), expr2) ->
-      check env Number expr1;
-      check env Number expr2;
-      Bool
-    | BinOp (_, expr1, (Or | And), expr2) ->
-      check env Bool expr1;
-      check env Bool expr2;
-      Bool
-    | Not (_, expr) ->
-      check env Bool expr;
-      Bool
-    | Range (_, first, last) ->
-      check env Number first;
-      check env Number last;
-      List Number
-    | ListComp (_, result, clauses) ->
-      let env = check_list_comp env clauses in
-      let ty = infer env result in
-      List ty
-    | If (_, cond, th, el) ->
-      check env Bool cond;
-      let res_ty = infer env th in
+      let expr1 = check env String expr1 in
+      let expr2 = check env String expr2 in
+      ( String
+      , BinOp (loc, expr1, Concat, expr2)
+      )
+    | BinOp (loc, expr1, Cons, expr2) ->
+      let ty1, expr1 = infer env expr1 in
+      let expr2 = check env (List ty1) expr2 in
+      ( List ty1
+      , BinOp (loc, expr1, Cons, expr2)
+      )
+    | BinOp (loc, expr1, ((Equals | NotEquals) as op), expr2) ->
+      let ty1, expr1 = infer env expr1 in
+      let expr2 = check env ty1 expr2 in
+      ( Bool
+      , BinOp (loc, expr1, coerce_bin_op op, expr2)
+      )
+    | BinOp (loc, expr1, ((LE | GE | LT | GT) as op), expr2) ->
+      let expr1 = check env Number expr1 in
+      let expr2 = check env Number expr2 in
+      ( Bool
+      , BinOp (loc, expr1, coerce_bin_op op, expr2)
+      )
+    | BinOp (loc, expr1, ((Or | And) as op), expr2) ->
+      let expr1 = check env Bool expr1 in
+      let expr2 = check env Bool expr2 in
+      ( Bool
+      , BinOp (loc, expr1, coerce_bin_op op, expr2)
+      )
+    | Not (loc, expr) ->
+      let expr = check env Bool expr in
+      ( Bool
+      , Not (loc, expr)
+      )
+    | Range (loc, first, last) ->
+      let first = check env Number first in
+      let last = check env Number last in
+      ( List Number
+      , Range (loc, first, last)
+      )
+    | ListComp (loc, result, clauses) ->
+      let env, clauses = check_list_comp env clauses in
+      let ty, result = infer env result in
+      ( List ty 
+      , ListComp (loc, result, clauses)
+      )
+    | If (loc, cond, then_branch, else_branch) ->
+      let cond = check env Bool cond in
+      let res_ty, then_branch = infer env then_branch in
       (* TODO: With subtyping (even subsumption), this might not be correct *)
-      check env res_ty el;
-      res_ty
-    | Seq (_, exprs) -> infer_seq env exprs
+      let else_branch = check env res_ty else_branch in
+      ( res_ty
+      , If (loc, cond, then_branch, else_branch)
+      )
+    | Seq (loc, exprs) -> 
+      let ty, exprs = infer_seq env exprs in
+      ( ty
+      , Seq (loc, exprs)
+      )
     | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
-    | Let (_, p, e1, e2) ->
-      let ty, env_trans = infer_pattern env p in
+    | Let (loc, pattern, body, rest) ->
+      let ty, env_trans, pattern = infer_pattern env pattern in
       (* Lets are non-recursive, so we use the *unaltered* environment *)
-      check env ty e1;
-      infer (env_trans env) e2  
+      let body = check env ty body in
+      let result_type, rest = infer (env_trans env) rest in
+      ( result_type
+      , Let (loc, pattern, body, rest)
+      )
     | LetRec (loc, mty, fun_name, pats, body, rest) ->
       (* We defer to `check_seq_expr` here, since the core logic is exactly the same *)
-      let env_trans = check_seq_expr env (LetRecSeq(loc, mty, fun_name, pats, body)) in
-      infer (env_trans env) rest
-    | LetEnv (_, envvar, e1, e2) ->
-      check env String e1;
-      infer env e2
+      let env_trans, typed_seq_expr = check_seq_expr env (LetRecSeq(loc, mty, fun_name, pats, body)) in
+      let (loc, mty, fun_name, pats, body) = match typed_seq_expr with
+      | LetRecSeq(loc, mty, fun_name, pats, body) -> loc, mty, fun_name, pats, body
+      | _ -> panic __LOC__ (Loc.pretty loc ^ ": check_seq_expr returned non-LetRecSeq expression when passed one")
+      in 
+      
+      let result_type, rest = infer (env_trans env) rest in
+      ( result_type
+      , LetRec (loc, mty, fun_name, pats, body, rest)
+      )
+    | LetEnv (loc, envvar, body, rest) ->
+      let body = check env String body in
+      let result_ty, rest = infer env rest in
+      ( result_ty
+      , LetEnv(loc, envvar, body, rest) 
+      )
     | Assign (loc, var, expr) ->
       let var_ty = match NameMap.find_opt var env.local_types with
         | Some ty -> ty
         | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound variable in typechecker (assignment): '" ^ Name.pretty var ^ "'")
       in
-      check env var_ty expr;
-      Ty.unit
+      let expr = check env var_ty expr in
+      ( Ty.unit
+      , Assign (loc, var, expr)
+      )
     | ProgCall (loc, prog, args) ->
       (* TODO: We really need some kind of toString typeclass here *)
-      List.iter (check env String) args;
-      String
+      let args = List.map (check env String) args in
+      ( String
+      , ProgCall (loc, prog, args)
+      )
     | Pipe (loc, exprs) -> 
+      todo __LOC__
+      (*
       let rec check_progcalls = function
       | [] -> ()
       | (ProgCall _) as expr :: exprs ->
@@ -527,40 +644,56 @@ let rec infer : local_env -> expr -> ty =
         check_progcalls exprs
       end;
       String
-    | EnvVar _ -> String
-    | Async (_, expr) ->
-      let expr_ty = infer env expr in
-      Promise expr_ty
-    | Await (_, expr) ->
+      *)
+    | EnvVar (loc, name) -> 
+      ( String
+      , EnvVar (loc, name)
+      )
+    | Async (loc, expr) ->
+      let expr_ty, expr = infer env expr in
+      ( Promise expr_ty
+      , Async (loc, expr)
+      )
+    | Await (loc, expr) ->
       let expr_ty = fresh_unif () in
-      check env (Promise expr_ty) expr;
-      expr_ty
-    | Match (_, scrut, body) ->
+      let expr = check env (Promise expr_ty) expr in
+      ( expr_ty
+      , Await (loc, expr)
+      )
+    | Match (loc, scrut, body) ->
       (* TODO: Do exhaustiveness checking. *)
-      let scrut_ty = infer env scrut in
+      let scrut_ty, scrut = infer env scrut in
       let result_ty = fresh_unif () in
-      body |> List.iter begin fun (pat, expr) -> 
-        let env_trans = check_pattern env pat scrut_ty in
-        check (env_trans env) result_ty expr  
-      end;
-      result_ty 
-    | Ascription (_, expr, ty) ->
-      check env ty expr;
-      ty
+      let body = body |> List.map begin fun (pat, expr) -> 
+        let env_trans, pattern = check_pattern env pat scrut_ty in
+        let expr = check (env_trans env) result_ty expr in
+        (pattern, expr)
+      end in
+      ( result_ty
+      , Match (loc, scrut, body)
+      )
+    | Ascription (loc, expr, ty) ->
+      let expr = check env ty expr in
+      ( ty
+      , Ascription (loc, expr, coerce_type ty)
+      )
     | Unwrap (loc, expr) ->
-      let ty = infer env expr in
+      let ty, expr = infer env expr in
       let result_ty = fresh_unif () in
       unwrap_constraint env loc ty result_ty;
-      result_ty
+      ( result_ty
+      , Unwrap (loc, expr)
+      )
 
 
-and check : local_env -> ty -> expr -> unit =
+and check : local_env -> ty -> expr -> Typed.expr =
   fun env expected_ty expr ->
     let expected_ty = skolemize expected_ty in
 
     let defer_to_inference () =
-      let ty = infer env expr in
-      subsumes env (get_loc expr) ty expected_ty
+      let ty, expr = infer env expr in
+      subsumes env (Typed.get_loc expr) ty expected_ty;
+      expr
     in
     match expr, expected_ty with
     | Var _, _ -> defer_to_inference ()
@@ -572,15 +705,19 @@ and check : local_env -> ty -> expr -> unit =
     | App _, _ -> defer_to_inference ()
     | Lambda(loc, param_patterns, body), expected_ty ->
       let (param_tys, result_ty) = split_fun_ty env loc (List.length param_patterns) expected_ty in
-      let env_transformer = Util.compose (List.map2 (check_pattern env) param_patterns param_tys) in
-      check (env_transformer env) result_ty body
-    | StringLit _, String -> ()
-    | NumLit _, Number -> ()
-    | UnitLit _, RecordClosed [||] -> ()
+      let transformers, param_patterns = List.split (List.map2 (check_pattern env) param_patterns param_tys) in
+      let env_transformer = Util.compose transformers in
+      let body = check (env_transformer env) result_ty body in
+      Lambda (loc, param_patterns, body)
+    | StringLit (loc, literal), String -> StringLit (loc, literal) 
+    | NumLit (loc, literal), Number -> NumLit (loc, literal) 
+    | UnitLit loc, RecordClosed [||] -> UnitLit loc
     | ListLit (loc, elems), List(elem_ty) ->
-      List.iter (check env elem_ty) elems
+      let elems = List.map (check env elem_ty) elems in
+      ListLit (loc, elems)
     | TupleLit (loc, elems), Tuple(elem_tys) ->
-      List.iter2 (check env) (Array.to_list elem_tys) elems
+      let elems = List.map2 (check env) (Array.to_list elem_tys) elems in
+      TupleLit (loc, elems)
       (* Record literals would be hard to check directly since the fields are order independent,
          so we just defer to inference and let the unifier deal with this. *)
     | RecordLit _, _ -> defer_to_inference ()
@@ -594,107 +731,132 @@ and check : local_env -> ty -> expr -> unit =
     | Subscript(loc, expr, field), expected_ty -> 
       let ext_field = fresh_unif_raw () in
       let record_ty = RecordUnif ([|field, expected_ty|], ext_field) in
-      check env record_ty expr;
+      let expr = check env record_ty expr in
+      Subscript (loc, expr, field)
     | ModSubscript _, _ -> defer_to_inference ()
     (* TODO: I'm not sure if we can do this more intelligently / efficiently in check mode *)
     | RecordUpdate _, _ -> defer_to_inference ()
     (* TODO: This can probably be done more efficiently *)
     | RecordExtension _, _ -> defer_to_inference ()
     | DynLookup _, _ -> todo __LOC__
-    | BinOp (_, expr1, Cons, expr2), List(elem_ty) ->
-      check env elem_ty expr1;
-      check env (List elem_ty) expr2;
+    | BinOp (loc, expr1, Cons, expr2), List(elem_ty) ->
+      let expr1 = check env elem_ty expr1 in
+      let expr2 = check env (List elem_ty) expr2 in
+      BinOp (loc, expr1, Cons, expr2)
     | BinOp _, _ -> defer_to_inference ()
-    | Not (_, expr), Bool ->
-      check env Bool expr;
+    | Not (loc, expr), Bool ->
+      let expr = check env Bool expr in
+      Not (loc, expr)
     | Not _, _ -> defer_to_inference ()
-    | Range (_, first, last), List(Number) ->
-      check env Number first;
-      check env Number last;
+    | Range (loc, first, last), List(Number) ->
+      let first = check env Number first in
+      let last = check env Number last in
+      Range (loc, first, last)
     | Range _, _ -> defer_to_inference ()
-    | ListComp (_, result, clauses), (List elem_ty) ->
-      let env = check_list_comp env clauses in
-      check env elem_ty result;
+    | ListComp (loc, result, clauses), (List elem_ty) ->
+      let env, clauses = check_list_comp env clauses in
+      let result = check env elem_ty result in
+      ListComp (loc, result, clauses)
     | ListComp _, _ -> defer_to_inference ()
-    | If (_, cond, then_branch, else_branch), expected_ty ->
-      check env Bool cond;
-      check env expected_ty then_branch;
-      check env expected_ty else_branch;
+    | If (loc, cond, then_branch, else_branch), expected_ty ->
+      let cond = check env Bool cond in
+      let then_branch = check env expected_ty then_branch in
+      let else_branch = check env expected_ty else_branch in
+      If (loc, cond, then_branch, else_branch)
     | Seq (loc, exprs), expected_ty ->
-      check_seq env loc expected_ty exprs 
+      let exprs = check_seq env loc expected_ty exprs in
+      Seq (loc, exprs)
     | (LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _), _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
-    | Let (_, p, e1, e2), expected_ty ->
-      let ty, env_trans = infer_pattern env p in
+    | Let (loc, pattern, body, rest), expected_ty ->
+      let ty, env_trans, pattern = infer_pattern env pattern in
       (* Lets are non-recursive, so we use the *unaltered* environment *)
-      check env ty e1;
-      check (env_trans env) expected_ty e2  
+      let body = check env ty body in
+      let rest = check (env_trans env) expected_ty rest in
+      Let (loc, pattern, body, rest)
     | LetRec (loc, mty, fun_name, pats, body, rest), expected_ty ->
       (* We defer to `check_seq_expr` here, since the core logic is exactly the same *)
-      let env_trans = check_seq_expr env (LetRecSeq(loc, mty, fun_name, pats, body)) in
-      check (env_trans env) expected_ty rest
-    | LetEnv (_, envvar, e1, e2), expected_ty ->
-      check env String e1;
-      check env expected_ty e2
+      let env_trans, expr = check_seq_expr env (LetRecSeq(loc, mty, fun_name, pats, body)) in
+      let loc, mty, fun_name, pats, body = match expr with
+      | LetRecSeq (loc, mty, fun_name, pats, body) -> loc, mty, fun_name, pats, body
+      | _ -> panic __LOC__ (Loc.pretty loc ^ ": check_seq_expr returned non-LetRec expression when passed one")
+      in
+      
+      let rest = check (env_trans env) expected_ty rest in
+      LetRec (loc, mty, fun_name, pats, body, rest)
+    | LetEnv (loc, envvar, e1, e2), expected_ty ->
+      let e1 = check env String e1 in
+      let e2 = check env expected_ty e2 in
+      LetEnv(loc, envvar, e1, e2)
     | Assign (loc, var, expr), expected_ty ->
       let var_ty = match NameMap.find_opt var env.local_types with
         | Some ty -> ty
         | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound variable in typechecker (assignment): '" ^ Name.pretty var ^ "'")
       in
-      check env var_ty expr;
-      subsumes env loc expected_ty Ty.unit
+      let expr = check env var_ty expr in
+      subsumes env loc expected_ty Ty.unit;
+      Assign(loc, var, expr)
     | ProgCall _, _ -> defer_to_inference ()
     | Pipe _, _ -> defer_to_inference ()
     | EnvVar _, _ -> defer_to_inference ()
-    | Async (_, expr), Promise(elem_ty) ->
-      check env elem_ty expr
+    | Async (loc, expr), Promise(elem_ty) ->
+      let expr = check env elem_ty expr in
+      Async (loc, expr)
     | Async _, _ -> defer_to_inference ()
-    | Await (_, expr), expected_ty ->
-      check env (Promise expected_ty) expr;
-    | Match (_, scrut, body), expected_ty ->
+    | Await (loc, expr), expected_ty ->
+      let expr = check env (Promise expected_ty) expr in
+      Await (loc, expr)
+    | Match (loc, scrut, body), expected_ty ->
       (* TODO: Do exhaustiveness checking. *)
-      let scrut_ty = infer env scrut in
-      body |> List.iter begin fun (pat, expr) -> 
-        let env_trans = check_pattern env pat scrut_ty in
-        check (env_trans env) expected_ty expr  
-      end
+      let scrut_ty, scrut = infer env scrut in
+      let body = body |> List.map begin fun (pat, expr) -> 
+        let env_trans, pat = check_pattern env pat scrut_ty in
+        pat, check (env_trans env) expected_ty expr  
+      end in
+      Match(loc, scrut, body)
     | Ascription (loc, expr, ty), expected_ty ->
-      check env ty expr;
-      subsumes env loc ty expected_ty  
+      let expr = check env ty expr in
+      subsumes env loc ty expected_ty;
+      Ascription(loc, expr, coerce_type ty)
     | Unwrap (loc, expr), expected_ty ->
-      let ty = infer env expr in
-      unwrap_constraint env loc ty expected_ty
+      let ty, expr = infer env expr in
+      unwrap_constraint env loc ty expected_ty;
+      Unwrap(loc, expr)
     | NullLit _, _ -> Util.todo __LOC__
   
-and check_list_comp : local_env -> list_comp_clause list -> local_env =
+and check_list_comp : local_env -> list_comp_clause list -> local_env * Typed.list_comp_clause list =
     fun env -> function
-    | [] -> env
+    | [] -> env, []
     | (FilterClause expr :: clauses) ->
-      check env Bool expr;
-      check_list_comp env clauses
-    | (DrawClause(pat, expr) :: clauses) ->
-      let ty, env_trans = infer_pattern env pat in
+      let expr = check env Bool expr in
+      let env, clauses = check_list_comp env clauses in
+      env, FilterClause expr :: clauses
+    | (DrawClause(pattern, expr) :: clauses) ->
+      let ty, env_trans, pattern = infer_pattern env pattern in
       (* We use the *unaltered* environment, since
          draw clauses are non-recursive *)
-      check env (List ty) expr;
-      check_list_comp (env_trans env) clauses
+      let expr = check env (List ty) expr in
+      let env, clauses = check_list_comp (env_trans env) clauses in
+      env, DrawClause(pattern, expr) :: clauses
 
-and check_seq_expr : local_env -> expr -> (local_env -> local_env) =
+and check_seq_expr : local_env -> expr -> (local_env -> local_env) * Typed.expr =
     fun env expr -> match expr with
     | LetSeq (loc, pat, e) ->
-      let ty, env_trans = infer_pattern env pat in
-      check env ty e;
-      env_trans
-    | LetRecSeq(loc, mty, fun_name, pats, body) ->
-      let arg_tys, transformers, result_ty, ty_skolemizer = 
+      let ty, env_trans, pat = infer_pattern env pat in
+      let e = check env ty e in
+      env_trans, LetSeq(loc, pat, e)
+    | LetRecSeq(loc, mty, fun_name, patterns, body) ->
+      let arg_tys, transformers, patterns, result_ty, ty_skolemizer = 
         match Option.map skolemize_with_function mty with
         | None -> 
-          let arg_tys, transformres = List.split (List.map (infer_pattern env) pats) in
-          arg_tys, transformres, fresh_unif (), Fun.id
+          let arg_tys, transformers, patterns = Util.split3 (List.map (infer_pattern env) patterns) in
+          arg_tys, transformers, patterns, fresh_unif (), Fun.id
         | Some (Fun(arg_tys, result_ty), ty_skolemizer) ->
-          if (List.compare_lengths arg_tys pats != 0) then
-            raise (TypeError (loc, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length pats)))
-          else
-            arg_tys, List.map2 (check_pattern env) pats arg_tys, result_ty, ty_skolemizer
+          if (List.compare_lengths arg_tys patterns != 0) then
+            raise (TypeError (loc, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length patterns)))
+          else begin
+            let transformers, patterns = List.split (List.map2 (check_pattern env) patterns arg_tys) in
+            arg_tys, transformers, patterns, result_ty, ty_skolemizer
+          end
         | Some (ty, _) -> raise (TypeError (loc, NonFunTypeInLetRec(fun_name, ty)))
       in
 
@@ -723,15 +885,17 @@ and check_seq_expr : local_env -> expr -> (local_env -> local_env) =
       let body, () = skolemizer_traversal#traverse_expr () body in
       (* Without a type annotation, we have to check the body against a unification variable instead of inferring,
           since we need to know the functions type in its own (possibly recursive) definition*)
-      check inner_env result_ty body;
-      env_trans
+      let body = check inner_env result_ty body in
+      ( env_trans, 
+        LetRecSeq (loc, Option.map coerce_type mty, fun_name, patterns, body)
+      )
     | LetEnvSeq(loc, envvar, expr) ->
       (* TODO: Once typeclasses are implemented, the expr should really just have to implement
          some kind of 'ToString' typeclass. For now we require the expr to be an exact string though *)
-      check env String expr;
-      Fun.id
+      let expr = check env String expr in
+      Fun.id, LetEnvSeq(loc, envvar, expr)
     | LetModuleSeq(loc, name, mod_expr) ->
-      let module_env = eval_module_env env mod_expr in
+      let module_env, mod_expr = eval_module_env env mod_expr in
       (* Variables should *not* be merged with the current environment,
          since we still want modules to be qualified (at least by default) 
          
@@ -739,58 +903,65 @@ and check_seq_expr : local_env -> expr -> (local_env -> local_env) =
          so we *need to merge these* with the current environment. 
          (This is fine since data constructor names are always unique, even across modules)
       *)
-      fun env -> 
+      (fun env -> 
         { env with 
             module_var_contents = NameMap.add name module_env env.module_var_contents;
             data_definitions = NameMap.union (fun _ _ x -> Some x) env.data_definitions module_env.data_definitions;
-        }
+        }), LetModuleSeq(loc, name, mod_expr)
     | LetDataSeq(loc, data_name, params, ty) ->
-      insert_data_definition data_name params ty
+      insert_data_definition data_name params ty, LetDataSeq(loc, data_name, params, coerce_type ty)
     | LetTypeSeq(loc, alias_name, params, ty) ->
-      insert_type_alias alias_name params ty
+      insert_type_alias alias_name params ty, LetTypeSeq(loc, alias_name, params, coerce_type ty)
     | ProgCall (loc, prog, args) ->
-      List.iter (check env String) args;
-      Fun.id
+      let exprs = List.map (check env String) args in
+      Fun.id, ProgCall (loc, prog, exprs)
     | Pipe _ as expr ->
       (* We defer to `infer` here. We don't care about the result type, since
          a) We know it is `String`
          b) In this context, pipes don't actually return anything, but print to stdout *)
-      let _ = infer env expr in
-      Fun.id
+      let _, expr = infer env expr in
+      Fun.id, expr
     | expr ->
-      check env Ty.unit expr;
-      Fun.id
+      let expr = check env Ty.unit expr in
+      Fun.id, expr
 
-and infer_seq : local_env -> expr list -> ty =
+and infer_seq : local_env -> expr list -> ty * Typed.expr list =
   fun env exprs -> match exprs with
-    | [] -> Ty.unit
+    | [] -> Ty.unit, []
     | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ as expr] ->
       (* If the last expression in an expression block is a
          LetSeq* expresion, we don't need to carry the environment transformations,
          but we do have to make sure to check the expression with `check_seq_expr`, 
          so it is not passed to `infer`
         *)
-      let _ : _ = check_seq_expr env expr in
-      Ty.unit
-    | [ expr ] -> infer env expr
+      let _, expr = check_seq_expr env expr in
+      Ty.unit, [ expr ];
+    | [ expr ] -> 
+      let ty, expr = infer env expr in
+      ty, [ expr ]
     | expr :: exprs -> 
-      let env_trans = check_seq_expr env expr in
-      infer_seq (env_trans env) exprs
-and check_seq : local_env -> loc -> ty -> expr list -> unit =
+      let env_trans, expr = check_seq_expr env expr in
+      let env, exprs = infer_seq (env_trans env) exprs in
+      env, expr :: exprs
+and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
   fun env loc expected_ty exprs -> match exprs with
-  | [] -> subsumes env loc expected_ty Ty.unit
+  | [] -> 
+    subsumes env loc expected_ty Ty.unit;
+    []
   | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ as expr] ->
     (* If the last expression in an expression block is a
        LetSeq* expresion, we don't need to carry the environment transformations,
        but we do have to make sure to check the expression with `check_seq_expr`, 
        so it is not passed to `check`
       *)
-    let _ : _ = check_seq_expr env expr in
-    ()
-  | [ expr ] -> check env expected_ty expr
+    let _, expr = check_seq_expr env expr in
+    [expr]
+  | [ expr ] -> 
+    [ check env expected_ty expr ]
   | expr :: exprs ->
-    let env_trans = check_seq_expr env expr in
-    check_seq (env_trans env) loc expected_ty exprs
+    let env_trans, expr  = check_seq_expr env expr in
+    let exprs = check_seq (env_trans env) loc expected_ty exprs in
+    expr :: exprs
 
 let rec occurs subst u = Ty.collect monoid_or begin function
       | Unif (u2, _) -> 
@@ -1127,7 +1298,7 @@ let generalize : ty -> ty =
     trace_tc (lazy ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty'));
     ty'
     
-let typecheck_top_level : global_env -> expr -> global_env =
+let typecheck_top_level : global_env -> expr -> global_env * Typed.expr =
   fun global_env expr ->
     let local_env = 
       { local_types = global_env.var_types;
@@ -1137,7 +1308,7 @@ let typecheck_top_level : global_env -> expr -> global_env =
         type_aliases = global_env.type_aliases;
       } in
     
-    let local_env_trans = check_seq_expr local_env expr in
+    let local_env_trans, expr = check_seq_expr local_env expr in
     
     (* This is *extremely hacky* right now.
         We temporarily construct a fake local environment to figure out the top-level local type bindings.
@@ -1172,7 +1343,10 @@ let typecheck_top_level : global_env -> expr -> global_env =
             (global_env.type_aliases)
             temp_local_env.type_aliases
       } in
-    global_env
+    global_env, expr
+
+let typecheck_exports : Renamed.export_item list -> Typed.export_item list = 
+  Obj.magic
 
 let typecheck_header header env =
   let insert_global_var var ty env =
@@ -1180,18 +1354,32 @@ let typecheck_header header env =
   in
 
   let add_var_content env flag_def =
-
-    match flag_def.args with
+    let env, args = match flag_def.args with
     | Varargs name ->
-      insert_global_var name (List(String)) env
+      ( insert_global_var name (List(String)) env
+      , Typed.Varargs name
+      )
     | Switch name ->
-      insert_global_var name Bool env
+      ( insert_global_var name Bool env
+      , Switch name
+      )
     | Named names ->
-      List.fold_left (fun env name -> insert_global_var name String env) env names
+      ( List.fold_left (fun env name -> insert_global_var name String env) env names
+      , Named names 
+      )
     | NamedDefault names_and_values ->
-      List.fold_left (fun env (name, _) -> insert_global_var name String env) env names_and_values
+      ( List.fold_left (fun env (name, _) -> insert_global_var name String env) env names_and_values
+      , NamedDefault names_and_values
+      )
+    in
+    env, Typed.{ args; description=flag_def.description; flags=flag_def.flags }
   in
-  List.fold_left add_var_content env header.options
+  let env, options = List.fold_left_map add_var_content env header.options in
+  env, Typed.{ options; 
+          usage = header.usage; 
+          description = header.description; 
+          exports = typecheck_exports header.exports 
+        }
 
 let typecheck header exprs = 
   let prim_types = 
@@ -1206,6 +1394,8 @@ let typecheck header exprs =
     type_aliases = NameMap.empty;
   } in
 
-  let global_env = typecheck_header header global_env in
+  let global_env, header = typecheck_header header global_env in
 
-  List.fold_left (fun env e -> typecheck_top_level env e) global_env exprs 
+  let global_env, exprs = List.fold_left_map (fun env e -> typecheck_top_level env e) global_env exprs in
+  (global_env, header, exprs)
+

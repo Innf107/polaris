@@ -22,7 +22,7 @@ let polaris_home = Sys.getenv "HOME" ^ "/.polaris"
 let rec parse_rename_typecheck : driver_options 
                               -> Lexing.lexbuf
                               -> RenameScope.t
-                              -> Renamed.header * Renamed.expr list * RenameScope.t * Types.global_env
+                              -> Typed.header * Typed.expr list * RenameScope.t * Types.global_env
 = fun options lexbuf scope ->
   trace_driver (lazy ("Lexing with filename '" ^ options.filename));
   Lexing.set_filename lexbuf options.filename;
@@ -79,9 +79,9 @@ let rec parse_rename_typecheck : driver_options
   else ();
 
   trace_driver (lazy "Typechecking...");
-  let type_env, ttyped_yped_header, exprs = Types.typecheck renamed_header renamed in
+  let type_env, typed_header, typed_exprs = Types.typecheck renamed_header renamed in
 
-  renamed_header, renamed, new_scope, type_env
+  typed_header, typed_exprs, new_scope, type_env
 
 
 let run_env (options : driver_options) (lexbuf : Lexing.lexbuf) (env : eval_env) (scope : RenameScope.t) : value * eval_env * RenameScope.t = 

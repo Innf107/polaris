@@ -1,4 +1,4 @@
-    open Polaris
+open Polaris
 open Polaris.Syntax
 open Polaris.Eval  (* Required for exceptions *)
 open Polaris.Lexer (* Required for exceptions *)
@@ -168,7 +168,7 @@ let handle_errors text_style print_fun f =
   | InvalidNumberOfArguments (params, vals, loc::locs) -> 
     print_fun (Some loc) ("Invalid number of arguments in function call.\n"
                      ^ "Expected " ^ Int.to_string (List.length params) ^ " arguments, but received " ^ Int.to_string (List.length vals) ^ ".\n"
-                     ^ "    Expected: (" ^ String.concat ", " (List.map Renamed.pretty_pattern params) ^ ")\n"
+                     ^ "    Expected: (" ^ String.concat ", " (List.map Typed.pretty_pattern params) ^ ")\n"
                      ^ "      Actual: (" ^ String.concat ", " (List.map Value.pretty vals) ^ ")"
                      ^ "\n" ^ pretty_call_trace locs
       )
@@ -201,7 +201,7 @@ let handle_errors text_style print_fun f =
                      ^ "\n" ^ pretty_call_trace locs
     )
   | NonProgCallInPipe (expr, loc::locs) -> 
-    print_fun (Some loc) ("Non-program call expression found in pipe: " ^ Renamed.pretty expr
+    print_fun (Some loc) ("Non-program call expression found in pipe: " ^ Typed.pretty expr
       ^ "\n" ^ pretty_call_trace locs
     )
   | RuntimeError (msg, loc::locs) -> 

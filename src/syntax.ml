@@ -1003,17 +1003,6 @@ module Parsed = Template (struct
   type mod_subscript_tycon_ext = unit
 end) [@@ttg_pass]
 
-module Renamed = Template (struct
-  type name = Name.t
-  
-  let pretty_name = Name.pretty
-
-  type import_ext = loc * module_exports * expr list
-  let import_ext_loc (loc, _, _) = loc
-
-  type mod_subscript_tycon_ext = void
-end) [@@ttg_pass]
-
 module Typed = Template (struct
   type name = Name.t
     
@@ -1025,7 +1014,20 @@ module Typed = Template (struct
   type mod_subscript_tycon_ext = void
 end) [@@ttg_pass]
 
-type module_exports = Renamed.module_exports
+type module_exports = Typed.module_exports
+
+(* Typed and Renamed need to be defined in reverse order since
+   Renamed depends on Typed.module_exports *)
+module Renamed = Template (struct
+  type name = Name.t
+  
+  let pretty_name = Name.pretty
+
+  type import_ext = loc * Typed.module_exports * Typed.expr list
+  let import_ext_loc (loc, _, _) = loc
+
+  type mod_subscript_tycon_ext = void
+end) [@@ttg_pass]
 
 let coerce_type : Renamed.ty -> Typed.ty =
   Obj.magic

@@ -1,5 +1,5 @@
 open Syntax
-open Syntax.Renamed
+open Syntax.Typed
 open Util
 
 module VarMap = Map.Make (Name)
@@ -30,7 +30,7 @@ and value =
   (* The closure environment has to be lazy to
      support recursive lets, since the definition of a recursive function has
      to be stored in its own closure, which also stores its on environment, etc.*)
-  | ClosureV of eval_env lazy_t * Renamed.pattern list * Renamed.expr
+  | ClosureV of eval_env lazy_t * Typed.pattern list * Typed.expr
   (* PrimOps should be mostly indistinguishable from regular closures.
      The only exception is pretty printing, where primops are printed as
      "<primative: name>" instead of <closure(args)>
@@ -71,7 +71,7 @@ module EvalError = struct
   exception InvalidMapKey of value * value RecordVImpl.t * loc list
   exception InvalidListKey of value * value list * loc list
   exception MapDoesNotContain of value RecordVImpl.t * string * loc list
-  exception InvalidNumberOfArguments of Renamed.pattern list * value list * loc list
+  exception InvalidNumberOfArguments of Typed.pattern list * value list * loc list
   exception IndexOutOfRange of value list * int * loc list
   (* TODO: Once exceptions are implemented, prim op argument errors should
     just be polaris exceptions. 
@@ -90,7 +90,7 @@ module EvalError = struct
   exception InvalidProcessArg of value * loc list
   exception InvalidEnvVarValue of string * value * loc list
 
-  exception NonProgCallInPipe of Renamed.expr * loc list
+  exception NonProgCallInPipe of Typed.expr * loc list
 
   exception RuntimeError of string * loc list
 
@@ -116,7 +116,7 @@ module Value = struct
       then string_of_int (int_of_float n)
       else string_of_float n
     | ClosureV (_, params, _) ->
-        "<closure(" ^ String.concat ", " (List.map Syntax.Renamed.pretty_pattern params) ^ ")>"
+        "<closure(" ^ String.concat ", " (List.map Syntax.Typed.pretty_pattern params) ^ ")>"
     | PrimOpV name ->
         "<primative: " ^ name ^ ">"
     | NullV -> "null"
@@ -223,7 +223,7 @@ let trim_output = function
   | _ -> str
 
 
-let rec match_pat_opt (pat : Renamed.pattern) (scrut : value) : (eval_env -> eval_env) option =
+let rec match_pat_opt (pat : Typed.pattern) (scrut : value) : (eval_env -> eval_env) option =
   let (let*) = Option.bind in
   match pat, scrut with
   (* Type patterns are ignored at runtime. These have already been
@@ -296,8 +296,8 @@ let rec eval_mod_expr env = function
   | Some runtime_module -> runtime_module
   end
 
-and eval_expr (env : eval_env) (expr : Renamed.expr) : value =
-  let open Renamed in
+and eval_expr (env : eval_env) (expr : Typed.expr) : value =
+  let open Typed in
   match expr with
   | Var (loc, x) ->
       if x.index = Name.primop_index
@@ -638,7 +638,7 @@ and eval_app env loc fun_v arg_vals =
 
 
 (* This takes a continuation argument in order to stay mutually tail recursive with eval_expr *)
-and eval_seq_cont : 'r. eval_env -> Renamed.expr list -> (eval_env -> (Renamed.expr, value) either -> 'r) -> 'r =
+and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr, value) either -> 'r) -> 'r =
   fun env exprs cont ->
   match exprs with
   | [] -> cont env (Right unitV)
@@ -690,7 +690,7 @@ and eval_seq_cont : 'r. eval_env -> Renamed.expr list -> (eval_env -> (Renamed.e
       let _ = eval_expr env e in
       eval_seq_cont env exprs cont
 
-and eval_seq (env : eval_env) (exprs : Renamed.expr list) : value = 
+and eval_seq (env : eval_env) (exprs : Typed.expr list) : value = 
   eval_seq_cont env exprs 
     (fun env expr_or_val -> 
       match expr_or_val with
@@ -699,7 +699,7 @@ and eval_seq (env : eval_env) (exprs : Renamed.expr list) : value =
       )
 
 
-and eval_seq_state (env : eval_env) (exprs : Renamed.expr list) : value * eval_env = 
+and eval_seq_state (env : eval_env) (exprs : Typed.expr list) : value * eval_env = 
   eval_seq_cont env exprs 
     (fun env expr_or_val -> 
       match expr_or_val with 
@@ -707,7 +707,7 @@ and eval_seq_state (env : eval_env) (exprs : Renamed.expr list) : value * eval_e
       | Right value -> (value, env))
 
 and eval_list_comp env loc result_expr = function
-  | Renamed.FilterClause expr :: comps -> 
+  | Typed.FilterClause expr :: comps -> 
     begin match eval_expr env expr with
     | BoolV false -> []
     | BoolV true -> eval_list_comp env loc result_expr comps
@@ -913,7 +913,7 @@ and progs_of_exprs env = function
     let arg_strings = List.concat_map (fun arg -> Value.as_args fail (eval_expr env arg)) args in
     (progName, arg_strings) :: progs_of_exprs env exprs
   | expr :: exprs -> 
-    raise (EvalError.NonProgCallInPipe (expr, Renamed.get_loc expr :: env.call_trace))
+    raise (EvalError.NonProgCallInPipe (expr, Typed.get_loc expr :: env.call_trace))
   | [] -> []
 
 and empty_eval_env (argv: string list): eval_env = {
@@ -925,9 +925,9 @@ and empty_eval_env (argv: string list): eval_env = {
   module_vars = VarMap.empty
 }
 
-let eval (argv : string list) (exprs : Renamed.expr list) : value = eval_seq (empty_eval_env argv) exprs
+let eval (argv : string list) (exprs : Typed.expr list) : value = eval_seq (empty_eval_env argv) exprs
 
-let flag_info_of_flag_def (env : eval_env) (flag_def : Renamed.flag_def): Argparse.flag_info * eval_env =
+let flag_info_of_flag_def (env : eval_env) (flag_def : Typed.flag_def): Argparse.flag_info * eval_env =
   let aliases = flag_def.flags in
   let description = Option.value ~default:"" flag_def.description in
   match flag_def.args with
@@ -976,7 +976,7 @@ let flag_info_of_flag_def (env : eval_env) (flag_def : Renamed.flag_def): Argpar
     }, env
     
 
-let eval_header (env : eval_env) (header : Renamed.header) : eval_env =
+let eval_header (env : eval_env) (header : Typed.header) : eval_env =
   let description = Option.value ~default:"" header.description in
   let usage = Option.value ~default: "[OPTIONS]" header.usage in
 

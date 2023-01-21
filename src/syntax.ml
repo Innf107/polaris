@@ -37,19 +37,23 @@ end
 
 module NameMap = Map.Make(Name)
 
-module Template = struct
-  (* WARNIGN: If any of these diverge between  *)
+(* Types only diverge between parsed and everything else, so we use a separate functor for these
+   to avoid unnecessary coercions *)
+module MakeTy(Ext : sig 
+    type name
+    type mod_subscript_tycon_ext
+  end) = struct
   type ty =
-    | Forall of name * ty
+    | Forall of Ext.name * ty
     | Fun of ty list * ty
-    | TyVar of name
-    | TyConstructor of name * ty list
+    | TyVar of Ext.name
+    | TyConstructor of Ext.name * ty list
     (* Type aliases are kept around as long as possible to improve error messages, but we need to differentiate
        between these and real type constructors *)
-    | TypeAlias of name * ty list
+    | TypeAlias of Ext.name * ty list
     (* The 'name' is just kept around for error messages but *completely ignored* when typechecking *)
-    | Unif of Unique.t * name
-    | Skol of Unique.t * name
+    | Unif of Unique.t * Ext.name
+    | Skol of Unique.t * Ext.name
     | Number
     | Bool
     | String
@@ -57,17 +61,21 @@ module Template = struct
     | List of ty
     | Promise of ty
     | RecordClosed of (string * ty) array
-    | RecordUnif of (string * ty) array * (Unique.t * name)
-    | RecordSkol of (string * ty) array * (Unique.t * name)
-    | RecordVar of (string * ty) array * name
+    | RecordUnif of (string * ty) array * (Unique.t * Ext.name)
+    | RecordSkol of (string * ty) array * (Unique.t * Ext.name)
+    | RecordVar of (string * ty) array * Ext.name
     | VariantClosed of (string * ty list) array
-    | VariantUnif of (string * ty list) array * (Unique.t * name)
-    | VariantSkol of (string * ty list) array * (Unique.t * name)
-    | VariantVar of (string * ty list) array * name
+    | VariantUnif of (string * ty list) array * (Unique.t * Ext.name)
+    | VariantSkol of (string * ty list) array * (Unique.t * Ext.name)
+    | VariantVar of (string * ty list) array * Ext.name
     (* We keep subscript type constructors before renaming, but just replace them
        by their (unique!) type constructor in the original module afterwards,
        where mod_subscript_tycon_ext is instantiated to void *)
-    | ModSubscriptTyCon of mod_subscript_tycon_ext * name * name * ty list
+    | ModSubscriptTyCon of Ext.mod_subscript_tycon_ext * Ext.name * Ext.name * ty list
+end
+
+module Template = struct
+  include TypeDefinition
 
   let (-->) xs y = Fun (xs, y)
 
@@ -992,7 +1000,19 @@ module Template = struct
 end [@@ttg_template]
 
 
+module ParsedTypeDefinition = MakeTy(struct
+  type name = string
+  type mod_subscript_tycon_ext = unit
+end)
+
+module FullTypeDefinition = MakeTy(struct
+  type name = Name.t
+  type mod_subscript_tycon_ext = void
+end)
+
 module Parsed = Template (struct
+  module TypeDefinition = ParsedTypeDefinition
+
   type name = string
 
   let pretty_name x = x
@@ -1003,7 +1023,10 @@ module Parsed = Template (struct
   type mod_subscript_tycon_ext = unit
 end) [@@ttg_pass]
 
+
 module Typed = Template (struct
+  module TypeDefinition = FullTypeDefinition
+
   type name = Name.t
     
   let pretty_name = Name.pretty
@@ -1019,6 +1042,8 @@ type module_exports = Typed.module_exports
 (* Typed and Renamed need to be defined in reverse order since
    Renamed depends on Typed.module_exports *)
 module Renamed = Template (struct
+  module TypeDefinition = FullTypeDefinition
+
   type name = Name.t
   
   let pretty_name = Name.pretty
@@ -1029,8 +1054,6 @@ module Renamed = Template (struct
   type mod_subscript_tycon_ext = void
 end) [@@ttg_pass]
 
-let coerce_type : Renamed.ty -> Typed.ty =
-  Obj.magic
 
 let coerce_bin_op : Renamed.binop -> Typed.binop =
   function

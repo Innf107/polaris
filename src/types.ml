@@ -33,10 +33,10 @@ type ty_constraint = Unify of loc * ty * ty
                    | Unwrap of loc * ty * ty
 
 type global_env = {
-  var_types : ty NameMap.t;
+  var_types : Typed.ty NameMap.t;
   module_var_contents : global_env NameMap.t;
-  data_definitions : (name list * ty) NameMap.t;
-  type_aliases : (name list * ty) NameMap.t;
+  data_definitions : (name list * Typed.ty) NameMap.t;
+  type_aliases : (name list * Typed.ty) NameMap.t;
 }
 
 type local_env = {
@@ -172,9 +172,6 @@ let rec eval_module_env : local_env -> module_expr -> global_env * Typed.module_
     | Some contents -> contents, ModVar (loc, var)
     end
   | Import ((loc, mod_exports, exprs), path) -> 
-    let mod_exports = todo __LOC__ in
-    let exprs = todo __LOC__ in
-
     { var_types = mod_exports.exported_variable_types;
       (* TODO: Allow modules to export other modules and include them here *)
       module_var_contents = NameMap.empty;
@@ -234,7 +231,7 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * 
       let env_trans, pattern = check_pattern env pattern ty in
       ( ty
       , env_trans
-      , TypePat(loc, pattern, coerce_type ty)
+      , TypePat(loc, pattern, ty)
       )
     | DataPat(loc, constructor_name, pattern) ->
       let type_variables, underlying_type_raw = match NameMap.find_opt constructor_name env.data_definitions with
@@ -626,25 +623,27 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       , ProgCall (loc, prog, args)
       )
     | Pipe (loc, exprs) -> 
-      todo __LOC__
-      (*
       let rec check_progcalls = function
-      | [] -> ()
+      | [] -> []
       | (ProgCall _) as expr :: exprs ->
-        let _ = infer env expr in
-        check_progcalls exprs
+        let _, expr = infer env expr in
+        let exprs = check_progcalls exprs in
+        (expr :: exprs)
       | (expr :: _) -> raise (TypeError (loc, NonProgCallInPipe expr))
       in
-      begin match exprs with
+      let expr = match exprs with
       | []-> panic __LOC__ "Empty pipe expression"
-      | ((ProgCall _) :: _) -> check_progcalls exprs
+      | ((ProgCall _) :: _) -> 
+        let exprs = check_progcalls exprs in
+        Typed.Pipe(loc, exprs)
       | (expr :: exprs) ->
         (* TODO: Use a toString typeclass *)
-        check env String expr;
-        check_progcalls exprs
-      end;
-      String
-      *)
+        let expr = check env String expr in
+        let exprs = check_progcalls exprs in
+        Pipe (loc, expr :: exprs)
+      in
+      String, expr
+      
     | EnvVar (loc, name) -> 
       ( String
       , EnvVar (loc, name)
@@ -675,7 +674,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
     | Ascription (loc, expr, ty) ->
       let expr = check env ty expr in
       ( ty
-      , Ascription (loc, expr, coerce_type ty)
+      , Ascription (loc, expr, ty)
       )
     | Unwrap (loc, expr) ->
       let ty, expr = infer env expr in
@@ -816,7 +815,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
     | Ascription (loc, expr, ty), expected_ty ->
       let expr = check env ty expr in
       subsumes env loc ty expected_ty;
-      Ascription(loc, expr, coerce_type ty)
+      Ascription(loc, expr, ty)
     | Unwrap (loc, expr), expected_ty ->
       let ty, expr = infer env expr in
       unwrap_constraint env loc ty expected_ty;
@@ -887,7 +886,7 @@ and check_seq_expr : local_env -> expr -> (local_env -> local_env) * Typed.expr 
           since we need to know the functions type in its own (possibly recursive) definition*)
       let body = check inner_env result_ty body in
       ( env_trans, 
-        LetRecSeq (loc, Option.map coerce_type mty, fun_name, patterns, body)
+        LetRecSeq (loc, mty, fun_name, patterns, body)
       )
     | LetEnvSeq(loc, envvar, expr) ->
       (* TODO: Once typeclasses are implemented, the expr should really just have to implement
@@ -909,9 +908,9 @@ and check_seq_expr : local_env -> expr -> (local_env -> local_env) * Typed.expr 
             data_definitions = NameMap.union (fun _ _ x -> Some x) env.data_definitions module_env.data_definitions;
         }), LetModuleSeq(loc, name, mod_expr)
     | LetDataSeq(loc, data_name, params, ty) ->
-      insert_data_definition data_name params ty, LetDataSeq(loc, data_name, params, coerce_type ty)
+      insert_data_definition data_name params ty, LetDataSeq(loc, data_name, params, ty)
     | LetTypeSeq(loc, alias_name, params, ty) ->
-      insert_type_alias alias_name params ty, LetTypeSeq(loc, alias_name, params, coerce_type ty)
+      insert_type_alias alias_name params ty, LetTypeSeq(loc, alias_name, params, ty)
     | ProgCall (loc, prog, args) ->
       let exprs = List.map (check env String) args in
       Fun.id, ProgCall (loc, prog, exprs)

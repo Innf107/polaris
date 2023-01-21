@@ -20,7 +20,7 @@ let build_export_map header exprs rename_scope global_env =
   | Typed.ExportVal (_, name) ->
     let name_entry = (Name.original_name name, name) in
     let ty_entry = match NameMap.find_opt name Types.(global_env.var_types) with
-      | Some ty -> (name, coerce_type ty)
+      | Some ty -> (name, ty)
       | None -> Util.panic __LOC__ ("Exported variable without inferred global type: " ^ Name.pretty name)
     in
     Some (name_entry, ty_entry)
@@ -32,7 +32,7 @@ let build_export_map header exprs rename_scope global_env =
     | None -> None
     | Some (params, underlying) ->
       let tycon_entry = (name.name, (name, List.length params, DataConSort)) in
-      let data_con_entry = (name, (params, coerce_type underlying)) in
+      let data_con_entry = (name, (params, underlying)) in
       Some (tycon_entry, data_con_entry)
     end
   | _ -> None
@@ -43,7 +43,7 @@ let build_export_map header exprs rename_scope global_env =
     | None -> None
     | Some (params, underlying) ->
       let tycon_entry = (name.name, (name, List.length params, TypeAliasSort)) in
-      let data_con_entry = (name, (params, coerce_type underlying)) in
+      let data_con_entry = (name, (params, underlying)) in
       Some (tycon_entry, data_con_entry)
     end
   | _ -> None

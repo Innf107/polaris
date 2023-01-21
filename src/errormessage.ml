@@ -16,15 +16,32 @@ let make_coloring ~enable_color color message =
 type text_style = {
     color : color -> string -> string;
     bold : string -> string;
+
+    identifier : string -> string;
+    number : int -> string;
+    ty : string -> string;
+    ty_secondary : string -> string;
   }
    
 let make_text_style ~enable_color =
   if enable_color then {
     color = make_coloring ~enable_color;
-    bold = fun message -> "\x1b[1m" ^ message ^ "\x1b[0m"
+    bold = (fun message -> "\x1b[1m" ^ message ^ "\x1b[0m");
+    
+    identifier = (fun message -> "\x1b[1m" ^ message ^ "\x1b[0m");
+    number = (fun number -> "\x1b[1m\x1b[93m" ^ string_of_int number ^ "\x1b[0m");
+
+    ty = (fun message -> "\x1b[1m\x1b[96m" ^ message ^ "\x1b[0m");
+    ty_secondary = (fun message -> "\x1b[1m\x1b[94m" ^ message ^ "\x1b[0m");
   } else {
     color = make_coloring ~enable_color;
-    bold = Fun.id
+    bold = Fun.id;
+
+    identifier = (fun message -> "'" ^ message ^ "'");
+    number = string_of_int;
+
+    ty = (fun message -> "'" ^ message ^ "'");
+    ty_secondary = (fun message -> "'" ^ message ^ "'");
   }
    
 

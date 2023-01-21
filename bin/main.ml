@@ -94,9 +94,10 @@ let pretty_call_trace (locs : loc list) =
   | _ -> "Call trace:"
        ^ "\n    " ^ String.concat "\n    " (List.map Loc.pretty locs)
 
-let handle_errors print_fun f = 
+let handle_errors text_style print_fun f = 
   let open Rename.RenameError in 
   let open Eval.EvalError in
+  let open Errormessage in
   try 
     f ()
   with 
@@ -105,28 +106,28 @@ let handle_errors print_fun f =
   | ParseError (loc, msg) -> print_fun (Some loc) ("Parse Error: " ^ msg)
   | SpecificParseError (MismatchedLetName(loc, name1, name2)) ->
     print_fun (Some loc) ("Function declared with different names.\n"
-            ^ "    The type signature calls it:       '" ^ name1 ^ "'\n"
-            ^ "    but its definition refers to it as '" ^ name2 ^ "'")
+            ^ "    The type signature calls it:       " ^ text_style.identifier name1 ^ "\n"
+            ^ "    but its definition refers to it as " ^ text_style.identifier name2 ^ "")
   | Sys_error msg -> print_fun None ("System error: " ^ msg)
   (* RenameError *)
-  | VarNotFound (x, loc) -> print_fun (Some loc) ("Variable not found: '" ^ x ^ "'")
-  | ModuleVarNotFound (x, loc) -> print_fun (Some loc) ("Module not found: '" ^ x ^ "'")
-  | TyVarNotFound (x, loc) -> print_fun (Some loc) ("Type variable or constructor not found: '" ^ x ^ "'")
-  | TyConNotFound (x, loc) -> print_fun (Some loc) ("Type constructor not found: '" ^ x ^ "'")
+  | VarNotFound (x, loc) -> print_fun (Some loc) ("Variable not found: " ^ text_style.identifier x)
+  | ModuleVarNotFound (x, loc) -> print_fun (Some loc) ("Module not found: " ^ text_style.identifier x)
+  | TyVarNotFound (x, loc) -> print_fun (Some loc) ("Type variable or constructor not found: " ^ text_style.ty x)
+  | TyConNotFound (x, loc) -> print_fun (Some loc) ("Type constructor not found: " ^ text_style.ty x)
   | SubscriptVarNotFound (x, loc) -> 
-    print_fun (Some loc) ("Variable or module not found: '" ^ x ^ "'")
+    print_fun (Some loc) ("Variable or module not found: " ^ text_style.identifier x)
   | LetSeqInNonSeq (expr, loc) -> print_fun (Some loc)
       ( "Let expression without 'in' found outside a sequence expression.\n"
       ^ "    Expression: " ^ Parsed.pretty expr)
       
   | SubModuleNotFound (name, loc) ->
-    print_fun (Some loc) ("Module does not contain a submodule named '" ^ name ^ "'")
+    print_fun (Some loc) ("Module does not contain a submodule named " ^ text_style.identifier name)
   | HigherRankType (_ty, loc) ->
     print_fun (Some loc) ("Illegal inner forall in type.\n    Polaris does not support higher rank polymorphism")
   | WrongNumberOfTyConArgs(name, expected_arg_count, args, loc) ->
-    print_fun (Some loc) ("Invalid number of arguments supplied to type constructor '" ^ Name.pretty name ^ "'.\n"
-    ^ "    The type constructor takes " ^ string_of_int expected_arg_count ^ " arguments\n"
-    ^ "                 but was given " ^ (string_of_int (List.length args)))
+    print_fun (Some loc) ("Invalid number of arguments supplied to type constructor " ^ text_style.ty (Name.pretty name) ^ ".\n"
+    ^ "    The type constructor takes " ^ text_style.number expected_arg_count ^ " arguments\n"
+    ^ "                 but was given " ^ text_style.number (List.length args))
     (* EvalError *)
   | DynamicVarNotFound (x, loc::locs) ->
       print_fun (Some loc) ("Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
@@ -208,7 +209,7 @@ let handle_errors print_fun f =
     ^ "\n" ^ pretty_call_trace locs
   )
   | ModuleNotFound (modName, triedPaths) -> print_fun None (
-      "Module not found: " ^ modName ^ "\n"
+      "Module not found: " ^ text_style.identifier modName ^ "\n"
     ^ "Tried paths:"
     ^ "\n    " ^ String.concat "\n    " triedPaths
   )
@@ -221,79 +222,78 @@ let handle_errors print_fun f =
   )
   | LexError err -> begin match err with
     | InvalidOperator (loc, name) -> 
-      print_fun (Some loc) ("Invalid operator: '" ^ name ^ "'"
-      )
+      print_fun (Some loc) ("Invalid operator: " ^ text_style.identifier name)
     | UnterminatedString -> print_fun None (
         "Unterminated string"
       )
-    | InvalidChar (loc, char) -> print_fun (Some loc) ("Invalid char '" ^ string_of_char char ^ "'")
+    | InvalidChar (loc, char) -> print_fun (Some loc) ("Invalid char " ^ text_style.identifier (string_of_char char))
   end
   (* We can safely abort the program, since this can only ever happen when directly
      running a script *)
   | ArgParseError msg -> print_endline msg; exit 1
 
   | EnsureFailed (path, loc :: locs) -> 
-    print_fun (Some loc) ("Required command not installed: '" ^ path ^  "'"
+    print_fun (Some loc) ("Required command not installed: " ^ text_style.identifier path
     ^ "\n" ^ pretty_call_trace locs
   )
   | TypeError (loc, err) -> print_fun (Some loc) begin match err with
     | UnableToUnify ((ty1, ty2), (original_ty1, original_ty2)) -> 
-                       "Unable to unify types '" ^ Renamed.pretty_type ty1 ^ "'\n"
-                     ^ "                  and '" ^ Renamed.pretty_type ty2 ^ "'\n"
-                     ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
-                     ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"
+                       "Unable to unify types " ^ text_style.ty (Renamed.pretty_type ty1) ^ "\n"
+                     ^ "                  and " ^ text_style.ty (Renamed.pretty_type ty2) ^ "\n"
+                     ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
+                     ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2)
     | DifferentVariantConstrArgs (constructor_name, types1, types2, original_type1, original_type2) ->
-                       "Unable to unify an instance of the variant constructor '" ^ constructor_name ^ "'\n"
-                     ^ "                                             with " ^ string_of_int (List.length types1) ^ " fields\n"
-                     ^ "    with an instance of the same constructor with " ^ string_of_int (List.length types2) ^ " fields\n"
+                       "Unable to unify an instance of the variant constructor " ^ text_style.identifier constructor_name ^ "\n"
+                     ^ "                                             with " ^ text_style.number (List.length types1) ^ " fields\n"
+                     ^ "    with an instance of the same constructor with " ^ text_style.number (List.length types2) ^ " fields\n"
                      ^ "    Specifically: Unable to match\n"
-                     ^ "        argument types (" ^ String.concat ", " (List.map Renamed.pretty_type types1) ^ ")\n"
-                     ^ "                  with (" ^ String.concat ", " (List.map Renamed.pretty_type types2) ^ ")\n"
-                     ^ "    While trying to unify '" ^ Renamed.pretty_type original_type1 ^ "'\n"
-                     ^ "                      and '" ^ Renamed.pretty_type original_type2 ^ "'"
+                     ^ "        argument types (" ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) types1) ^ ")\n"
+                     ^ "                  with (" ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) types2) ^ ")\n"
+                     ^ "    While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_type1) ^ "\n"
+                     ^ "                      and " ^ text_style.ty_secondary (Renamed.pretty_type original_type2)
     | MismatchedTyCon (constr_name1, constr_name2, original_ty1, original_ty2) ->
-                       "Unable to match data constructors '" ^ Name.pretty constr_name1 ^ "' and '" ^ Name.pretty constr_name2 ^ "'\n"
-                     ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
-                     ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"
+                       "Unable to match data constructors " ^ text_style.ty (Name.pretty constr_name1) ^ " and " ^ text_style.ty (Name.pretty constr_name2) ^ "\n"
+                     ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
+                     ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2)
 
     | Impredicative ((ty1, ty2), (original_ty1, original_ty2)) ->
         "Impredicative instantiation attempted\n"
-      ^ "    when matching types '" ^ Renamed.pretty_type ty1 ^ "'\n"
-      ^ "                    and '" ^ Renamed.pretty_type ty2 ^ "'\n"
-      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
-      ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'\n"
+      ^ "    when matching types " ^ text_style.ty (Renamed.pretty_type ty1) ^ "\n"
+      ^ "                    and " ^ text_style.ty (Renamed.pretty_type ty2) ^ "\n"
+      ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
+      ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2) ^ "\n"
       ^ "Unification involving forall-types is not supported (and most likely a bug)"
     | OccursCheck (u, name, ty, original_ty1, original_ty2) -> 
-                        "Unable to construct the infinite type '" ^ Renamed.pretty_type (Unif (u, name)) ^ "'\n"
-                      ^ "                                    ~ '" ^ Renamed.pretty_type ty ^ "'\n"
-                      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
-                      ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'"    
+                        "Unable to construct the infinite type " ^ text_style.ty (Renamed.pretty_type (Unif (u, name))) ^ "\n"
+                      ^ "                                    ~ " ^ text_style.ty (Renamed.pretty_type ty) ^ "\n"
+                     ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
+                     ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2)
     | WrongNumberOfArgs (tys1, tys2, original_ty1, original_ty2) ->
                         "Wrong number of arguments supplied to function.\n"
-                      ^ "Unable to unify argument types '" ^ String.concat ", " (List.map Renamed.pretty_type tys1) ^ "'\n"
-                      ^ "                           and '" ^ String.concat ", " (List.map Renamed.pretty_type tys2) ^ "'\n"
-                      ^ "While trying to unify '" ^ Renamed.pretty_type original_ty1 ^ "'\n"
-                      ^ "                  and '" ^ Renamed.pretty_type original_ty2 ^ "'\n"                             
+                      ^ "Unable to unify argument types " ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) tys1) ^ "\n"
+                      ^ "                           and " ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) tys2) ^ "\n"
+                      ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
+                      ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2)
     | NonProgCallInPipe expr ->
       (* TODO: Is this even possible? *)
       "Non program call expression in a pipe."
     | MissingRecordFields (remaining1, remaining2, original_ty1, original_ty2) ->
                        "Mismatched record fields.\n"
-                     ^ "Missing mutual record fields '" ^ Renamed.pretty_type (RecordClosed (Array.of_list remaining2)) ^ "'\n"
-                     ^ "                         and '" ^ Renamed.pretty_type (RecordClosed (Array.of_list remaining1)) ^ "'\n"
+                     ^ "Missing mutual record fields " ^ text_style.ty (Renamed.pretty_type (RecordClosed (Array.of_list remaining2))) ^ "\n"
+                     ^ "                         and " ^ text_style.ty (Renamed.pretty_type (RecordClosed (Array.of_list remaining1))) ^ "\n"
                      ^ "                         respectively."
     | MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2) ->
                       "Mismatched variant constructors.\n"
-                    ^ "Missing mutual variant constructors '" ^ Renamed.pretty_type (VariantClosed (Array.of_list remaining2)) ^ "'\n"
-                    ^ "                                and '" ^ Renamed.pretty_type (VariantClosed (Array.of_list remaining1)) ^ "'\n"
+                    ^ "Missing mutual variant constructors " ^ text_style.ty (Renamed.pretty_type (VariantClosed (Array.of_list remaining2))) ^ "\n"
+                    ^ "                                and " ^ text_style.ty (Renamed.pretty_type (VariantClosed (Array.of_list remaining1))) ^ "\n"
                     ^ "                                respectively."                
     | ArgCountMismatchInDefinition (fun_name, types, count) ->
-                       "The function '" ^ Name.pretty fun_name ^ "' is declared with " ^ string_of_int count ^ " parameters\n"
-                     ^ "    but it's type suggests that it should have " ^ string_of_int (List.length types)
+                       "The function " ^ text_style.identifier (Name.pretty fun_name) ^ " is declared with " ^ text_style.number count ^ " parameters\n"
+                     ^ "    but it's type suggests that it should have " ^ text_style.number (List.length types)
     | NonFunTypeInLetRec(fun_name, ty) ->
-      "The function definition for '" ^ Name.pretty fun_name ^ "' is declared as a function but has a non-function type."
+      "The function definition for " ^ text_style.identifier (Name.pretty fun_name) ^ " is declared as a function but has a non-function type."
     | CannotUnwrapNonData ty ->
-      "Trying to unwrap invalid type '" ^ Renamed.pretty_type ty ^ "'\n    Unwrapping is only possible for types defined in a data declaration"
+      "Trying to unwrap invalid type " ^ text_style.ty (Renamed.pretty_type ty) ^ "\n    Unwrapping is only possible for types defined in a data declaration"
   end
 let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run_options) : unit =
   Sys.catch_break true;
@@ -321,13 +321,13 @@ let run_repl_with (scope : Rename.RenameScope.t) (env : eval_env) (options : run
     print_endline "Welcome to Polaris! Press Ctrl+D or type \"exit(0)\" to exit.";
 
     let open Errormessage in
-    let text_style = make_text_style (use_colors ()) in
+    let text_style = make_text_style ~enable_color:(use_colors ()) in
 
     let prompt_color = Custom "\x1b[31m\x1b[38;5;160m" in
     let prompt = text_style.color prompt_color "λ> " in
     let rec go env scope =
       try
-        handle_errors (fun mloc msg -> repl_error mloc msg; go env scope)
+        handle_errors text_style (fun mloc msg -> repl_error mloc msg; go env scope)
           (fun _ -> 
             match Bestline.bestline prompt with
             | None -> 
@@ -354,6 +354,8 @@ let run_file (options : run_options) (filepath : string) (args : string list) =
     fail_usage "The flags '-c' and '--eval' are invalid when executing a file"
   ;
 
+  let text_style = Errormessage.make_text_style ~enable_color:(use_colors ()) in
+
   let driver_options = {
     filename = filepath
   ; argv = filepath :: args
@@ -361,7 +363,7 @@ let run_file (options : run_options) (filepath : string) (args : string list) =
   ; print_renamed = options.print_renamed
   ; print_tokens = options.print_tokens
   } in
-  handle_errors fatal_error (fun _ -> 
+  handle_errors text_style fatal_error (fun _ -> 
     let _, env, scope = 
       Driver.run_env 
         driver_options 

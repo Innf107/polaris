@@ -5,9 +5,14 @@ val make_coloring : enable_color:bool -> color -> string -> string
 
 
 type text_style = {
-   color : color -> string -> string;
-   bold : string -> string;
-}
+    color : color -> string -> string;
+    bold : string -> string;
+
+    identifier : string -> string;
+    number : int -> string;
+    ty : string -> string;
+    ty_secondary : string -> string;
+  }
 
 val make_text_style : enable_color:bool -> text_style
 

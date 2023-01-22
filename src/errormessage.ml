@@ -107,7 +107,7 @@ let extract_source_fragment loc in_channel (style : Style.t) =
   let line_at_error, line_after = 
     if loc.end_line > loc.start_line then
       (* The error continues on the next line so we highlight the entirity of this one *)
-      ( String.sub line (loc.start_col - 1) (String.length line - loc.start_col)
+      ( String.sub line (loc.start_col - 1) (String.length line - (loc.start_col - 1))
       , ""
       )
     else

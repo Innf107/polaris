@@ -71,12 +71,11 @@ let next_char (lexbuf : lexbuf) : char option =
     Some char
 
 let set_state indentation_state state lexbuf =
-  state.lex_kind <- indentation_state;
-  match indentation_state with
-  | InDecimal _ -> ()
-  | _ ->
-    lexbuf.lex_start_p <- lexbuf.lex_curr_p;
-    lexbuf.lex_start_pos <- lexbuf.lex_curr_pos
+  state.lex_kind <- indentation_state
+
+let skip_location lexbuf =
+  lexbuf.lex_start_p <- lexbuf.lex_curr_p;
+  lexbuf.lex_start_pos <- lexbuf.lex_curr_pos
 
 let get_loc (lexbuf : lexbuf) : Syntax.loc =
   Loc.from_pos (lexbuf.lex_curr_p) (lexbuf.lex_curr_p)
@@ -217,230 +216,237 @@ let op_token lexbuf = let open Parser in function
 | str -> raise (LexError (InvalidOperator (get_loc lexbuf, str)))
 
 
-let rec token (state : lex_state) (lexbuf : lexbuf): Parser.token =
-  let continue () = token state lexbuf in
-  match state.lex_kind with
-  | Default -> 
-    begin match next_char lexbuf with
-    | Some('#') ->
-      set_state LeadingHash state lexbuf;
-      continue ()
-    | Some('\n') ->
-      set_state LeadingWhitespace state lexbuf;
-      continue ()
-    | Some(' ') ->
-      continue ()
-    | Some('"') ->
-      set_state (InString "") state lexbuf;
-      continue ()
-    | Some('\'') ->
-      set_state (InSingleString "") state lexbuf;
-      continue ()
-    | Some('`') ->
-      BACKTICK
-    | Some('!') ->
-      set_state InBangStart state lexbuf;
-      continue ()
-    | Some('$') ->
-      set_state (InEnv "") state lexbuf;
-      continue ()
-    | Some('-') ->
-      set_state LeadingMinus state lexbuf;
-      continue ()
-    | Some(c) when is_digit c ->
-      set_state (InNumber (string_of_char c)) state lexbuf;
-      continue ()
-    | Some(c) when is_constructor_start c ->
-      set_state (InConstructor (string_of_char c)) state lexbuf;
-      continue ()  
-    | Some(c) when is_ident_start c ->
-      set_state (InIdent (string_of_char c)) state lexbuf;
-      continue ()
-    | Some(c) when is_op_start c ->
-      set_state (InOp (string_of_char c)) state lexbuf;
-      continue ()
-    | Some(c) when is_paren c ->
-      as_paren state c
-    | None -> Parser.EOF
-    | Some(c) -> raise (LexError (InvalidChar (get_loc lexbuf, c)))
-    end
-    (* TODO: Is this still necessary now that there is no '#{' token anymore? *)
-  | LeadingHash ->
-    begin match next_char lexbuf with
-    | Some('\n') ->
-      set_state (LeadingWhitespace) state lexbuf;
-      continue ()
-    | None ->
-      Parser.EOF
-    | _ ->
-      set_state (Comment) state lexbuf;
-      continue ()
-    end
-  | LeadingMinus ->
-    begin match peek_char lexbuf with
-    | Some(c) when is_op c ->
-      set_state (InOp ("-")) state lexbuf;
-      continue ()
-    | Some(c) when is_digit c ->
-      set_state (InNumber ("-")) state lexbuf;
-      continue ()
-    | Some(c) ->
-      set_state (Default) state lexbuf;
-      MINUS
-    | None ->
-      set_state (Default) state lexbuf;
-      MINUS
-    end
-  | Comment -> begin match next_char lexbuf with
-    | Some('\n') ->
-      set_state (LeadingWhitespace) state lexbuf;
-      continue ()
-    | Some(_) -> 
-      continue ()
-    | None ->
-      Parser.EOF
-    end
-    | InIdent(ident) -> begin match peek_char lexbuf with
-    | Some(c) when is_ident c ->
-      let _ = next_char lexbuf in
-      set_state (InIdent(ident ^ string_of_char c)) state lexbuf;
-      continue ()
-    | Some(_) ->
-      set_state (Default) state lexbuf;
-      ident_token ident
-    | None -> 
-      set_state (Default) state lexbuf;
-      ident_token ident
-    end
-  | InConstructor(ident) -> begin match peek_char lexbuf with
-    | Some(c) when is_ident c ->
-      let _ = next_char lexbuf in
-      set_state (InConstructor(ident ^ string_of_char c)) state lexbuf;
-      continue ()
-    | Some(_) ->
-      set_state Default state lexbuf;
-      CONSTRUCTOR ident
-    | None -> 
-      set_state Default state lexbuf;
-      CONSTRUCTOR ident
-    end
-  | InString str -> begin match next_char lexbuf with
-    | Some('"') ->
-      set_state (Default) state lexbuf;
-      STRING str
-    | Some(c) ->
-      set_state (InString (str ^ string_of_char c)) state lexbuf;
-      continue ()
-    | None ->
-      raise (LexError UnterminatedString)
-    end
-  | InSingleString str -> 
-    begin match next_char lexbuf with
-    | Some('\'') ->
-      set_state (Default) state lexbuf;
-      STRING str
-    | Some(c) ->
-      set_state (InSingleString (str ^ string_of_char c)) state lexbuf;
-      continue ()
-    | None ->
-      raise (LexError UnterminatedString)
-    end
-  | InBangStart -> begin match peek_char lexbuf with
-    | Some('=') ->
-      let _ = next_char lexbuf in
-      set_state (Default) state lexbuf;
-      BANGEQUALS
-    | Some('.') | Some('!') ->
-      set_state Default state lexbuf;
-      BANG
-    | Some(c) when is_prog_char c ->
-      let _ = next_char lexbuf in
-      set_state (InProgCall (string_of_char c)) state lexbuf;
-      continue ()
-    | _ ->
-      set_state Default state lexbuf;
-      BANG
-    end
-  | InProgCall str -> begin match peek_char lexbuf with
-    
-    | Some(c) when is_prog_char c ->
-      let _ = next_char lexbuf in
-      set_state (InProgCall (str ^ string_of_char c)) state lexbuf;
-      continue ()
-    | _ ->
-      set_state (Default) state lexbuf;
-      PROGCALL str
-    end
-  | InEnv str -> begin match peek_char lexbuf with
-    | Some(c) when is_env_char c ->
-      let _ = next_char lexbuf in
-      set_state (InEnv (str ^ string_of_char c)) state lexbuf;
-      continue ()
-    | _ ->
-      set_state Default state lexbuf;
-      ENVVAR str
-    end
-  | InOp str -> begin match peek_char lexbuf with
-    | Some(c) when is_op c ->
-      let _ = next_char lexbuf in
-      set_state (InOp (str ^ string_of_char c)) state lexbuf;
-      continue ()
-    | _ ->
-      set_state (Default) state lexbuf;
-      op_token lexbuf str
-    end
-  | InNumber str -> begin match peek_char lexbuf with
-    | Some(c) when is_digit c ->
-      let _ = next_char lexbuf in
-      set_state (InNumber (str ^ string_of_char c)) state lexbuf;
-      continue ()
-    | Some('.') ->
-      let _ = next_char lexbuf in
+let token (state : lex_state) (lexbuf : lexbuf): Parser.token =
+  skip_location lexbuf;
+  let rec go state = 
+    let continue () = go state in
+    match state.lex_kind with
+    | Default -> 
+      begin match next_char lexbuf with
+      | Some('#') ->
+        set_state LeadingHash state lexbuf;
+        continue ()
+      | Some('\n') ->
+        set_state LeadingWhitespace state lexbuf;
+        skip_location lexbuf;
+        continue ()
+      | Some(' ') ->
+        skip_location lexbuf;
+        continue ()
+      | Some('"') ->
+        set_state (InString "") state lexbuf;
+        continue ()
+      | Some('\'') ->
+        set_state (InSingleString "") state lexbuf;
+        continue ()
+      | Some('`') ->
+        Parser.BACKTICK
+      | Some('!') ->
+        set_state InBangStart state lexbuf;
+        continue ()
+      | Some('$') ->
+        set_state (InEnv "") state lexbuf;
+        continue ()
+      | Some('-') ->
+        set_state LeadingMinus state lexbuf;
+        continue ()
+      | Some(c) when is_digit c ->
+        set_state (InNumber (string_of_char c)) state lexbuf;
+        continue ()
+      | Some(c) when is_constructor_start c ->
+        set_state (InConstructor (string_of_char c)) state lexbuf;
+        continue ()  
+      | Some(c) when is_ident_start c ->
+        set_state (InIdent (string_of_char c)) state lexbuf;
+        continue ()
+      | Some(c) when is_op_start c ->
+        set_state (InOp (string_of_char c)) state lexbuf;
+        continue ()
+      | Some(c) when is_paren c ->
+        as_paren state c
+      | None -> Parser.EOF
+      | Some(c) -> raise (LexError (InvalidChar (get_loc lexbuf, c)))
+      end
+      (* TODO: Is this still necessary now that there is no '#{' token anymore? *)
+    | LeadingHash ->
+      begin match next_char lexbuf with
+      | Some('\n') ->
+        set_state (LeadingWhitespace) state lexbuf;
+        skip_location lexbuf;
+        continue ()
+      | None ->
+        Parser.EOF
+      | _ ->
+        set_state (Comment) state lexbuf;
+        continue ()
+      end
+    | LeadingMinus ->
       begin match peek_char lexbuf with
+      | Some(c) when is_op c ->
+        set_state (InOp ("-")) state lexbuf;
+        continue ()
+      | Some(c) when is_digit c ->
+        set_state (InNumber ("-")) state lexbuf;
+        continue ()
+      | Some(c) ->
+        set_state (Default) state lexbuf;
+        MINUS
+      | None ->
+        set_state (Default) state lexbuf;
+        MINUS
+      end
+    | Comment -> begin match next_char lexbuf with
+      | Some('\n') ->
+        set_state (LeadingWhitespace) state lexbuf;
+        skip_location lexbuf;
+        continue ()
+      | Some(_) -> 
+        continue ()
+      | None ->
+        Parser.EOF
+      end
+    | InIdent(ident) -> begin match peek_char lexbuf with
+      | Some(c) when is_ident c ->
+        let _ = next_char lexbuf in
+        set_state (InIdent(ident ^ string_of_char c)) state lexbuf;
+        continue ()
+      | Some(_) ->
+        set_state (Default) state lexbuf;
+        ident_token ident
+      | None -> 
+        set_state (Default) state lexbuf;
+        ident_token ident
+      end
+    | InConstructor(ident) -> begin match peek_char lexbuf with
+      | Some(c) when is_ident c ->
+        let _ = next_char lexbuf in
+        set_state (InConstructor(ident ^ string_of_char c)) state lexbuf;
+        continue ()
+      | Some(_) ->
+        set_state Default state lexbuf;
+        CONSTRUCTOR ident
+      | None -> 
+        set_state Default state lexbuf;
+        CONSTRUCTOR ident
+      end
+    | InString str -> begin match next_char lexbuf with
+      | Some('"') ->
+        set_state (Default) state lexbuf;
+        STRING str
+      | Some(c) ->
+        set_state (InString (str ^ string_of_char c)) state lexbuf;
+        continue ()
+      | None ->
+        raise (LexError UnterminatedString)
+      end
+    | InSingleString str -> 
+      begin match next_char lexbuf with
+      | Some('\'') ->
+        set_state (Default) state lexbuf;
+        STRING str
+      | Some(c) ->
+        set_state (InSingleString (str ^ string_of_char c)) state lexbuf;
+        continue ()
+      | None ->
+        raise (LexError UnterminatedString)
+      end
+    | InBangStart -> begin match peek_char lexbuf with
+      | Some('=') ->
+        let _ = next_char lexbuf in
+        set_state (Default) state lexbuf;
+        BANGEQUALS
+      | Some('.') | Some('!') ->
+        set_state Default state lexbuf;
+        BANG
+      | Some(c) when is_prog_char c ->
+        let _ = next_char lexbuf in
+        set_state (InProgCall (string_of_char c)) state lexbuf;
+        continue ()
+      | _ ->
+        set_state Default state lexbuf;
+        BANG
+      end
+    | InProgCall str -> begin match peek_char lexbuf with
+      
+      | Some(c) when is_prog_char c ->
+        let _ = next_char lexbuf in
+        set_state (InProgCall (str ^ string_of_char c)) state lexbuf;
+        continue ()
+      | _ ->
+        set_state (Default) state lexbuf;
+        PROGCALL str
+      end
+    | InEnv str -> begin match peek_char lexbuf with
+      | Some(c) when is_env_char c ->
+        let _ = next_char lexbuf in
+        set_state (InEnv (str ^ string_of_char c)) state lexbuf;
+        continue ()
+      | _ ->
+        set_state Default state lexbuf;
+        ENVVAR str
+      end
+    | InOp str -> begin match peek_char lexbuf with
+      | Some(c) when is_op c ->
+        let _ = next_char lexbuf in
+        set_state (InOp (str ^ string_of_char c)) state lexbuf;
+        continue ()
+      | _ ->
+        set_state (Default) state lexbuf;
+        op_token lexbuf str
+      end
+    | InNumber str -> begin match peek_char lexbuf with
+      | Some(c) when is_digit c ->
+        let _ = next_char lexbuf in
+        set_state (InNumber (str ^ string_of_char c)) state lexbuf;
+        continue ()
       | Some('.') ->
         let _ = next_char lexbuf in
-        set_state (Defer [DDOT]) state lexbuf;
-        INT (int_of_string str)
-      | _ -> 
-        set_state (InDecimal (str ^ ".")) state lexbuf;
-        continue ()
-      end
-    | _ ->
-      set_state (Default) state lexbuf;
-      INT (int_of_string str)
-    end
-  | InDecimal str -> begin match peek_char lexbuf with
-    | Some(c) when is_digit c ->
-      let _ = next_char lexbuf in
-      set_state (InDecimal (str ^ string_of_char c)) state lexbuf;
-      continue ()
-    | _ ->
-      set_state (Default) state lexbuf;
-      FLOAT (float_of_string str)  
-    end
-  | LeadingWhitespace -> begin match peek_char lexbuf with
-    | Some(' ' | '\n') ->
-      let _ = next_char lexbuf in
-      continue ()
-    | Some('#') ->
-      let indentation = ((get_loc lexbuf).start_col - 1) in
-      let _ = next_char lexbuf in
-      begin match peek_char lexbuf with
-      | Some('{') ->
-        set_state (LeadingHash) state lexbuf;
-        insert_semi continue state indentation
+        begin match peek_char lexbuf with
+        | Some('.') ->
+          let _ = next_char lexbuf in
+          set_state (Defer [DDOT]) state lexbuf;
+          INT (int_of_string str)
+        | _ -> 
+          set_state (InDecimal (str ^ ".")) state lexbuf;
+          continue ()
+        end
       | _ ->
-        set_state (LeadingHash) state lexbuf;
-        continue ()
+        set_state (Default) state lexbuf;
+        INT (int_of_string str)
       end
-    | _ ->
+    | InDecimal str -> begin match peek_char lexbuf with
+      | Some(c) when is_digit c ->
+        let _ = next_char lexbuf in
+        set_state (InDecimal (str ^ string_of_char c)) state lexbuf;
+        continue ()
+      | _ ->
+        set_state (Default) state lexbuf;
+        FLOAT (float_of_string str)  
+      end
+    | LeadingWhitespace -> begin match peek_char lexbuf with
+      | Some(' ' | '\n') ->
+        let _ = next_char lexbuf in
+        continue ()
+      | Some('#') ->
+        let indentation = ((get_loc lexbuf).start_col - 1) in
+        let _ = next_char lexbuf in
+        begin match peek_char lexbuf with
+        | Some('{') ->
+          set_state (LeadingHash) state lexbuf;
+          insert_semi continue state indentation
+        | _ ->
+          set_state (LeadingHash) state lexbuf;
+          continue ()
+        end
+      | _ ->
+        set_state (Default) state lexbuf;
+        insert_semi continue state ((get_loc lexbuf).start_col - 1)
+      end
+    | Defer [] ->
       set_state (Default) state lexbuf;
-      insert_semi continue state ((get_loc lexbuf).start_col - 1)
-    end
-  | Defer [] ->
-    set_state (Default) state lexbuf;
-    continue ()
-  | Defer (tok :: toks) ->
-    set_state (Defer toks) state lexbuf;
-    tok
-
+      continue ()
+    | Defer (tok :: toks) ->
+      set_state (Defer toks) state lexbuf;
+      tok
+    in
+    go state

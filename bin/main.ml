@@ -106,7 +106,7 @@ let handle_errors text_style print_fun f =
   | ParseError (loc, msg) -> print_fun (Some loc) ("Parse Error: " ^ msg)
   | SpecificParseError (MismatchedLetName(loc, name1, name2)) ->
     print_fun (Some loc) ("Function declared with different names.\n"
-            ^ "    The type signature calls it:       " ^ text_style.identifier name1 ^ "\n"
+            ^ "    The type signature calls it        " ^ text_style.identifier name1 ^ "\n"
             ^ "    but its definition refers to it as " ^ text_style.identifier name2 ^ "")
   | Sys_error msg -> print_fun None ("System error: " ^ msg)
   (* RenameError *)

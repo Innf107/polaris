@@ -284,7 +284,7 @@ match_branch:
     pattern "->" expr { ($1, $3) } 
 
 assign:
-    IDENT "=" expr { ($1, $3) }
+    IDENT "=" expr SEMI* { ($1, $3) }
 
 list_comp_clause:
     | LET pattern1 "<-" expr { DrawClause($2, $4) }
@@ -365,7 +365,7 @@ ty2:
     | "<" sep_trailing(COMMA, variant_entry) "|" IDENT ">"          { VariantVar(Array.of_list $2, $4) }
 
 record_entry:
-    IDENT ":" ty { ($1, $3) }
+    IDENT ":" ty SEMI* { ($1, $3) }
 
 variant_entry:
     | CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")" { ($1, $3) }

@@ -9,7 +9,7 @@ let make_coloring ~enable_color color message =
     match color with
     (* Not all terminals support 24-bit colors, so we first print the regular 8-bit escape
        sequence for red and then override that with our fancy 24-bit full red, if available. *)
-    | Red -> "\x1b[31m\x1b[38;2;255;0;0m" ^ message ^ "\x1b[0m"
+    | Red -> "\x1b[20m\x1b[31m\x1b[38;2;255;0;0m" ^ message ^ "\x1b[0m"
     | Purple -> "\x1b[35m\x1b[38;2;192;0;192m" ^ message ^ "\x1b[0m"
     | Custom prefix -> prefix ^ message ^ "\x1b[0m"
 

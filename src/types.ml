@@ -14,7 +14,8 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | MismatchedTyCon of name * name * ty * ty
                 | Impredicative of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
-                | WrongNumberOfArgs of ty list * ty list * ty * ty
+                | FunctionsWithDifferentArgCounts of ty list * ty list * ty * ty
+                | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
                 | NonProgCallInPipe of expr
                 | MissingRecordFields of (string * ty) list * (string * ty) list * ty * ty
                 | MissingVariantConstructors of (string * ty list) list * (string * ty list) list * ty * ty
@@ -438,6 +439,10 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
          but not inferred. *)
       let fun_ty, fun_expr = infer env fun_expr in
       let (arg_tys, result_ty) = split_fun_ty env loc (List.length args) fun_ty in
+
+      if List.compare_lengths args arg_tys <> 0 then begin
+        raise (TypeError (loc, PassedIncorrectNumberOfArgsToFun(List.length args, arg_tys, result_ty)))
+      end;
 
       let args = List.map2 (check env) arg_tys args in
 
@@ -1064,7 +1069,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | Fun (dom1, cod1), Fun (dom2, cod2) ->
         if List.compare_lengths dom1 dom2 != 0 then
           raise (TypeError (loc, 
-            WrongNumberOfArgs(
+            FunctionsWithDifferentArgCounts(
               List.map (partial_apply state) dom1,  
               List.map (partial_apply state) dom2, 
               partial_apply state original_ty1, 

@@ -8,7 +8,8 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | MismatchedTyCon of name * name * ty * ty
                 | Impredicative of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
-                | WrongNumberOfArgs of ty list * ty list * ty * ty
+                | FunctionsWithDifferentArgCounts of ty list * ty list * ty * ty
+                | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
                 | NonProgCallInPipe of expr
                 | MissingRecordFields of (string * ty) list * (string * ty) list * ty * ty
                 | MissingVariantConstructors of (string * ty list) list * (string * ty list) list * ty * ty

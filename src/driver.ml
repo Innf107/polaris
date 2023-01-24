@@ -62,7 +62,7 @@ let rec parse_rename_typecheck : driver_options
                         (List.concat_map (Modules.extract_import_paths) ast) in
 
   let items_for_exports = List.map (fun (filename, path) -> 
-      (filename, parse_rename_typecheck options (Lexing.from_channel (open_in path)) RenameScope.empty)
+      (filename, parse_rename_typecheck {options with filename} (Lexing.from_channel (open_in path)) RenameScope.empty)
     ) imported_files in
 
   let import_map = FilePathMap.of_seq

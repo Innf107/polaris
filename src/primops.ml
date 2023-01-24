@@ -25,8 +25,6 @@ let primops = PrimOpMap.of_seq (List.to_seq [
   "toString", forall (fun a -> [a] --> String);
   "getArgv", [] --> List String;
   "getEnv", [] --> List String;
-  "insert", Ty.unit; (* TODO: Map types are NYI*)
-  "mapToList", Ty.unit; (* TODO: Map types are NYI*)
   "fail", forall (fun a -> [String] --> a);
   "scriptLocal", [String] --> String;
   "commandExists", [String] --> String;

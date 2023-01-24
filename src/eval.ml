@@ -880,8 +880,6 @@ and eval_primop env op args loc = let open EvalError in
                   end
                 | _ -> raise (PrimOpArgumentError ("getEnv", args, "Expected a single string", loc :: env.call_trace))
                 end
-  | "insert" -> todo __LOC__
-  | "mapToList" -> todo __LOC__
   | "fail" -> begin match args with
               | [StringV msg] -> raise (RuntimeError (msg, loc :: env.call_trace))
               | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))

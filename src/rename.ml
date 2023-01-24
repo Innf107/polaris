@@ -189,6 +189,11 @@ let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in functio
         , (fun x -> x)
         , (fun x -> x)
         )
+    | StringPat(loc, literal) ->
+        ( StringPat(loc, literal)
+        , Fun.id
+        , Fun.id
+        )
     | OrPat(loc, p1, p2) ->
         let p1', p1_trans, p1_ty_trans = rename_pattern scope p1 in
         let p2', p2_trans, p2_ty_trans = rename_pattern scope p2 in

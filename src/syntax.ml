@@ -217,6 +217,7 @@ module Template = struct
     | ListPat of loc * pattern list
     | TuplePat of loc * pattern list
     | NumPat of loc * float
+    | StringPat of loc * string
     | OrPat of loc * pattern * pattern
     | TypePat of loc * pattern * ty
     | DataPat of loc * name * pattern
@@ -459,6 +460,7 @@ module Template = struct
     | ListPat (_, pats) -> "[" ^ String.concat ", " (List.map pretty_pattern pats) ^ "]"
     | TuplePat (_, pats) -> "(" ^ String.concat ", " (List.map pretty_pattern pats) ^ ")"
     | NumPat (_, f) -> Float.to_string f
+    | StringPat (_, literal) -> "\"" ^ literal ^ "\""
     | OrPat (_, p1, p2) -> "(" ^ pretty_pattern p1 ^ " | " ^ pretty_pattern p2 ^ ")"
     | TypePat (_, pat, ty) -> "(" ^ pretty_pattern pat ^ " : " ^ pretty_type ty ^ ")"
     | DataPat (_, name, pattern) -> pretty_name name ^ "(" ^ pretty_pattern pattern ^ ")"
@@ -569,7 +571,7 @@ module Template = struct
 
   let get_pattern_loc = function
     | VarPat (loc, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
-    | NumPat (loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _) | DataPat (loc, _, _)
+    | NumPat (loc, _) | StringPat(loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _) | DataPat (loc, _, _)
     | VariantPat(loc, _, _)
     -> loc
 
@@ -785,6 +787,7 @@ module Template = struct
         let transformed, state = match pattern with
         (* Non-recursive *)
         | NumPat(loc, num) -> NumPat(loc, num), state
+        | StringPat(loc, num) -> StringPat(loc, num), state
         (* Recursive *)
         | VarPat(loc, name) -> 
           let name, state = self#traverse_name state name in

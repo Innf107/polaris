@@ -250,8 +250,10 @@ let rec match_pat_opt (pat : Typed.pattern) (scrut : value) : (eval_env -> eval_
       let* transformations = Util.sequence_options_array (Array.map2 match_pat_opt pats vs) in
       Some(Array.fold_right (fun t r env -> t (r env)) transformations (fun x -> x))
     
-    | NumPat(_, f1), NumV f2 when Float.equal f1 f2 ->
-      Some (fun x -> x) 
+  | NumPat(_, f1), NumV f2 when Float.equal f1 f2 ->
+    Some (fun x -> x) 
+  | StringPat(_, literal), StringV str when String.equal literal str ->
+    Some Fun.id
   | OrPat(_, p1, p2), v ->
     begin match match_pat_opt p1 v with
     | Some(t) -> Some(t)

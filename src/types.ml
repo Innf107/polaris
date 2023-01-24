@@ -220,6 +220,11 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * 
       , Fun.id
       , NumPat(loc, number)
       )
+    | StringPat (loc, literal) ->
+      ( String
+      , Fun.id
+      , StringPat(loc, literal)
+      )
     | OrPat (loc, left, right) ->
       let left_ty, left_trans, left = infer_pattern env left in 
       (* TODO: Make sure both sides bind the same set of variables with the same types *)
@@ -348,6 +353,8 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) * Typ
     | TuplePat _, _ -> defer_to_inference ()
     | NumPat(loc, number), Number -> Fun.id, NumPat(loc, number)
     | NumPat _, _ -> defer_to_inference ()
+    | StringPat(loc, literal), String -> Fun.id, StringPat(loc, literal)
+    | StringPat _, _ -> defer_to_inference ()
     | OrPat(loc, left, right), _ ->
       let left_trans, left = check_pattern env left expected_ty in
       let right_trans, right = check_pattern env right expected_ty in

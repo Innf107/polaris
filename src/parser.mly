@@ -316,6 +316,7 @@ pattern_leaf:
     | "`" CONSTRUCTOR                                       { VariantPat(loc $startpos $endpos, $2, []) }        
     | INT { NumPat(loc $startpos $endpos, float_of_int $1) }
     | FLOAT { NumPat(loc $startpos $endpos, $1) }
+    | STRING { StringPat(loc $startpos $endpos, $1) }
     | "(" pattern ")" { $2 }
     | "(" pattern COMMA sep_trailing(COMMA, pattern) ")" { TuplePat(loc $startpos $endpos, $2 :: $4) }
 
@@ -331,6 +332,7 @@ ty:
     | ty2 "->" ty                                           { Fun ([$1], $3) }
     | "(" ty COMMA sep_trailing(COMMA, ty) ")"              { Tuple(Array.of_list ($2 :: $4)) }
     | FORALL IDENT* "." ty                                  { List.fold_right (fun a r -> Forall(a, r)) $2 $4 }
+    | "(" ty ")"                                            { $2 }
     | ty1                                                   { $1 }
 
 ty1:

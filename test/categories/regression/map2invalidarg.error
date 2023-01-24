@@ -1,0 +1,6 @@
+test/categories/regression/map2invalidarg.pls:5:13-5:17: ERROR:
+Trying to pass 3 arguments to a function that expects 1.
+Incorrect number of arguments passed to a function of type '(Number, a_11$15, NumMap_5(a_11$15)) -> NumMap_5(a_11$15)'
+  | 
+5 |     let x = f(5)
+  |             ^^^^

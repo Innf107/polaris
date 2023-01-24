@@ -10,7 +10,8 @@ export {
     zipWith,
     indexed,
     
-    # find,
+    contains,
+    find,
 
     sum,
     product,
@@ -84,16 +85,24 @@ let indexed(xs) = {
     go(0, xs)
 }
 
-# Find needs Maybes which cannot be implemented right now
 # O(n), tail recursive
-# let find(pred, xs) = match xs {
-#     [] -> null
-#     x : xs -> 
-#         if pred(x) then
-#             x
-#         else
-#             find(pred, xs)
-# }
+let contains : forall a. (a, List(a)) -> Bool
+let contains(needle, haystack) = match haystack {
+    [] -> false
+    (value :: rest) -> if value == needle then true else contains(needle, rest)
+}
+
+# O(n), tail recursive
+let find : forall a. ((a -> Bool), List(a)) -> < Just(a), Nothing >
+let find(pred, xs) = match xs {
+    [] -> Nothing
+    (x :: xs) -> 
+        if pred(x) then
+            Just(x)
+        else
+            find(pred, xs)
+    
+}
 
 # O(1)
 let fst : forall a b. ((a, b)) -> a

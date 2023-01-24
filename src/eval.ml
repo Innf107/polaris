@@ -905,6 +905,11 @@ and eval_primop env op args loc = let open EvalError in
               | _ -> raise (PrimOpArgumentError("ensure", args, "Expected a string", loc :: env.call_trace))
               end
   | "status" -> NumV (Float.of_int !(env.last_status))
+  | "mod" -> begin match args with
+              | [NumV x; NumV y] ->
+                NumV (float_of_int (int_of_float x mod int_of_float y))
+              | _ -> raise (PrimOpArgumentError("mod", args, "Expected two integers", loc :: env.call_trace))
+              end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
 and progs_of_exprs env = function

@@ -51,8 +51,7 @@ let fatal_error maybe_loc (message : string) =
   let suffix = match maybe_loc with
   | None -> ""
   | Some loc ->
-    (* TODO: Let's hope this actually opens the correct file in all cases *)
-    let input_file = In_channel.open_text (loc.file) in
+    let input_file = In_channel.open_text loc.file in
 
     let previous_line, line, next_line = Errormessage.extract_source_fragment loc input_file style
     in

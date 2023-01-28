@@ -332,7 +332,6 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
     | NumLit (loc, n) -> NumLit (loc, n)
     | BoolLit (loc, b) -> BoolLit (loc, b)
     | UnitLit loc -> UnitLit loc
-    | NullLit loc -> NullLit loc
     | ListLit (loc, exprs) -> ListLit (loc, List.map (rename_expr exports scope) exprs)
     | TupleLit (loc, exprs) -> TupleLit (loc, List.map (rename_expr exports scope) exprs)
     | RecordLit (loc, kvs) -> RecordLit (loc, List.map (fun (k, e) -> (k, rename_expr exports scope e)) kvs)

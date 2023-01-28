@@ -261,7 +261,6 @@ module Template = struct
     | NumLit of loc * float                 (* f *)
     | BoolLit of loc * bool                 (* true | false*)
     | UnitLit of loc                        (* () *)
-    | NullLit of loc                        (* null *)
     | ListLit of loc * expr list            (* [e, .., e] *)
     | TupleLit of loc * expr list           (* (e, .., e) *)
     (* Records *)
@@ -353,7 +352,7 @@ module Template = struct
           let result = get expr in
           let remaining = match expr with
           | Var _ | DataConstructor _ | ModSubscriptDataCon _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
-          | UnitLit _ | NullLit _ | ModSubscript _ | LetDataSeq _ | LetTypeSeq _ -> M.empty
+          | UnitLit _ | ModSubscript _ | LetDataSeq _ | LetTypeSeq _ -> M.empty
           | VariantConstructor(_, _, args) ->
             fold monoid go args
           | App(_, fexpr, arg_exprs) -> M.append (go fexpr) (fold monoid go arg_exprs) 
@@ -487,7 +486,6 @@ module Template = struct
     | NumLit (_, f) -> string_of_float f
     | BoolLit (_, b) -> string_of_bool b
     | UnitLit _ -> "()"
-    | NullLit _ -> "null"
     | ListLit (_, exprs) -> "[" ^ String.concat ", " (List.map pretty exprs) ^ "]"
     | TupleLit (_, exprs) -> "(" ^ String.concat ", " (List.map pretty exprs) ^ ")"
     | RecordLit (_, kvs) -> "{" ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
@@ -566,7 +564,7 @@ module Template = struct
 
   let get_loc = function
     | Var (loc, _) | DataConstructor(loc, _) | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
-    | BoolLit (loc, _) | UnitLit loc | NullLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
+    | BoolLit (loc, _) | UnitLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
     | Subscript(loc, _, _) | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
     | BinOp(loc, _, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)
@@ -615,8 +613,8 @@ module Template = struct
         fun state expression ->
           let transformed, state = match expression with
           (* Non-recursive cases (that don't mention another traversable node type) *)
-          | StringLit _ | NumLit _ | BoolLit _ | UnitLit _ | EnvVar _
-          | NullLit _ -> expression, state
+          | StringLit _ | NumLit _ | BoolLit _ | UnitLit _ | EnvVar _ -> 
+            expression, state
           (* Recursive boilerplate *)
           | Var (loc, name) ->
             let name, state = self#traverse_name state name in

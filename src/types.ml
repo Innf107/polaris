@@ -478,7 +478,6 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
     | NumLit (loc, literal) -> Number, NumLit (loc, literal)
     | BoolLit (loc, literal) -> Bool, BoolLit (loc, literal)
     | UnitLit loc -> Ty.unit, UnitLit loc
-    | NullLit _ -> panic __LOC__ "Nulls should be phased out now that we have static types" 
     | ListLit (loc, []) ->
       let elem_ty = fresh_unif () in
       List elem_ty, ListLit(loc, [])
@@ -844,7 +843,6 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let ty, expr = infer env expr in
       unwrap_constraint env loc ty expected_ty;
       Unwrap(loc, expr)
-    | NullLit _, _ -> Util.todo __LOC__
     | MakeRef(loc, expr), Ref(inner_type) ->
       check env inner_type expr
     | MakeRef _, _ -> defer_to_inference ()

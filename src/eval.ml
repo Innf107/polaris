@@ -47,7 +47,6 @@ and value =
   | ListV of value list
   | TupleV of value array
   | RecordV of (value RecordVImpl.t)
-  | NullV
   (* Represents a concurrent thread of execution *)
   | PromiseV of value Promise.t
   (* Until there are type classes, we need to keep the constructor name
@@ -120,7 +119,6 @@ module Value = struct
         "<closure(" ^ String.concat ", " (List.map Syntax.Typed.pretty_pattern params) ^ ")>"
     | PrimOpV name ->
         "<primative: " ^ name ^ ">"
-    | NullV -> "null"
     | BoolV b -> string_of_bool b
     | ListV vals -> "[" ^ String.concat ", " (List.map pretty vals) ^ "]"
     | TupleV vals -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty vals)) ^ ")"
@@ -146,7 +144,7 @@ module Value = struct
     | StringV v -> [v]
     | NumV _ | BoolV _ -> [pretty x]
     (* TODO: Should records/maps be converted to JSON? *)
-    | ClosureV _ | PrimOpV _ | NullV | TupleV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ | RefV _
+    | ClosureV _ | PrimOpV _ | TupleV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ | RefV _
     | VariantConstructorV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
@@ -165,7 +163,6 @@ let insert_var : name -> value -> eval_env -> eval_env =
 let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
   fun loc var value env -> 
     match value with 
-    | NullV     -> { env with env_vars = EnvMap.remove var env.env_vars }
     | StringV x -> { env with env_vars = EnvMap.add var x env.env_vars }
     | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
     | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ | VariantConstructorV _
@@ -213,7 +210,6 @@ let rec val_eq (x : value) (y : value) : bool =
     else List.for_all2 val_eq xs ys
   | RecordV m1, RecordV m2 ->
     RecordVImpl.equal val_eq m1 m2
-  | NullV, NullV -> true
   (* Comparisons of different values are always false *)
   | _, _ -> false
 
@@ -324,7 +320,6 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
   | NumLit (_, f)    -> NumV f
   | BoolLit (_, b)   -> BoolV b
   | UnitLit _        -> unitV
-  | NullLit _        -> NullV
 
   | ListLit (_, exprs) -> 
     let vals = List.map (eval_expr env) exprs in 
@@ -381,7 +376,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
       begin match eval_expr env key_expr with
       | StringV key -> begin match RecordVImpl.find key map with
                         | value :: _ -> value
-                        | [] -> NullV
+                        | [] -> panic __LOC__ (Loc.pretty loc ^ ": Record entry not found at runtime: " ^ key)
                         end
       | value -> raise (EvalError.InvalidMapKey (value, map, loc :: env.call_trace))
       end
@@ -576,7 +571,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     begin match EnvMap.find_opt var env.env_vars with
     | Some(str) -> StringV str
     | None -> begin match Sys.getenv_opt var with
-      | None -> NullV
+      | None -> StringV ""
       | Some(str) -> StringV str
       end
     end
@@ -859,8 +854,8 @@ and eval_primop env op args loc = let open EvalError in
                   | _ -> raise (PrimOpArgumentError ("readLine", args, "Expected no arguments or a single string", loc :: env.call_trace))
                   in
                   begin match Bestline.bestline prompt with
-                  | Some input -> StringV input
-                  | None -> NullV
+                  | Some input -> VariantConstructorV ("Just", [StringV input])
+                  | None -> VariantConstructorV ("Nothing", [])
                   end
   | "chdir" ->  begin match args with
                 | [StringV path_str] -> 
@@ -886,8 +881,8 @@ and eval_primop env op args loc = let open EvalError in
                   end
   | "getEnv" -> begin match args with
                 | [StringV var] -> begin match Sys.getenv_opt var with
-                  | None -> NullV
-                  | Some(value) -> StringV value
+                  | None -> VariantConstructorV("Nothing", [])
+                  | Some(value) -> VariantConstructorV("Just", [StringV value])
                   end
                 | _ -> raise (PrimOpArgumentError ("getEnv", args, "Expected a single string", loc :: env.call_trace))
                 end

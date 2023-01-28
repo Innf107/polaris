@@ -14,7 +14,11 @@ module Name = struct
 
   let original_name (name : t) = name.name
 
-  let pretty (name : t) = name.name ^ "_" ^ Unique.display name.index
+  let pretty (name : t) = 
+    if Config.verbose_names () then
+      name.name ^ "_" ^ Unique.display name.index
+    else
+      name.name
 
   let primop_index = Unique.fresh ()
 

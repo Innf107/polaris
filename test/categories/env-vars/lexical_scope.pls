@@ -1,4 +1,4 @@
-# EXPECT: ["a", null]
+# EXPECT: ["a", ""]
 
 let f() = {
     let $x = "a"

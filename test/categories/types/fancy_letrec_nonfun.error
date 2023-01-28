@@ -1,5 +1,5 @@
 test/categories/types/fancy_letrec_nonfun.pls:3:1-4:12: ERROR:
-The function definition for 'f_5' is declared as a function but has a non-function type.
+The function definition for 'f' is declared as a function but has a non-function type.
   | 
 3 | let f : Number
   | ^^^^^^^^^^^^^^

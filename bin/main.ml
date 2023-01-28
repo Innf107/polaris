@@ -11,6 +11,7 @@ let usage_message =
     Options
       -i, --interactive         Run in interactive mode (default if no file is specified)
       -c <expr>, --eval <expr>  Eval <expr> and print the result
+      --verbose-names           Disambiguate duplicate names by suffixing each one with a unique identifier
 
     Debugging options (these are only useful if you are trying to debug the interpreter)
       --print-ast         Print the parsed abstract syntax tree. 
@@ -400,6 +401,9 @@ let parse_args () : run_options * string list =
     fail_usage ("Missing required argument for flag '" ^ f ^ "'")
   | (("-c" | "--eval") :: expr :: args) ->
     go ({options with eval = Some expr}) args
+  | (("--verbose-names") :: args) ->
+    Config.set_verbose_names true;
+    go options args
   | ("--print-ast" :: args) -> 
     go ({options with print_ast = true}) args
   | ("--print-renamed" :: args) -> 

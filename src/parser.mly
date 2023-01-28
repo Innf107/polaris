@@ -69,6 +69,7 @@ type expr_or_fun_def_ext =
 %token DATA
 %token TYPE
 %token BACKTICK "`"
+%token REF
 %token EOF
 
 
@@ -196,7 +197,7 @@ binop5:
     | "/" { Div }
 
 expr6:
-    | IDENT ":=" expr { Assign(loc $startpos $endpos, $1, $3) }
+    | expr7 ":=" expr { Assign(loc $startpos $endpos, $1, $3) }
     | expr7 { $1 }
 
 expr7:
@@ -273,7 +274,7 @@ expr_leaf:
     | DATA CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetDataSeq(loc $startpos $endpos, $2, $4, $7) }
     | TYPE CONSTRUCTOR "=" ty { LetTypeSeq(loc $startpos $endpos, $2, [], $4) }
     | TYPE CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetTypeSeq(loc $startpos $endpos, $2, $4, $7) }
-
+    | REF expr { MakeRef(loc $startpos $endpos, $2) }
 
 (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)
 expr_or_fun_def_ext:
@@ -349,11 +350,12 @@ ty2:
     | CONSTRUCTOR "." CONSTRUCTOR                           { ModSubscriptTyCon((), $1, $3, []) }
     | IDENT                                                 { TyVar($1) }
     | CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")"           { match $1 with 
-                                                                | "List" | "Promise" -> 
+                                                                | "List" | "Promise" | "Ref" -> 
                                                                     begin match $3 with 
                                                                     | [ty] -> begin match $1 with
                                                                         | "List" -> List(ty) 
                                                                         | "Promise" -> Promise(ty)
+                                                                        | "Ref" -> Ref(ty)
                                                                         | _ -> Util.panic __LOC__ "impossible pattern match"
                                                                         end
                                                                     | _ -> Util.panic __LOC__ (Loc.pretty (loc $startpos $endpos) ^ ": Type constructor " ^ $1 ^ " should take exactly one argument.\nThis is a known bug, please do NOT report it! The compiler just needs some work to report this correctly. It is trying its best!")

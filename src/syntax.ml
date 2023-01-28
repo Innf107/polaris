@@ -59,6 +59,7 @@ module MakeTy(Ext : sig
     | String
     | Tuple of ty array
     | List of ty
+    | Ref of ty
     | Promise of ty
     | RecordClosed of (string * ty) array
     | RecordUnif of (string * ty) array * (Unique.t * Ext.name)
@@ -99,7 +100,7 @@ module Template = struct
               M.append (mconcat monoid (List.map go args)) (go ty)
             | Tuple tys ->
               mconcat monoid (Array.to_list (Array.map go tys))
-            | List ty | Promise ty -> go ty
+            | List ty | Promise ty | Ref ty -> go ty
             | RecordClosed fields -> mconcat monoid (Array.to_list (Array.map (go << snd) fields))
             | VariantClosed fields ->
               mconcat monoid (Array.to_list (Array.map (fold monoid go << snd) fields))
@@ -175,6 +176,7 @@ module Template = struct
         | Tuple tys -> Tuple (Array.map (transform trans) tys)
         | List ty -> List (transform trans ty)
         | Promise ty -> Promise (transform trans ty)
+        | Ref ty -> Ref (transform trans ty)
         | RecordClosed tys -> RecordClosed (Array.map (fun (x, ty) -> (x, transform trans ty)) tys)
         | VariantClosed tys -> VariantClosed (Array.map (fun (x, tys) -> (x, List.map (transform trans) tys)) tys)
         | RecordUnif (fields, (u, name)) -> 
@@ -286,11 +288,10 @@ module Template = struct
     | LetEnvSeq of loc * string * expr            (* let $x = e *)
     | LetDataSeq of loc * name * name list * ty   (* data X(x, .., x) = t *)
     | LetTypeSeq of loc * name * name list * ty   (* type X(x, .., x) = t *)
-    (* Mutable local definitions *)
+    (* local definitions *)
     | Let of loc * pattern * expr * expr              (* let p = e1 in e2 (valid everywhere) *)
     | LetRec of loc * ty option * name * pattern list * expr * expr  (* [let f : ty]; let f(x, .., x) = e*)
     | LetEnv of loc * string * expr * expr            (* let $x = e in e *)
-    | Assign of loc * name * expr                     (* x := e *)
     (* Scripting capabilities *)
     | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
@@ -304,8 +305,11 @@ module Template = struct
     | LetModuleSeq of loc * name * module_expr
     (* Types *)
     | Ascription of loc * expr * ty
-
     | Unwrap of loc * expr  (* e! *)
+    (* Mutable references *)
+    | Assign of loc * expr * expr                     (* x := e *)
+    | MakeRef of loc * expr                           (* ref e *)
+
 
   and list_comp_clause =
     | DrawClause of pattern * expr (* p <- e *)
@@ -376,7 +380,6 @@ module Template = struct
           | LetSeq(_, _, expr) | LetRecSeq(_, _, _, _, expr) | LetEnvSeq(_, _, expr) -> go expr
           | Let(_, _, bind_expr, rest_expr) | LetRec(_, _, _, _, bind_expr, rest_expr) | LetEnv(_, _, bind_expr, rest_expr)
             -> M.append (go bind_expr) (go rest_expr)
-          | Assign(_, _, expr) -> go expr
           | ProgCall(_, _, arg_exprs) -> fold monoid go arg_exprs
           | Pipe(_, exprs) -> fold monoid go exprs
           | Async (_, expr) -> go expr
@@ -385,6 +388,8 @@ module Template = struct
           | LetModuleSeq _ -> M.empty
           | Ascription (_, expr, _) -> go expr
           | Unwrap(_, expr) -> go expr
+          | Assign(_, place_expr, expr) -> M.append (go place_expr) (go expr)
+          | MakeRef(_, expr) -> go expr
           in
           M.append result remaining
         in
@@ -442,6 +447,7 @@ module Template = struct
     | Tuple tys -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty_type tys)) ^ ")"
     | List ty -> "List(" ^ pretty_type ty ^ ")"
     | Promise ty -> "Promise(" ^ pretty_type ty ^ ")"
+    | Ref ty -> "Ref(" ^ pretty_type ty ^ ")"
     (* There is no difference between empty records and unit, so to make typechecking easier,
        this type is represented as an empty record, but for the sake of error messages, it is printed as '()' *)
     | RecordClosed [||] -> "()"
@@ -536,7 +542,6 @@ module Template = struct
     | LetRec (_, None, x, xs, e1, e2) -> "let rec " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
     | LetRec (_, Some ty, x, xs, e1, e2) -> "let " ^ pretty_name x ^ " : " ^ pretty_type ty ^ "; let " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
     | LetEnv (_, x, e1, e2) -> "let $" ^ x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
-    | Assign (_, x, e) -> pretty_name x ^ " = " ^ pretty e
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
@@ -553,6 +558,8 @@ module Template = struct
     | Ascription (_, expr, ty) ->
       "(" ^ pretty expr ^ " : " ^ pretty_type ty ^ ")"
     | Unwrap(_, expr) -> pretty expr ^ "!"
+    | MakeRef(_, expr) -> "ref " ^ pretty expr ^ ""
+    | Assign (_, x, e) -> pretty x ^ " = " ^ pretty e
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
@@ -567,6 +574,7 @@ module Template = struct
     | LetDataSeq (loc, _, _, _) | LetTypeSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _) | ModSubscript (loc, _, _)
+    | MakeRef(loc, _)
     -> loc
 
   let get_pattern_loc = function
@@ -739,10 +747,10 @@ module Template = struct
             let expr, state = self#traverse_expr state expr in
             let rest_expr, state = self#traverse_expr state rest_expr in
             LetEnv(loc, envvar, expr, rest_expr), state
-          | Assign(loc, varname, expr) ->
-            let varname, state = self#traverse_name state varname in
+          | Assign(loc, place_expr, expr) ->
+            let place_expr, state = self#traverse_expr state place_expr in
             let expr, state = self#traverse_expr state expr in
-            Assign(loc, varname, expr), state
+            Assign(loc, place_expr, expr), state
           | ProgCall(loc, progname, exprs) ->
             let exprs, state = self#traverse_list self#traverse_expr state exprs in
             ProgCall(loc, progname, exprs), state
@@ -779,6 +787,9 @@ module Template = struct
           | Unwrap(loc, expr) ->
             let expr, state = self#traverse_expr state expr in
             Unwrap(loc, expr), state
+          | MakeRef(loc, expr) ->
+            let expr, state = self#traverse_expr state expr in
+            MakeRef(loc, expr), state
           in
           self#expr state transformed
 
@@ -865,6 +876,9 @@ module Template = struct
         | Promise(ty) ->
           let ty, state = self#traverse_type state ty in
           List(ty), state
+        | Ref(ty) ->
+          let ty, state = self#traverse_type state ty in
+          Ref(ty), state
         | RecordClosed fields ->
           let fields, state = self#traverse_list 
             (fun state (field, ty) ->

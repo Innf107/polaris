@@ -11,7 +11,7 @@ module RecordVImpl = Multimap.Make (String)
 (* `eval_env` unfortunately has to be defined outside of `Eval.Make`,
    since `value` depends on it. *)
 type eval_env = { 
-  vars : value ref VarMap.t
+  vars : value VarMap.t
 ; env_vars : string EnvMap.t
 ; argv : string list 
 ; call_trace : loc list
@@ -20,7 +20,7 @@ type eval_env = {
 }
 
 and runtime_module = {
-  mod_vars : value ref VarMap.t
+  mod_vars : value VarMap.t
 ; modules : runtime_module VarMap.t
 }
 
@@ -56,6 +56,7 @@ and value =
   (* Data constructors can be used like functions *)
   | PartialDataConV of name
   | VariantConstructorV of string * value list
+  | RefV of value ref
 
 let unitV = RecordV (RecordVImpl.empty)
 let isUnitV = function
@@ -138,29 +139,28 @@ module Value = struct
       "<constructor: " ^ Name.pretty constructor_name ^ ">"
     | VariantConstructorV(constructor_name, args) ->
       "<" ^ constructor_name ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")>"
-
+    | RefV(value) -> "<ref: " ^ pretty !value ^ ">"
 
   let rec as_args (fail : t -> 'a) (x : t) : string list =
     match x with
     | StringV v -> [v]
     | NumV _ | BoolV _ -> [pretty x]
     (* TODO: Should records/maps be converted to JSON? *)
-    | ClosureV _ | PrimOpV _ | NullV | TupleV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _
+    | ClosureV _ | PrimOpV _ | NullV | TupleV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ | RefV _
     | VariantConstructorV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
 
-let lookup_var (env : eval_env) (loc : loc) (var : name) : value ref = 
+let lookup_var (env : eval_env) (loc : loc) (var : name) : value = 
   try 
     VarMap.find var env.vars
   with
     Not_found -> raise (EvalError.DynamicVarNotFound (var, loc :: env.call_trace))
 
-let insert_var : name -> value -> eval_env -> eval_env * value ref =
+let insert_var : name -> value -> eval_env -> eval_env =
   fun var value env ->
-    let var_ref = ref value in
-    { env with vars = VarMap.add var var_ref env.vars }, var_ref
+    { env with vars = VarMap.add var value env.vars }
 
 let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
   fun loc var value env -> 
@@ -169,6 +169,7 @@ let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
     | StringV x -> { env with env_vars = EnvMap.add var x env.env_vars }
     | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
     | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ | VariantConstructorV _
+    | RefV _
       -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
 
 let insert_module_var : name -> runtime_module -> eval_env -> eval_env =
@@ -230,7 +231,7 @@ let rec match_pat_opt (pat : Typed.pattern) (scrut : value) : (eval_env -> eval_
      checked by the typechecker *)
   | TypePat (_, pat, _), scrut -> match_pat_opt pat scrut
   | VarPat (_, x), scrut ->
-    Some(fun env -> fst(insert_var x scrut env))
+    Some(fun env -> insert_var x scrut env)
   | ConsPat(_, p, ps), ListV (v :: vs) ->
     let* x_trans = match_pat_opt p v in
     let* xs_trans = match_pat_opt ps (ListV vs) in
@@ -304,7 +305,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
   | Var (loc, x) ->
       if x.index = Name.primop_index
       then PrimOpV x.name
-      else !(lookup_var env loc x)
+      else lookup_var env loc x
   | DataConstructor (loc, name) ->
     PartialDataConV(name)
   | VariantConstructor (loc, name, args) ->
@@ -351,7 +352,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     in
     begin match VarMap.find_opt name runtime_module.mod_vars with
     | None -> panic __LOC__ (Loc.pretty loc ^ ": Module member not found at runtime: '" ^ Name.pretty name ^ "'. This should have been caught earlier!")
-    | Some reference -> !reference
+    | Some reference -> reference
     end
   | RecordUpdate (loc, expr, update_exprs) -> 
     begin match eval_expr env expr with
@@ -541,16 +542,11 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     (* We can safely ignore the type annotation since it has been checked by the
        typechecker already *)
   | LetRec (loc, _ty, f, params, e1, e2) ->
-    let rec env' = lazy (fst (insert_var f (ClosureV (env', params, e1)) env)) in
+    let rec env' = lazy (insert_var f (ClosureV (env', params, e1)) env) in
     eval_expr (Lazy.force env') e2
   | LetEnv (loc, x, e1, e2) ->
     let env' = insert_env_var loc x (eval_expr env e1) env in
     eval_expr env' e2
-  | Assign (loc, x, e1) ->
-    let x_ref = lookup_var env loc x  in
-    x_ref := (eval_expr env e1);
-    unitV
-
   | ProgCall (loc, prog, args) as expr -> 
     eval_expr env (Pipe (loc, [expr]))
 
@@ -615,7 +611,20 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     let value = eval_expr env expr in
     begin match value with
     | DataConV (_, underlying) -> underlying
+    | RefV(reference) -> !reference
     | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to unwrap non data constructor value: " ^ Value.pretty value)
+    end
+  | MakeRef (loc, expr) ->
+    let value = eval_expr env expr in
+    RefV(ref value)
+  | Assign (loc, ref_expr, expr) ->
+    let ref_val = eval_expr env ref_expr in
+    let value = eval_expr env expr in
+    begin match ref_val with
+    | RefV(reference) -> 
+      reference := value;
+      unitV
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to assign to non-reference at runtime")
     end
 
 and eval_app env loc fun_v arg_vals = 
@@ -651,7 +660,7 @@ and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr,
 
     (* We can safely ignore the type annotation since it has been checked by the typechecker already *)
   | LetRecSeq (loc, _ty, f, params, e) :: exprs ->
-    let rec env' = lazy (fst (insert_var f (ClosureV (env', params, e)) env)) in
+    let rec env' = lazy (insert_var f (ClosureV (env', params, e)) env) in
     eval_seq_cont (Lazy.force env') exprs cont
   | LetEnvSeq (loc, x, e) :: exprs ->
     let env' = insert_env_var loc x (eval_expr env e) env in
@@ -932,64 +941,68 @@ and empty_eval_env (argv: string list): eval_env = {
 
 let eval (argv : string list) (exprs : Typed.expr list) : value = eval_seq (empty_eval_env argv) exprs
 
-let flag_info_of_flag_def (env : eval_env) (flag_def : Typed.flag_def): Argparse.flag_info * eval_env =
+let flag_info_of_flag_def (env_ref : eval_env ref) (flag_def : Typed.flag_def): Argparse.flag_info =
   let aliases = flag_def.flags in
   let description = Option.value ~default:"" flag_def.description in
   match flag_def.args with
   | Switch name ->
-    let env, flag_ref = insert_var name (BoolV false) env in
+    env_ref := insert_var name (BoolV false) !env_ref;
     { aliases
     ; arg_count = 0
     ; required = false
     ; description
-    ; action = fun _ -> flag_ref := BoolV true
-    }, env
+    ; action = fun _ -> env_ref := insert_var name (BoolV true) !env_ref
+    }
   | Varargs name ->
-    let env, flag_ref = insert_var name (ListV []) env in
+    env_ref := insert_var name (ListV []) !env_ref;
     { aliases
     ; arg_count = 1
     ; required = false
     ; description
     ; action = fun args ->
-      match !flag_ref with
-      | ListV prev_args -> flag_ref := ListV (prev_args @ (List.map (fun x -> StringV x) args))
+      match lookup_var !env_ref (Loc.internal) name with
+      | ListV prev_args -> 
+        (* TODO: This is quadratic :/ *)
+        env_ref := insert_var name (ListV (prev_args @ (List.map (fun x -> StringV x) args))) !env_ref
       | v -> raise (Panic ("flag_info_of_flag_def: Non-list value in varargs flag reference: " ^ Value.pretty v))
-    }, env
-  | Named args ->
-    let env, refs = List.fold_left_map (
-      fun env x -> insert_var x NullV env
-      ) env args
-    in
+    }
+  | Named params ->
     { aliases
-    ; arg_count = List.length args
+    ; arg_count = List.length params
     ; required = true
     ; description
     ; action = fun args ->
-      List.iter2 (fun r x -> r := StringV x) refs args
-    }, env  
-  | NamedDefault args ->
-    let env, refs = List.fold_left_map (
-      fun env (x, default) -> insert_var x (StringV default) env
-      ) env args
-    in
+      List.iter2
+        (fun param arg -> 
+          env_ref := insert_var param (StringV arg) !env_ref)
+        params
+        args
+    }  
+  | NamedDefault params ->
+    List.iter 
+      (fun (param, default) -> 
+        env_ref := insert_var param (StringV default) !env_ref)
+      params;
     { aliases
-    ; arg_count = List.length args
+    ; arg_count = List.length params
     ; required = false
     ; description
     ; action = fun args ->
-      List.iter2 (fun r x -> r := StringV x) refs args
-    }, env
+      List.iter2 
+        (fun (param, _default) arg -> 
+          env_ref := insert_var param (StringV arg) !env_ref)
+        params 
+        args
+    }
     
 
 let eval_header (env : eval_env) (header : Typed.header) : eval_env =
   let description = Option.value ~default:"" header.description in
   let usage = Option.value ~default: "[OPTIONS]" header.usage in
 
-  let update_option option (env, infos) = 
-    let info, env = flag_info_of_flag_def env option in
-    (env, info::infos)
-  in
-  let env, infos = List.fold_right update_option header.options (env, []) in
+  let env_ref = ref env in
+
+  let infos = List.map (flag_info_of_flag_def env_ref) header.options in
   
   let prog_info = Argparse.{
     name = List.hd env.argv
@@ -999,7 +1012,7 @@ let eval_header (env : eval_env) (header : Typed.header) : eval_env =
 
   let args = Argparse.run infos prog_info (fun msg -> raise (EvalError.ArgParseError msg)) (List.tl env.argv) in
 
-  { env with argv = (List.hd env.argv :: args) }
+  { !env_ref with argv = (List.hd env.argv :: args) }
 
 
 (* Note [left-to-right evaluation]

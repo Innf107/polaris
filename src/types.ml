@@ -403,6 +403,19 @@ let rec split_fun_ty : local_env -> loc -> int -> ty -> (ty list * ty) =
     subsumes env loc ty (Fun(argument_types, result_type));
     (argument_types, result_type)
 
+(** Find the type under a reference. This will match on the type directly if possible or
+    use unification otherwise *)
+let rec split_ref_ty : local_env -> loc -> ty -> ty =
+  fun env loc -> function
+  | Ref(ty) -> ty
+  | TypeAlias(alias_name, args) ->
+    let real_type = instantiate_type_alias env alias_name args in
+    split_ref_ty env loc real_type
+  | ty -> 
+    let inner_type = fresh_unif () in
+    subsumes env loc ty (Ref(inner_type));
+    inner_type
+
 let rec infer : local_env -> expr -> ty * Typed.expr =
   fun env expr -> match expr with
     | Var (loc, x) -> 
@@ -619,15 +632,6 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       ( result_ty
       , LetEnv(loc, envvar, body, rest) 
       )
-    | Assign (loc, var, expr) ->
-      let var_ty = match NameMap.find_opt var env.local_types with
-        | Some ty -> ty
-        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound variable in typechecker (assignment): '" ^ Name.pretty var ^ "'")
-      in
-      let expr = check env var_ty expr in
-      ( Ty.unit
-      , Assign (loc, var, expr)
-      )
     | ProgCall (loc, prog, args) ->
       (* TODO: We really need some kind of toString typeclass here *)
       let args = List.map (check env String) args in
@@ -695,6 +699,22 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       ( result_ty
       , Unwrap (loc, expr)
       )
+    | MakeRef(loc, expr) ->
+      let ty, expr = infer env expr in
+      ( Ref(ty)
+      , MakeRef(loc, expr)
+      )
+    | Assign (loc, ref_expr, expr) ->
+      (* We infer and split the type of the reference and then check the expression against that.
+          We could to this in reverse, which would remove the need to split and possibly generate
+          fewer constraints, but this might result in drastically worse error messages. *)
+      let ref_type, ref_expr = infer env ref_expr in
+      let ref_value_type = split_ref_ty env loc ref_type in
+
+      let expr = check env ref_value_type expr in
+      ( Ty.unit
+      , Assign (loc, ref_expr, expr)
+      )  
 
 
 and check : local_env -> ty -> expr -> Typed.expr =
@@ -798,14 +818,6 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let e1 = check env String e1 in
       let e2 = check env expected_ty e2 in
       LetEnv(loc, envvar, e1, e2)
-    | Assign (loc, var, expr), expected_ty ->
-      let var_ty = match NameMap.find_opt var env.local_types with
-        | Some ty -> ty
-        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound variable in typechecker (assignment): '" ^ Name.pretty var ^ "'")
-      in
-      let expr = check env var_ty expr in
-      subsumes env loc expected_ty Ty.unit;
-      Assign(loc, var, expr)
     | ProgCall _, _ -> defer_to_inference ()
     | Pipe _, _ -> defer_to_inference ()
     | EnvVar _, _ -> defer_to_inference ()
@@ -833,6 +845,14 @@ and check : local_env -> ty -> expr -> Typed.expr =
       unwrap_constraint env loc ty expected_ty;
       Unwrap(loc, expr)
     | NullLit _, _ -> Util.todo __LOC__
+    | MakeRef(loc, expr), Ref(inner_type) ->
+      check env inner_type expr
+    | MakeRef _, _ -> defer_to_inference ()
+    | Assign (loc, ref_expr, expr), Ref(inner_type) ->
+      let ref_expr = check env (Ref inner_type) ref_expr in
+      let expr = check env inner_type expr in
+      Assign(loc, ref_expr, expr)
+    | Assign _, _ -> defer_to_inference ()
   
 and check_list_comp : local_env -> list_comp_clause list -> local_env * Typed.list_comp_clause list =
     fun env -> function
@@ -1089,6 +1109,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
         List.iter2 go (Array.to_list tys1) (Array.to_list tys2)
       | List ty1, List ty2 -> go ty1 ty2
       | Promise ty1, Promise ty2 -> go ty1 ty2
+      | Ref ty1, Ref ty2 -> go ty1 ty2
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), (original_ty1, original_ty2))))
       | (Number, Number) | (Bool, Bool) | (String, String) -> ()
       | Skol (u1, _), Skol (u2, _) when Unique.equal u1 u2 -> ()
@@ -1255,6 +1276,8 @@ let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
       end in
       let underlying_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq var_names) (List.to_seq args))) underlying_type_raw in
       solve_unify loc env state underlying_type ty2
+    | Ref(value_type) ->
+      solve_unify loc env state value_type ty2
     | ty -> 
       (* Defer this constraint if possible. If not (i.e. we already deferred this one) we throw a type error *)
       match state.deferred_constraints with

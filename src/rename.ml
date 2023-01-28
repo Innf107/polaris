@@ -84,6 +84,7 @@ let rename_type loc (scope : RenameScope.t) original_type =
         | String -> String
         | List(ty) -> List(rename_nonbinding ty)
         | Promise(ty) -> Promise(rename_nonbinding ty)
+        | Ref(ty) -> Ref(rename_nonbinding ty)
         | Tuple(tys) -> Tuple(Array.map rename_nonbinding tys)
         | Fun(tys1, ty) -> Fun(List.map rename_nonbinding tys1, rename_nonbinding ty)
         | RecordClosed tys -> RecordClosed (Array.map (fun (x, ty) -> (x, rename_nonbinding ty)) tys)
@@ -409,10 +410,6 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
         LetRec(loc, mty', x', patterns', rename_expr exports inner_scope e1, rename_expr exports scope' e2)
     | LetEnv (loc, x, e1, e2) ->
         LetEnv (loc, x, rename_expr exports scope e1, rename_expr exports scope e2)
-    | Assign (loc, x, e) ->
-        let x' = lookup_var scope loc x in
-        Assign (loc, x', rename_expr exports scope e)
-
     | ProgCall (loc, p, args) ->
         ProgCall (loc, p, List.map (rename_expr exports scope) args)
     | Pipe (loc, exprs) ->
@@ -439,6 +436,11 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
         let ty, _ = rename_type loc scope ty in
         Ascription (loc, expr, ty)
     | Unwrap(loc, expr) -> Unwrap(loc, rename_expr exports scope expr)
+    | MakeRef(loc, expr) -> MakeRef(loc, rename_expr exports scope expr)
+    | Assign (loc, place_expr, expr) ->
+        let place_expr = rename_expr exports scope place_expr in
+        let expr = rename_expr exports scope expr in
+        Assign (loc, place_expr, expr)
 
 and rename_seq_state (exports : (module_exports * Typed.expr list) FilePathMap.t) (scope : RenameScope.t) (exprs : Parsed.expr list) : Renamed.expr list * RenameScope.t = 
     let open RenameScope in

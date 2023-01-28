@@ -1,8 +1,8 @@
 # EXPECT: 6
 
-let x = 5
+let x = ref 5
 
 x := 6
 
-print(x)
+print(x!)
 

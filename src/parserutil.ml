@@ -65,3 +65,4 @@ let pretty_token = function
 | DATA -> "DATA"
 | TYPE -> "TYPE"
 | BACKTICK -> "BACKTICK"
+| REF -> "REF"

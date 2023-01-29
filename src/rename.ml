@@ -165,7 +165,17 @@ let rename_type loc (scope : RenameScope.t) original_type =
 let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in function
     | Parsed.VarPat (loc, var) ->
         let var' = fresh_var var in
-        (Renamed.VarPat (loc, var'), (fun scope -> insert_var var var' scope), fun x -> x)
+        ( Renamed.VarPat (loc, var')
+        , insert_var var var'
+        , Fun.id
+        )
+    | AsPat(loc, pattern, string_name) ->
+        let pattern, env_trans, ty_trans = rename_pattern scope pattern in
+        let name = fresh_var string_name in
+        ( AsPat(loc, pattern, name)
+        , insert_var string_name name << env_trans
+        , ty_trans
+        )
     | ConsPat (loc, x, xs) ->
         let x', x_trans, x_ty_trans = rename_pattern scope x in
         let xs', xs_trans, xs_ty_trans = rename_pattern scope xs in

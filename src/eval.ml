@@ -228,6 +228,9 @@ let rec match_pat_opt (pat : Typed.pattern) (scrut : value) : (eval_env -> eval_
   | TypePat (_, pat, _), scrut -> match_pat_opt pat scrut
   | VarPat (_, x), scrut ->
     Some(fun env -> insert_var x scrut env)
+  | AsPat (_, pattern, name), scrut ->
+    let opt_env_trans = match_pat_opt pattern scrut in
+    Option.map (fun env_trans -> insert_var name scrut << env_trans) opt_env_trans
   | ConsPat(_, p, ps), ListV (v :: vs) ->
     let* x_trans = match_pat_opt p v in
     let* xs_trans = match_pat_opt ps (ListV vs) in

@@ -304,7 +304,11 @@ pattern1:
     | pattern2 { $1 }
 
 pattern2:
-    | pattern_leaf "::" pattern2 { ConsPat(loc $startpos $endpos, $1, $3) }
+    | pattern3 "::" pattern2 { ConsPat(loc $startpos $endpos, $1, $3) }
+    | pattern3 { $1 }
+
+pattern3:
+    | pattern_leaf AS IDENT { AsPat(loc $startpos $endpos, $1, $3) }
     | pattern_leaf { $1 }
 
 pattern_leaf:

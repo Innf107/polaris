@@ -219,6 +219,7 @@ module Template = struct
 
   type pattern =
     | VarPat of loc * name
+    | AsPat of loc * pattern * name
     | ConsPat of loc * pattern * pattern
     | ListPat of loc * pattern list
     | TuplePat of loc * pattern list
@@ -465,6 +466,7 @@ module Template = struct
 
   let rec pretty_pattern = function
     | VarPat (_, x) -> pretty_name x
+    | AsPat(_, pattern, name) -> "(" ^ pretty_pattern pattern ^ " as " ^ pretty_name name ^ ")"
     | ConsPat (_, x, xs) -> "(" ^ pretty_pattern x ^ ") :: (" ^ pretty_pattern xs ^ ")"
     | ListPat (_, pats) -> "[" ^ String.concat ", " (List.map pretty_pattern pats) ^ "]"
     | TuplePat (_, pats) -> "(" ^ String.concat ", " (List.map pretty_pattern pats) ^ ")"
@@ -580,7 +582,7 @@ module Template = struct
     -> loc
 
   let get_pattern_loc = function
-    | VarPat (loc, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
+    | VarPat (loc, _) | AsPat(loc, _, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
     | NumPat (loc, _) | StringPat(loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _) | DataPat (loc, _, _)
     | VariantPat(loc, _, _)
     -> loc
@@ -805,6 +807,10 @@ module Template = struct
         | VarPat(loc, name) -> 
           let name, state = self#traverse_name state name in
           VarPat(loc, name), state
+        | AsPat(loc, pattern, name) ->
+          let pattern, state = self#traverse_pattern state pattern in
+          let name, state = self#traverse_name state name in
+          AsPat(loc, pattern, name), state
         | ConsPat(loc, head_pattern, tail_pattern) -> 
           let head_pattern, state = self#traverse_pattern state head_pattern in
           let tail_pattern, state = self#traverse_pattern state tail_pattern in

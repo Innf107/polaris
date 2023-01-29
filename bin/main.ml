@@ -274,9 +274,9 @@ let handle_errors text_style print_fun f =
                       ^ "                           and " ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) tys2) ^ "\n"
                       ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
                       ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2)
-    | PassedIncorrectNumberOfArgsToFun (expected_count, arg_types, result_ty) ->
-        "Trying to pass " ^ text_style.number (List.length arg_types) ^ " arguments to a function that expects " ^ text_style.number expected_count ^ ".\n"
-      ^ "Incorrect number of arguments passed to a function of type " ^ text_style.ty (Renamed.pretty_type (Fun(arg_types, result_ty)))
+    | PassedIncorrectNumberOfArgsToFun (actual_count, expected_types, result_ty) ->
+        "Trying to pass " ^ text_style.number actual_count ^ " arguments to a function that expects " ^ text_style.number (List.length expected_types) ^ ".\n"
+      ^ "Incorrect number of arguments passed to a function of type " ^ text_style.ty (Renamed.pretty_type (Fun(expected_types, result_ty)))
     | NonProgCallInPipe expr ->
       (* TODO: Is this even possible? *)
       "Non program call expression in a pipe."

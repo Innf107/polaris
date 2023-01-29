@@ -194,6 +194,12 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * 
       , insert_var varname var_ty
       , VarPat(loc, varname)
       )
+    | AsPat (loc, pattern, name) ->
+      let pattern_ty, env_trans, pattern = infer_pattern env pattern in
+      ( pattern_ty
+      , insert_var name pattern_ty << env_trans
+      , AsPat(loc, pattern, name)
+      )
     | ConsPat (loc, head_pattern, tail_pattern) ->
       let elem_ty = fresh_unif () in
       let head_trans, head_pattern = check_pattern env head_pattern elem_ty in
@@ -325,9 +331,14 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) * Typ
     match pattern, expected_ty with
     (* We need a special case for var patterns to allow polymorphic type patterns. 
       (These would be rejected by unification) *)
-    | VarPat (loc, var), _ -> 
+    | VarPat (loc, var), expected_ty -> 
       ( insert_var var expected_ty
       , VarPat(loc, var)
+      )
+    | AsPat (loc, pattern, name), expected_ty ->
+      let env_trans, pattern = check_pattern env pattern expected_ty in
+      ( insert_var name expected_ty << env_trans
+      , AsPat (loc, pattern, name)
       )
     | ConsPat (loc, head, tail), List(elem_ty) ->
       let head_trans, head = check_pattern env head elem_ty in
@@ -458,13 +469,13 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
          It also makes it possible to add rank N types later, since polytypes can be checked for
          but not inferred. *)
       let fun_ty, fun_expr = infer env fun_expr in
-      let (arg_tys, result_ty) = split_fun_ty env loc (List.length args) fun_ty in
+      let (param_tys, result_ty) = split_fun_ty env loc (List.length args) fun_ty in
 
-      if List.compare_lengths args arg_tys <> 0 then begin
-        raise (TypeError (loc, PassedIncorrectNumberOfArgsToFun(List.length args, arg_tys, result_ty)))
+      if List.compare_lengths args param_tys <> 0 then begin
+        raise (TypeError (loc, PassedIncorrectNumberOfArgsToFun(List.length args, param_tys, result_ty)))
       end;
 
-      let args = List.map2 (check env) arg_tys args in
+      let args = List.map2 (check env) param_tys args in
 
       result_ty, App(loc, fun_expr, args)
     | Lambda (loc, args, body) -> 

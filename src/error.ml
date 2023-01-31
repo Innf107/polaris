@@ -65,92 +65,17 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       ^ "                 but was given " ^ text_style.number (List.length args))
     end
   | EvalError error -> begin match error with
-    | DynamicVarNotFound (x, loc::locs) ->
-        print_fun (Some loc) ("Variable not found during execution: '" ^ Name.pretty x ^ "'\n"
-        ^ "This is definitely a bug in the interpreter"
-        ^ pretty_call_trace locs
-        )
-    | NotAValueOfType(ty, value, cxt, loc :: locs) -> 
-      print_fun (Some loc) ("Not a value of type " ^ ty ^ "."
-        ^ "\n    Context: " ^ cxt
-        ^ "\n      Value: " ^ Value.pretty value
-        ^ "\n" ^ pretty_call_trace locs
-        )  
-    | TryingToApplyNonFunction (value, loc::locs) -> print_fun (Some loc) (
-          "Trying to apply a value that is not a function: " ^ Value.pretty value
-        ^ "\n" ^ pretty_call_trace locs
-      )
-    | TryingToLookupInNonMap (value, key, loc::locs) -> 
-        print_fun (Some loc) ("Trying to lookup key '" ^ key ^ "' in non-map value: " ^ Value.pretty value
-        ^ "\n" ^ pretty_call_trace locs
-      )
-    | TryingToLookupDynamicInNonMap (value, loc::locs) -> 
-      print_fun (Some loc) ("Trying to lookup dynamic key in non map or list value: " ^ Value.pretty value
-        ^ "\n" ^ pretty_call_trace locs
-      )
-    | InvalidMapKey (key, map, loc::locs) -> 
-      print_fun (Some loc) ("Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in map: " ^ Value.pretty (RecordV map)
-        ^ "\n" ^ pretty_call_trace locs
-      )
-    | InvalidListKey (key, list, loc::locs) -> 
-      print_fun (Some loc) ("Invalid key '" ^ Value.pretty key ^ "' in dynamic lookup in list: " ^ Value.pretty (ListV list)
-        ^ "\n" ^ pretty_call_trace locs
-      )
-
     | MapDoesNotContain (map, key, loc::locs) -> 
       print_fun (Some loc) ("Map does not contain key '" ^ key ^ "': " ^ Value.pretty (RecordV map)
         ^ "\n" ^ pretty_call_trace locs
       )
-    | InvalidNumberOfArguments (params, vals, loc::locs) -> 
-      print_fun (Some loc) ("Invalid number of arguments in function call.\n"
-                      ^ "Expected " ^ Int.to_string (List.length params) ^ " arguments, but received " ^ Int.to_string (List.length vals) ^ ".\n"
-                      ^ "    Expected: (" ^ String.concat ", " (List.map Typed.pretty_pattern params) ^ ")\n"
-                      ^ "      Actual: (" ^ String.concat ", " (List.map Value.pretty vals) ^ ")"
-                      ^ "\n" ^ pretty_call_trace locs
-        )
     | PrimOpArgumentError (primop_name, vals, msg, loc::locs) -> 
       print_fun (Some loc) ("Invalid arguments to builtin function '" ^ primop_name ^ "': " ^ msg ^ "\n"
                       ^ "    Arguments: " ^ Value.pretty (ListV vals)
                       ^ "\n" ^ pretty_call_trace locs
       )
-    | InvalidOperatorArgs (op_name, vals, loc::locs) -> 
-      print_fun (Some loc) ("Invalid arguments for operator '" ^ op_name ^ "'\n"
-                        ^ "    Arguments: " ^ Value.pretty (ListV vals)
-                        ^ "\n" ^ pretty_call_trace locs
-      )
-    | NonNumberInRangeBounds (start_val, end_val, loc::locs) -> 
-      print_fun (Some loc) ("Non-number in range bounds.\n"
-                      ^ "    Range: [" ^ Value.pretty start_val ^ " .. " ^ Value.pretty end_val ^ "]"
-                      ^ "\n" ^ pretty_call_trace locs
-      )
-    | NonBoolInListComp (value, loc::locs) -> 
-      print_fun (Some loc) ("Non-boolean in list comprehension condition: " ^ Value.pretty value
-                    ^ "\n" ^ pretty_call_trace locs
-    )
-    | NonListInListComp (value, loc::locs) -> 
-      print_fun (Some loc) ("Trying to draw from a non-list in a list comprehension: " ^ Value.pretty value
-                    ^ "\n" ^ pretty_call_trace locs
-    )
-    | InvalidProcessArg (value, loc::locs) -> 
-      print_fun (Some loc) ("Argument cannot be passed to an external process in an !-Expression.\n"
-                      ^ "    Argument: " ^ Value.pretty value
-                      ^ "\n" ^ pretty_call_trace locs
-      )
-    | NonProgCallInPipe (expr, loc::locs) -> 
-      print_fun (Some loc) ("Non-program call expression found in pipe: " ^ Typed.pretty expr
-        ^ "\n" ^ pretty_call_trace locs
-      )
     | RuntimeError (msg, loc::locs) -> 
       print_fun (Some loc) ("Runtime error: " ^ msg
-      ^ "\n" ^ pretty_call_trace locs
-    )
-    | ModuleNotFound (modName, triedPaths) -> print_fun None (
-        "Module not found: " ^ text_style.identifier modName ^ "\n"
-      ^ "Tried paths:"
-      ^ "\n    " ^ String.concat "\n    " triedPaths
-    )
-    | AwaitNonPromise (value, loc::locs) -> 
-      print_fun (Some loc) ("Trying to await non-promise: " ^ Value.pretty value
       ^ "\n" ^ pretty_call_trace locs
     )
     | NonExhaustiveMatch (value, loc::locs) -> 

@@ -63,37 +63,11 @@ let isUnitV = function
   | _ -> false
 
 type eval_error =
-  | DynamicVarNotFound of name * loc list
-  | NotAValueOfType of string * value * string * loc list
-  | TryingToApplyNonFunction of value * loc list
-  | TryingToLookupInNonMap of value * string * loc list
-  | TryingToLookupDynamicInNonMap of value * loc list
-  | InvalidMapKey of value * value RecordVImpl.t * loc list
-  | InvalidListKey of value * value list * loc list
   | MapDoesNotContain of value RecordVImpl.t * string * loc list
-  | InvalidNumberOfArguments of Typed.pattern list * value list * loc list
   | IndexOutOfRange of value list * int * loc list
 
-  | PrimOpError of string * string * loc list
-  | PrimOpArgumentError of string * value list * string * loc list
-
-  | InvalidOperatorArgs of string * value list * loc list
-
-  | NonNumberInRangeBounds of value * value * loc list
-
-  | NonBoolInListComp of value * loc list
-  | NonListInListComp of value * loc list
-
-  | InvalidProcessArg of value * loc list
-  | InvalidEnvVarValue of string * value * loc list
-
-  | NonProgCallInPipe of Typed.expr * loc list
-
   | RuntimeError of string * loc list
-
-  | ModuleNotFound of string * string list
-
-  | AwaitNonPromise of value * loc list
+  | PrimOpArgumentError of string * value list * string * loc list
 
   | ArgParseError of string
 
@@ -154,7 +128,7 @@ let lookup_var (env : eval_env) (loc : loc) (var : name) : value =
   try 
     VarMap.find var env.vars
   with
-    Not_found -> raise (EvalError (DynamicVarNotFound (var, loc :: env.call_trace)))
+    Not_found -> panic __LOC__ (Loc.pretty loc ^ ": Variable not found at runtime: " ^ Name.pretty var)
 
 let insert_var : name -> value -> eval_env -> eval_env =
   fun var value env ->
@@ -167,7 +141,7 @@ let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
     | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
     | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ | VariantConstructorV _
     | RefV _
-      -> raise (EvalError (InvalidEnvVarValue (var, value, loc :: env.call_trace)))
+      -> panic __LOC__ (Loc.pretty loc ^ ": Invalid env var value: " ^ Value.pretty value)
 
 let insert_module_var : name -> runtime_module -> eval_env -> eval_env =
   fun var module_value env ->
@@ -179,18 +153,6 @@ let full_env_vars : eval_env -> string array =
     (Unix.environment ()) 
     (Array.of_seq (Seq.map (fun (x, y) -> x ^ "=" ^ y) (EnvMap.to_seq env.env_vars)))
 
-(* Tries to convert a number to a value. Throws an error if it can't *)
-let as_num context loc = function
-  | NumV x -> x
-  | x -> raise (EvalError (NotAValueOfType ("number", x, context, loc)))
-
-let as_bool context loc = function
-  | BoolV x -> x
-  | x -> raise (EvalError (NotAValueOfType ("boolean", x, context, loc)))
-
-let as_string context loc = function
-  | StringV x -> x
-  | x -> raise (EvalError (NotAValueOfType ("string", x, context, loc)))
 
 let rec val_eq (x : value) (y : value) : bool = 
   match x, y with
@@ -274,7 +236,8 @@ let match_pat pat scrut locs =
 
 let rec match_params patterns arg_vals locs = match patterns, arg_vals with
 | [], [] -> fun x -> x
-| ([] as pats), (_ as args) | (_ as pats), ([] as args) -> raise (EvalError (InvalidNumberOfArguments (pats, args, locs)))
+| ([] as pats), (_ as args) | (_ as pats), ([] as args) -> 
+  panic __LOC__ ("Invalid number of arguments at runtime")
 | pat :: pats, arg :: args -> 
   let trans = match_pat pat arg locs in
   fun s -> match_params pats args locs (trans s)
@@ -341,7 +304,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
       | (value :: _) -> value
       | [] -> raise (EvalError (MapDoesNotContain (map, key, loc :: env.call_trace)))
       end
-    | value -> raise (EvalError (TryingToLookupInNonMap (value, key, loc :: env.call_trace)))
+    | value -> panic __LOC__ (Loc.pretty loc ^ ": Subscript to non-record at runtme: " ^ Value.pretty value)
     end
   | ModSubscript (loc, mod_name, name) ->
     let runtime_module = match VarMap.find_opt mod_name env.module_vars with
@@ -375,14 +338,6 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     end
   | DynLookup (loc, map_expr, key_expr) ->
     begin match eval_expr env map_expr with
-    | RecordV map -> 
-      begin match eval_expr env key_expr with
-      | StringV key -> begin match RecordVImpl.find key map with
-                        | value :: _ -> value
-                        | [] -> panic __LOC__ (Loc.pretty loc ^ ": Record entry not found at runtime: " ^ key)
-                        end
-      | value -> raise (EvalError (InvalidMapKey (value, map, loc :: env.call_trace)))
-      end
     | ListV list ->
       begin match eval_expr env key_expr with
       | NumV num when Float.is_integer num ->
@@ -391,41 +346,49 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
         | Some x -> x
         | None -> raise (EvalError (IndexOutOfRange(list, index, loc :: env.call_trace)))
         end
-      | value -> raise (EvalError (InvalidListKey (value, list, loc :: env.call_trace)))
+      | value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid list index at runtime: " ^ Value.pretty value) 
       end
-    | value -> raise (EvalError (TryingToLookupDynamicInNonMap (value, loc :: env.call_trace)))
+    | value -> panic __LOC__ (Loc.pretty loc ^ ": list index in non-list at runtime: " ^ Value.pretty value) 
     end
 
   | BinOp (loc, e1, Add, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
-    let context = "Trying to add " ^ Value.pretty v1 ^ " and " ^ Value.pretty v2 in
-    NumV (as_num context (loc :: env.call_trace) v1 +. as_num context (loc :: env.call_trace) v2)
+    begin match v1, v2 with
+    | NumV num1, NumV num2 -> NumV (num1 +. num2)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to add non-numbers at runtime: " ^ Value.pretty v1 ^ ", " ^ Value.pretty v2) 
+    end
   | BinOp (loc, e1, Sub, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
-    let context = "Trying to subtract " ^ Value.pretty v2 ^ " from " ^ Value.pretty v1 in
-    NumV (as_num context (loc :: env.call_trace) v1 -. as_num context (loc :: env.call_trace) v2)
+    begin match v1, v2 with
+    | NumV num1, NumV num2 -> NumV (num1 -. num2)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to subtract non-numbers at runtime: " ^ Value.pretty v1 ^ ", " ^ Value.pretty v2) 
+    end
   | BinOp (loc, e1, Mul, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
-    let context = "Trying to multiply " ^ Value.pretty v1 ^ " and " ^ Value.pretty v2 in
-    NumV (as_num context (loc :: env.call_trace) v1 *. as_num context (loc :: env.call_trace) v2)
+    begin match v1, v2 with
+    | NumV num1, NumV num2 -> NumV (num1 *. num2)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to multiply non-numbers at runtime: " ^ Value.pretty v1 ^ ", " ^ Value.pretty v2) 
+    end
   | BinOp (loc, e1, Div, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
-    let context = "Trying to divide " ^ Value.pretty v1 ^ " by " ^ Value.pretty v2 in
-    NumV (as_num context (loc :: env.call_trace) v1 /. as_num context (loc :: env.call_trace) v2)
+    begin match v1, v2 with
+    | NumV num1, NumV num2 -> NumV (num1 /. num2)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to divide non-numbers at runtime: " ^ Value.pretty v1 ^ ", " ^ Value.pretty v2) 
+    end
   | BinOp (loc, e1, Cons, e2) ->
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
     begin match v2 with
     | ListV values -> ListV (v1 :: values)
-    | _ -> raise (EvalError (InvalidOperatorArgs("::", [v1; v2], loc :: env.call_trace)))
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to cons to non-list at runtime: " ^ Value.pretty v2)
     end
 
   | BinOp (loc, e1, Concat, e2) ->
@@ -438,7 +401,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     | StringV s1, StringV s2 -> StringV (s1 ^ s2)
     | StringV s1, NumV _ -> StringV(s1 ^ Value.pretty v2)
     | NumV _, StringV s2 -> StringV(Value.pretty v1 ^ s2)
-    | _, _ -> raise (EvalError (InvalidOperatorArgs("~", [v1; v2], loc :: env.call_trace)))
+    | _, _ -> panic __LOC__ (Loc.pretty loc ^ ": Invalid args to concat at runtime: " ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
     end 
 
   | BinOp (_, e1, Equals, e2) -> 
@@ -447,36 +410,44 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     let v2 = eval_expr env e2 in
     BoolV (val_eq v1 v2)
   | BinOp (_, e1, NotEquals, e2) -> 
-      (* See Note [left-to-right evaluation] *)
-      let v1 = eval_expr env e1 in
-      let v2 = eval_expr env e2 in
-      BoolV (not (val_eq v1 v2))
+    (* See Note [left-to-right evaluation] *)
+    let v1 = eval_expr env e1 in
+    let v2 = eval_expr env e2 in
+    BoolV (not (val_eq v1 v2))
 
   | BinOp (loc, e1, LE, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
-    let context = "Trying to compute " ^ Value.pretty v1 ^ " <= " ^ Value.pretty v2 in
-    BoolV (as_num context (loc :: env.call_trace) v1 <= as_num context (loc :: env.call_trace) v2)
+
+    begin match v1, v2 with
+    | NumV num1, NumV num2 -> BoolV (num1 <= num2)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to apply <= to non-numbers at runtime: " ^ Value.pretty v1 ^ ", " ^ Value.pretty v2) 
+    end
   | BinOp (loc, e1, GE, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
-    let context = "Trying to compute " ^ Value.pretty v1 ^ " >= " ^ Value.pretty v2 in
-    BoolV (as_num context (loc :: env.call_trace) v1 >= as_num context (loc :: env.call_trace) v2)
+    begin match v1, v2 with
+    | NumV num1, NumV num2 -> BoolV (num1 >= num2)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to apply >= to non-numbers at runtime: " ^ Value.pretty v1 ^ ", " ^ Value.pretty v2) 
+    end
   | BinOp (loc, e1, LT, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
-    let context = "Trying to compute " ^ Value.pretty v1 ^ " < " ^ Value.pretty v2 in
-    BoolV (as_num context (loc :: env.call_trace) v1 < as_num context (loc :: env.call_trace) v2)
+    begin match v1, v2 with
+    | NumV num1, NumV num2 -> BoolV (num1 < num2)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to apply < to non-numbers at runtime: " ^ Value.pretty v1 ^ ", " ^ Value.pretty v2) 
+    end
   | BinOp (loc, e1, GT, e2) -> 
     (* See Note [left-to-right evaluation] *)
     let v1 = eval_expr env e1 in
     let v2 = eval_expr env e2 in
-    let context = "Trying to compute " ^ Value.pretty v1 ^ " > " ^ Value.pretty v2 in
-    BoolV (as_num context (loc :: env.call_trace) v1 > as_num context (loc :: env.call_trace) v2)
-  
+    begin match v1, v2 with
+    | NumV num1, NumV num2 -> BoolV (num1 > num2)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to apply > to non-numbers at runtime: " ^ Value.pretty v1 ^ ", " ^ Value.pretty v2) 
+    end
   | BinOp (loc, e1, Or, e2) ->
     begin match eval_expr env e1 with
     | BoolV true -> BoolV true
@@ -484,9 +455,9 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
       begin match eval_expr env e2 with 
       | BoolV true -> BoolV true
       | BoolV false -> BoolV false
-      | value -> raise (EvalError (NotAValueOfType ("bool", value, "In the second argument of an || expression", loc :: env.call_trace)))
+      | value -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in || expression at runtime: " ^ Value.pretty value)
       end
-    | value -> raise (EvalError (NotAValueOfType ("bool", value, "In the first argument of an || expression", loc :: env.call_trace)))
+    | value -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in || expression at runtime: " ^ Value.pretty value)
     end
   | BinOp (loc, e1, And, e2) ->
       begin match eval_expr env e1 with
@@ -495,14 +466,14 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
         begin match eval_expr env e2 with 
         | BoolV true -> BoolV true
         | BoolV false -> BoolV false
-        | value -> raise (EvalError (NotAValueOfType ("bool", value, "In the second argument of an || expression", loc :: env.call_trace)))
+        | value -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in && expression at runtime: " ^ Value.pretty value)
         end
-      | value -> raise (EvalError (NotAValueOfType ("bool", value, "In the first argument of an && expression", loc :: env.call_trace)))
+      | value -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in && expression at runtime: " ^ Value.pretty value)
       end
   | Not(loc, e) ->
       begin match eval_expr env e with
       | BoolV b -> BoolV (not b)
-      | value -> raise (EvalError (NotAValueOfType("bool", value, "In the argument of a 'not' expression", loc :: env.call_trace)))
+      | value -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in not expression at runtime: " ^ Value.pretty value)
       end
   
   | Range(loc, e1, e2) ->
@@ -517,18 +488,17 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
           build_range (NumV x::acc) (x -. 1.)
         in
       ListV (build_range [] end_num) 
-    | _ -> raise (EvalError (NonNumberInRangeBounds(start_val, end_val, loc :: env.call_trace)))
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Non-number in range bounds at runtime: " ^ Value.pretty start_val ^ ", " ^ Value.pretty end_val)
     end
   | ListComp (loc, result_expr, comp_exprs) ->
     ListV (eval_list_comp env loc result_expr comp_exprs)
-  | If (loc, e1, e2, e3) ->
-    let v1 = eval_expr env e1 in
-    let context = "In the condition of an if expression" in
-    if as_bool context (loc :: env.call_trace) v1 then 
-      eval_expr env e2
-    else
-      eval_expr env e3
-
+  | If (loc, condition_expr, then_expr, else_expr) ->
+    let condition = eval_expr env condition_expr in
+    begin match condition with
+    | BoolV true -> eval_expr env then_expr
+    | BoolV false -> eval_expr env else_expr 
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in if condition at runtime: " ^ Value.pretty condition)
+      end
   | Seq (_, exprs) -> eval_seq env exprs
   | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
@@ -558,7 +528,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     result
 
   | Pipe (loc, (expr :: exprs)) ->
-    let output_lines = Value.as_args (fun x -> raise (EvalError (InvalidProcessArg (x, loc :: env.call_trace)))) (eval_expr env expr) in
+    let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr env expr) in
 
     let progs = progs_of_exprs env exprs in
 
@@ -587,7 +557,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     begin match eval_expr env expr with
     | PromiseV p -> 
       Promise.await p
-    | value -> raise (EvalError (AwaitNonPromise (value, loc :: env.call_trace)))
+    | value -> panic __LOC__ (Loc.pretty loc ^ ": Trying to await non-promise at runtime: " ^ Value.pretty value)
     end
   | Match (loc, scrut, branches) ->
     let scrut_val = eval_expr env scrut in
@@ -641,8 +611,8 @@ and eval_app env loc fun_v arg_vals =
     end
   | PrimOpV prim_name ->
       eval_primop {env with call_trace = loc :: env.call_trace} prim_name arg_vals loc
-  | x ->
-      raise (EvalError (TryingToApplyNonFunction (x, loc :: env.call_trace)))
+  | value ->
+    panic __LOC__ (Loc.pretty loc ^ ": Trying to apply non-function at runtime: " ^ Value.pretty value)
 
 
 
@@ -682,7 +652,7 @@ and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr,
     env.last_status := Pipe.wait_to_status pid;
     eval_seq_cont env exprs cont
   | Pipe (loc, (expr :: prog_exprs)) :: exprs ->
-    let output_lines = Value.as_args (fun x -> raise (EvalError (InvalidProcessArg (x, loc :: env.call_trace)))) (eval_expr env expr) in
+    let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr env expr) in
     
     let progs = progs_of_exprs env prog_exprs in
     
@@ -720,7 +690,7 @@ and eval_list_comp env loc result_expr = function
     begin match eval_expr env expr with
     | BoolV false -> []
     | BoolV true -> eval_list_comp env loc result_expr comps
-    | v -> raise (EvalError (NonBoolInListComp (v, loc :: env.call_trace)))
+    | value -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in list comprehension filter at runtime: " ^ Value.pretty value)
     end
   | DrawClause (pattern, expr) :: comps ->
     begin match eval_expr env expr with
@@ -732,7 +702,7 @@ and eval_list_comp env loc result_expr = function
           eval_list_comp (env_trans env) loc result_expr comps
       in
       List.concat_map eval_with_val values
-    | v -> raise (EvalError (NonListInListComp (v, loc :: env.call_trace)))
+    | value -> panic __LOC__ (Loc.pretty loc ^ ": Non-list inlist comprehension at runtime: " ^ Value.pretty value)
     end
   | [] -> 
     [eval_expr env result_expr]
@@ -804,7 +774,7 @@ and eval_primop env op args loc =
                     let transform group = 
                       match eval_app env loc transformClos [StringV (Re.Group.get group 0)] with
                       | StringV repl -> repl
-                      | value -> raise (EvalError (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace)))
+                      | value ->  panic __LOC__ (Loc.pretty loc ^ ": regexpTransform: Replacement function did not return a string. Returned value: " ^ Value.pretty value)
                     in
 
                     StringV (Re.replace regexp ~f:transform str_v)
@@ -817,17 +787,15 @@ and eval_primop env op args loc =
                   let transform group = 
                     match eval_app env loc transformClos [ListV (List.map (fun x -> StringV x) (Array.to_list (Re.Group.all group)))] with
                     | StringV repl -> repl
-                    | value -> raise (EvalError (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace)))
+                    | value -> panic __LOC__ (Loc.pretty loc ^ ": regexpTransform: Replacement function did not return a string. Returned value: " ^ Value.pretty value)
                   in
 
                   StringV (Re.replace regexp ~f:transform str_v)
                 | _ -> raise (EvalError (PrimOpArgumentError ("regexpTransformAll", args, "Expected (string, function, string)", loc :: env.call_trace)))
                 end
   | "writeFile" -> begin match args with
-                | [path_v; content_v] ->
+                | [StringV path; StringV content] ->
                   let context = "Trying to apply 'writeFile'" in
-                  let path = as_string context (loc :: env.call_trace) path_v in
-                  let content = as_string context (loc :: env.call_trace) content_v in
 
                   let channel = open_out path in
                   Out_channel.output_string channel content;
@@ -873,10 +841,8 @@ and eval_primop env op args loc =
               end
   | "toString" -> begin match args with
               | [arg] -> 
-                (* We have to use `Value.pretty` instead of `Float.to_string`, since
-                    the latter always appends a trailing dot. *)
                 StringV (Value.pretty arg)
-              | _ -> raise (EvalError (PrimOpArgumentError ("toString", args, "Expected a number", loc :: env.call_trace)))
+              | _ -> raise (EvalError (PrimOpArgumentError ("toString", args, "Expected a single argument", loc :: env.call_trace)))
               end            
   | "getArgv" -> begin match args with
                   | [] -> ListV (List.map (fun x -> StringV x) env.argv)
@@ -921,11 +887,11 @@ and eval_primop env op args loc =
 
 and progs_of_exprs env = function
   | ProgCall (loc, progName, args) :: exprs ->
-    let fail x = raise (EvalError (InvalidProcessArg (x, loc :: env.call_trace))) in
+    let fail value = panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime : " ^ Value.pretty value) in
     let arg_strings = List.concat_map (fun arg -> Value.as_args fail (eval_expr env arg)) args in
     (progName, arg_strings) :: progs_of_exprs env exprs
   | expr :: exprs -> 
-    raise (EvalError (NonProgCallInPipe (expr, Typed.get_loc expr :: env.call_trace)))
+    panic __LOC__ (Loc.pretty (get_loc expr) ^ ": Non-program call in pipe")
   | [] -> []
 
 and empty_eval_env (argv: string list): eval_env = {

@@ -5,17 +5,19 @@ module RenameMap = Map.Make(String)
 
 module FilePathMap = Map.Make(String)
 
-module RenameError = struct
-    exception VarNotFound of string * loc
-    exception ModuleVarNotFound of string * loc
-    exception TyVarNotFound of string * loc
-    exception TyConNotFound of string * loc
-    exception SubscriptVarNotFound of string * loc
-    exception LetSeqInNonSeq of Parsed.expr * loc
-    exception SubModuleNotFound of string * loc
-    exception HigherRankType of Parsed.ty * loc
-    exception WrongNumberOfTyConArgs of name * int * Parsed.ty list * loc
-end
+type rename_error =
+    | VarNotFound of string * loc
+    | ModuleVarNotFound of string * loc
+    | TyVarNotFound of string * loc
+    | TyConNotFound of string * loc
+    | SubscriptVarNotFound of string * loc
+    | LetSeqInNonSeq of Parsed.expr * loc
+    | SubModuleNotFound of string * loc
+    | HigherRankType of Parsed.ty * loc
+    | WrongNumberOfTyConArgs of name * int * Parsed.ty list * loc
+
+
+exception RenameError of rename_error
 
 module RenameScope = struct
     open RenameMap
@@ -56,19 +58,19 @@ module RenameScope = struct
         try 
             find var scope.variables 
         with
-            Not_found -> raise (RenameError.VarNotFound (var, loc))
+            Not_found -> raise (RenameError (VarNotFound (var, loc)))
 
     let lookup_data (scope : t) (loc : loc) (data : string) : name =
         try 
             find data scope.data_constructors 
         with
-            Not_found -> raise (RenameError.TyConNotFound (data, loc))        
+            Not_found -> raise (RenameError (TyConNotFound (data, loc)))
 
     let lookup_mod_var (scope : t) (loc : loc) (var : string) : name * t =
         try
             find var scope.module_vars
         with
-            Not_found -> raise (RenameError.ModuleVarNotFound (var, loc))
+            Not_found -> raise (RenameError (ModuleVarNotFound (var, loc)))
 end
 
 let fresh_var = Name.fresh
@@ -92,20 +94,20 @@ let rename_type loc (scope : RenameScope.t) original_type =
         | RecordVar (tys, varname) -> 
             begin match RenameMap.find_opt varname scope.ty_vars with
             | Some varname -> RecordVar (Array.map (fun (x, ty) -> (x, rename_nonbinding ty)) tys, varname)
-            | None -> raise (RenameError.TyVarNotFound(varname, loc))
+            | None -> raise (RenameError (TyVarNotFound(varname, loc)))
             end
         | VariantVar (tys, varname) -> 
             begin match RenameMap.find_opt varname scope.ty_vars with
             | Some varname -> VariantVar (Array.map (fun (x, ty) -> (x, List.map rename_nonbinding ty)) tys, varname)
-            | None -> raise (RenameError.TyVarNotFound(varname, loc))
+            | None -> raise (RenameError (TyVarNotFound(varname, loc)))
             end
         | TyConstructor(name, args) ->
             let name, arg_count, sort = match RenameMap.find_opt name scope.ty_constructors with
-            | None -> raise (RenameError.TyConNotFound(name, loc))
+            | None -> raise (RenameError (TyConNotFound(name, loc)))
             | Some (name, arg_count, sort) -> (name, arg_count, sort)
             in
             if List.compare_length_with args arg_count <> 0 then begin
-                raise (RenameError.WrongNumberOfTyConArgs(name, arg_count, args, loc))
+                raise (RenameError (WrongNumberOfTyConArgs(name, arg_count, args, loc)))
             end;
             let args = List.map rename_nonbinding args in
             begin match sort with
@@ -127,9 +129,9 @@ let rename_type loc (scope : RenameScope.t) original_type =
                TyConstructor(name, args)
         | TyVar(tv) -> begin match RenameMap.find_opt tv scope.ty_vars with
             | Some tv' -> TyVar(tv')
-            | None -> raise (RenameError.TyVarNotFound(tv, loc))
+            | None -> raise (RenameError (TyVarNotFound(tv, loc)))
             end
-        | Parsed.Forall _ -> raise (RenameError.HigherRankType(ty, loc))
+        | Parsed.Forall _ -> raise (RenameError (HigherRankType(ty, loc)))
         | Unif(_) -> panic __LOC__ ("Unification variable found after parsing. How did this happen wtf?")
         | Skol(_) -> panic __LOC__ ("Skolem found after parsing. How did this happen wtf?")
         | RecordUnif _ | VariantUnif _ -> panic __LOC__ ("Unification variable row found after parsing. How did this happen wtf?")
@@ -276,7 +278,7 @@ let rec rename_mod_expr : (module_exports * Typed.expr list) FilePathMap.t
     | SubModule (loc, mod_expr, field) ->
         let mod_expr', contents = rename_mod_expr exports scope mod_expr in
         let field', sub_contents = match StringMap.find_opt field contents.module_vars with
-        | None -> raise (RenameError.SubModuleNotFound (field, loc))
+        | None -> raise (RenameError (SubModuleNotFound (field, loc)))
         | Some (field', sub_contents) -> field', sub_contents                                     
         in
         SubModule (loc, mod_expr', field'), sub_contents
@@ -389,7 +391,7 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
 
     | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _, _) | LetEnvSeq (loc, _, _) 
     (* TODO: Improve this error message *)
-    | LetModuleSeq (loc, _, _) | LetDataSeq(loc, _, _, _) | LetTypeSeq(loc, _, _, _) -> raise (RenameError.LetSeqInNonSeq (expr, loc))
+    | LetModuleSeq (loc, _, _) | LetDataSeq(loc, _, _, _) | LetTypeSeq(loc, _, _, _) -> raise (RenameError (LetSeqInNonSeq (expr, loc)))
 
     | Let (loc, p, e1, e2) ->
         let p', scope_trans, ty_trans = rename_pattern scope p in

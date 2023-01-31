@@ -22,6 +22,8 @@ let from_pos (start_pos : Lexing.position) (end_pos : Lexing.position) : t = {
 
 let internal : t = { file = "<internal>"; start_line = 0; end_line = 0; start_col = 0; end_col = 0 }
 
+let is_internal loc = loc = internal
+
 let merge loc1 loc2 =
   if loc1 = internal || loc1.file = "" then
     loc2

@@ -62,48 +62,48 @@ let isUnitV = function
   | RecordV record -> RecordVImpl.equal (fun _ _ -> false) record RecordVImpl.empty
   | _ -> false
 
-module EvalError = struct
-  exception DynamicVarNotFound of name * loc list
-  exception NotAValueOfType of string * value * string * loc list
-  exception TryingToApplyNonFunction of value * loc list
-  exception TryingToLookupInNonMap of value * string * loc list
-  exception TryingToLookupDynamicInNonMap of value * loc list
-  exception InvalidMapKey of value * value RecordVImpl.t * loc list
-  exception InvalidListKey of value * value list * loc list
-  exception MapDoesNotContain of value RecordVImpl.t * string * loc list
-  exception InvalidNumberOfArguments of Typed.pattern list * value list * loc list
-  exception IndexOutOfRange of value list * int * loc list
-  (* TODO: Once exceptions are implemented, prim op argument errors should
-    just be polaris exceptions. 
-    Maybe these could even just be contract failures, if those ever
-    become a feature? *)
-  exception PrimOpArgumentError of string * value list * string * loc list
-  exception PrimOpError of string * string * loc list
+type eval_error =
+  | DynamicVarNotFound of name * loc list
+  | NotAValueOfType of string * value * string * loc list
+  | TryingToApplyNonFunction of value * loc list
+  | TryingToLookupInNonMap of value * string * loc list
+  | TryingToLookupDynamicInNonMap of value * loc list
+  | InvalidMapKey of value * value RecordVImpl.t * loc list
+  | InvalidListKey of value * value list * loc list
+  | MapDoesNotContain of value RecordVImpl.t * string * loc list
+  | InvalidNumberOfArguments of Typed.pattern list * value list * loc list
+  | IndexOutOfRange of value list * int * loc list
 
-  exception InvalidOperatorArgs of string * value list * loc list
+  | PrimOpError of string * string * loc list
+  | PrimOpArgumentError of string * value list * string * loc list
 
-  exception NonNumberInRangeBounds of value * value * loc list
+  | InvalidOperatorArgs of string * value list * loc list
 
-  exception NonBoolInListComp of value * loc list
-  exception NonListInListComp of value * loc list
+  | NonNumberInRangeBounds of value * value * loc list
 
-  exception InvalidProcessArg of value * loc list
-  exception InvalidEnvVarValue of string * value * loc list
+  | NonBoolInListComp of value * loc list
+  | NonListInListComp of value * loc list
 
-  exception NonProgCallInPipe of Typed.expr * loc list
+  | InvalidProcessArg of value * loc list
+  | InvalidEnvVarValue of string * value * loc list
 
-  exception RuntimeError of string * loc list
+  | NonProgCallInPipe of Typed.expr * loc list
 
-  exception ModuleNotFound of string * string list
+  | RuntimeError of string * loc list
 
-  exception AwaitNonPromise of value * loc list
+  | ModuleNotFound of string * string list
 
-  exception ArgParseError of string
+  | AwaitNonPromise of value * loc list
 
-  exception NonExhaustiveMatch of value * loc list
+  | ArgParseError of string
 
-  exception EnsureFailed of string * loc list
-end  
+  | NonExhaustiveMatch of value * loc list
+
+  | EnsureFailed of string * loc list
+
+
+exception EvalError of eval_error
+
 
 module Value = struct
   type t = value
@@ -154,7 +154,7 @@ let lookup_var (env : eval_env) (loc : loc) (var : name) : value =
   try 
     VarMap.find var env.vars
   with
-    Not_found -> raise (EvalError.DynamicVarNotFound (var, loc :: env.call_trace))
+    Not_found -> raise (EvalError (DynamicVarNotFound (var, loc :: env.call_trace)))
 
 let insert_var : name -> value -> eval_env -> eval_env =
   fun var value env ->
@@ -167,7 +167,7 @@ let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
     | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
     | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ | VariantConstructorV _
     | RefV _
-      -> raise (EvalError.InvalidEnvVarValue (var, value, loc :: env.call_trace))
+      -> raise (EvalError (InvalidEnvVarValue (var, value, loc :: env.call_trace)))
 
 let insert_module_var : name -> runtime_module -> eval_env -> eval_env =
   fun var module_value env ->
@@ -182,15 +182,15 @@ let full_env_vars : eval_env -> string array =
 (* Tries to convert a number to a value. Throws an error if it can't *)
 let as_num context loc = function
   | NumV x -> x
-  | x -> raise (EvalError.NotAValueOfType ("number", x, context, loc))
+  | x -> raise (EvalError (NotAValueOfType ("number", x, context, loc)))
 
 let as_bool context loc = function
   | BoolV x -> x
-  | x -> raise (EvalError.NotAValueOfType ("boolean", x, context, loc))
+  | x -> raise (EvalError (NotAValueOfType ("boolean", x, context, loc)))
 
 let as_string context loc = function
   | StringV x -> x
-  | x -> raise (EvalError.NotAValueOfType ("string", x, context, loc))
+  | x -> raise (EvalError (NotAValueOfType ("string", x, context, loc)))
 
 let rec val_eq (x : value) (y : value) : bool = 
   match x, y with
@@ -269,12 +269,12 @@ let rec match_pat_opt (pat : Typed.pattern) (scrut : value) : (eval_env -> eval_
 
 let match_pat pat scrut locs =
   match match_pat_opt pat scrut with
-  | None -> raise (EvalError.NonExhaustiveMatch (scrut, locs))
+  | None -> raise (EvalError (NonExhaustiveMatch (scrut, locs)))
   | Some trans -> trans
 
 let rec match_params patterns arg_vals locs = match patterns, arg_vals with
 | [], [] -> fun x -> x
-| ([] as pats), (_ as args) | (_ as pats), ([] as args) -> raise (EvalError.InvalidNumberOfArguments (pats, args, locs))
+| ([] as pats), (_ as args) | (_ as pats), ([] as args) -> raise (EvalError (InvalidNumberOfArguments (pats, args, locs)))
 | pat :: pats, arg :: args -> 
   let trans = match_pat pat arg locs in
   fun s -> match_params pats args locs (trans s)
@@ -339,9 +339,9 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     | RecordV map -> 
       begin match RecordVImpl.find key map with
       | (value :: _) -> value
-      | [] -> raise (EvalError.MapDoesNotContain (map, key, loc :: env.call_trace))
+      | [] -> raise (EvalError (MapDoesNotContain (map, key, loc :: env.call_trace)))
       end
-    | value -> raise (EvalError.TryingToLookupInNonMap (value, key, loc :: env.call_trace))
+    | value -> raise (EvalError (TryingToLookupInNonMap (value, key, loc :: env.call_trace)))
     end
   | ModSubscript (loc, mod_name, name) ->
     let runtime_module = match VarMap.find_opt mod_name env.module_vars with
@@ -381,7 +381,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
                         | value :: _ -> value
                         | [] -> panic __LOC__ (Loc.pretty loc ^ ": Record entry not found at runtime: " ^ key)
                         end
-      | value -> raise (EvalError.InvalidMapKey (value, map, loc :: env.call_trace))
+      | value -> raise (EvalError (InvalidMapKey (value, map, loc :: env.call_trace)))
       end
     | ListV list ->
       begin match eval_expr env key_expr with
@@ -389,11 +389,11 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
         let index = Float.to_int num in
         begin match List.nth_opt list index with
         | Some x -> x
-        | None -> raise (EvalError.IndexOutOfRange(list, index, loc :: env.call_trace))
+        | None -> raise (EvalError (IndexOutOfRange(list, index, loc :: env.call_trace)))
         end
-      | value -> raise (EvalError.InvalidListKey (value, list, loc :: env.call_trace))
+      | value -> raise (EvalError (InvalidListKey (value, list, loc :: env.call_trace)))
       end
-    | value -> raise (EvalError.TryingToLookupDynamicInNonMap (value, loc :: env.call_trace))
+    | value -> raise (EvalError (TryingToLookupDynamicInNonMap (value, loc :: env.call_trace)))
     end
 
   | BinOp (loc, e1, Add, e2) -> 
@@ -425,7 +425,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     let v2 = eval_expr env e2 in
     begin match v2 with
     | ListV values -> ListV (v1 :: values)
-    | _ -> raise (EvalError.InvalidOperatorArgs("::", [v1; v2], loc :: env.call_trace))
+    | _ -> raise (EvalError (InvalidOperatorArgs("::", [v1; v2], loc :: env.call_trace)))
     end
 
   | BinOp (loc, e1, Concat, e2) ->
@@ -438,7 +438,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     | StringV s1, StringV s2 -> StringV (s1 ^ s2)
     | StringV s1, NumV _ -> StringV(s1 ^ Value.pretty v2)
     | NumV _, StringV s2 -> StringV(Value.pretty v1 ^ s2)
-    | _, _ -> raise (EvalError.InvalidOperatorArgs("~", [v1; v2], loc :: env.call_trace))
+    | _, _ -> raise (EvalError (InvalidOperatorArgs("~", [v1; v2], loc :: env.call_trace)))
     end 
 
   | BinOp (_, e1, Equals, e2) -> 
@@ -484,9 +484,9 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
       begin match eval_expr env e2 with 
       | BoolV true -> BoolV true
       | BoolV false -> BoolV false
-      | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the second argument of an || expression", loc :: env.call_trace))
+      | value -> raise (EvalError (NotAValueOfType ("bool", value, "In the second argument of an || expression", loc :: env.call_trace)))
       end
-    | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the first argument of an || expression", loc :: env.call_trace))
+    | value -> raise (EvalError (NotAValueOfType ("bool", value, "In the first argument of an || expression", loc :: env.call_trace)))
     end
   | BinOp (loc, e1, And, e2) ->
       begin match eval_expr env e1 with
@@ -495,14 +495,14 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
         begin match eval_expr env e2 with 
         | BoolV true -> BoolV true
         | BoolV false -> BoolV false
-        | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the second argument of an || expression", loc :: env.call_trace))
+        | value -> raise (EvalError (NotAValueOfType ("bool", value, "In the second argument of an || expression", loc :: env.call_trace)))
         end
-      | value -> raise (EvalError.NotAValueOfType ("bool", value, "In the first argument of an && expression", loc :: env.call_trace))
+      | value -> raise (EvalError (NotAValueOfType ("bool", value, "In the first argument of an && expression", loc :: env.call_trace)))
       end
   | Not(loc, e) ->
       begin match eval_expr env e with
       | BoolV b -> BoolV (not b)
-      | value -> raise (EvalError.NotAValueOfType("bool", value, "In the argument of a 'not' expression", loc :: env.call_trace))
+      | value -> raise (EvalError (NotAValueOfType("bool", value, "In the argument of a 'not' expression", loc :: env.call_trace)))
       end
   
   | Range(loc, e1, e2) ->
@@ -517,7 +517,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
           build_range (NumV x::acc) (x -. 1.)
         in
       ListV (build_range [] end_num) 
-    | _ -> raise (EvalError.NonNumberInRangeBounds(start_val, end_val, loc :: env.call_trace))
+    | _ -> raise (EvalError (NonNumberInRangeBounds(start_val, end_val, loc :: env.call_trace)))
     end
   | ListComp (loc, result_expr, comp_exprs) ->
     ListV (eval_list_comp env loc result_expr comp_exprs)
@@ -558,7 +558,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     result
 
   | Pipe (loc, (expr :: exprs)) ->
-    let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
+    let output_lines = Value.as_args (fun x -> raise (EvalError (InvalidProcessArg (x, loc :: env.call_trace)))) (eval_expr env expr) in
 
     let progs = progs_of_exprs env exprs in
 
@@ -587,7 +587,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     begin match eval_expr env expr with
     | PromiseV p -> 
       Promise.await p
-    | value -> raise (EvalError.AwaitNonPromise (value, loc :: env.call_trace))
+    | value -> raise (EvalError (AwaitNonPromise (value, loc :: env.call_trace)))
     end
   | Match (loc, scrut, branches) ->
     let scrut_val = eval_expr env scrut in
@@ -598,7 +598,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
           eval_expr (env_trans env) expr
         | None -> go branches
         end
-      | [] -> raise (EvalError.NonExhaustiveMatch (scrut_val, loc :: env.call_trace))
+      | [] -> raise (EvalError (NonExhaustiveMatch (scrut_val, loc :: env.call_trace)))
     in
     go branches
   | Ascription (_, expr, _) ->
@@ -642,7 +642,7 @@ and eval_app env loc fun_v arg_vals =
   | PrimOpV prim_name ->
       eval_primop {env with call_trace = loc :: env.call_trace} prim_name arg_vals loc
   | x ->
-      raise (EvalError.TryingToApplyNonFunction (x, loc :: env.call_trace))
+      raise (EvalError (TryingToApplyNonFunction (x, loc :: env.call_trace)))
 
 
 
@@ -682,7 +682,7 @@ and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr,
     env.last_status := Pipe.wait_to_status pid;
     eval_seq_cont env exprs cont
   | Pipe (loc, (expr :: prog_exprs)) :: exprs ->
-    let output_lines = Value.as_args (fun x -> raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace))) (eval_expr env expr) in
+    let output_lines = Value.as_args (fun x -> raise (EvalError (InvalidProcessArg (x, loc :: env.call_trace)))) (eval_expr env expr) in
     
     let progs = progs_of_exprs env prog_exprs in
     
@@ -720,7 +720,7 @@ and eval_list_comp env loc result_expr = function
     begin match eval_expr env expr with
     | BoolV false -> []
     | BoolV true -> eval_list_comp env loc result_expr comps
-    | v -> raise (EvalError.NonBoolInListComp (v, loc :: env.call_trace))
+    | v -> raise (EvalError (NonBoolInListComp (v, loc :: env.call_trace)))
     end
   | DrawClause (pattern, expr) :: comps ->
     begin match eval_expr env expr with
@@ -732,12 +732,12 @@ and eval_list_comp env loc result_expr = function
           eval_list_comp (env_trans env) loc result_expr comps
       in
       List.concat_map eval_with_val values
-    | v -> raise (EvalError.NonListInListComp (v, loc :: env.call_trace))
+    | v -> raise (EvalError (NonListInListComp (v, loc :: env.call_trace)))
     end
   | [] -> 
     [eval_expr env result_expr]
 
-and eval_primop env op args loc = let open EvalError in
+and eval_primop env op args loc =
   (* TODO: intern primop names *)
   match op with
   | "print" ->
@@ -749,41 +749,41 @@ and eval_primop env op args loc = let open EvalError in
     unitV
   | "head" -> begin match args with
               | [ListV (head::tail)] -> head
-              | [ListV []] -> raise (PrimOpArgumentError ("head", args, "Empty list", loc :: env.call_trace))
-              | _ -> raise (PrimOpArgumentError ("head", args, "Expected a single list", loc :: env.call_trace))
+              | [ListV []] -> raise (EvalError (PrimOpArgumentError ("head", args, "Empty list", loc :: env.call_trace)))
+              | _ -> raise (EvalError (PrimOpArgumentError ("head", args, "Expected a single list", loc :: env.call_trace)))
               end
   | "tail" -> begin match args with
               | [ListV (head::tail)] -> ListV tail
-              | [ListV []] -> raise (PrimOpArgumentError ("tail", args, "Empty list", loc :: env.call_trace))
-              | _ -> raise (PrimOpArgumentError ("tail", args, "Expected a single list", loc :: env.call_trace))
+              | [ListV []] -> raise (EvalError (PrimOpArgumentError ("tail", args, "Empty list", loc :: env.call_trace)))
+              | _ -> raise (EvalError (PrimOpArgumentError ("tail", args, "Expected a single list", loc :: env.call_trace)))
               end
   | "cons" -> begin match args with
               | [x; ListV xs] -> ListV (x :: xs)
-              | _ -> raise (PrimOpArgumentError("cons", args, "Expected an element and a list", loc :: env.call_trace))
+              | _ -> raise (EvalError (PrimOpArgumentError("cons", args, "Expected an element and a list", loc :: env.call_trace)))
               end
   | "lines" -> begin match args with
               | [StringV ""] -> ListV []
               | [StringV arg] -> 
                 ListV (List.map (fun s -> StringV s) (String.split_on_char '\n' arg))
-              | _ -> raise (PrimOpArgumentError ("lines", args, "Expected a single string", loc :: env.call_trace))
+              | _ -> raise (EvalError (PrimOpArgumentError ("lines", args, "Expected a single string", loc :: env.call_trace)))
               end
   | "split" -> begin match args with
               | [_; StringV ""] -> ListV []
               | [StringV sep_str; StringV arg] when String.length sep_str = 1 ->
                 let sep = String.get sep_str 0 in
                 ListV (List.map (fun s -> StringV s) (String.split_on_char sep arg))
-              | _ -> raise (PrimOpArgumentError ("split", args, "Expected (char, string)", loc :: env.call_trace))
+              | _ -> raise (EvalError (PrimOpArgumentError ("split", args, "Expected (char, string)", loc :: env.call_trace)))
               end
   | "replace" -> begin match args with
                 | [StringV needle; StringV repl; StringV str_v] -> 
                   StringV (Re.replace_string (Re.compile (Re.str needle)) ~by:repl str_v)
-                | _ -> raise (PrimOpArgumentError ("replace", args, "Expected three strings", loc :: env.call_trace))
+                | _ -> raise (EvalError (PrimOpArgumentError ("replace", args, "Expected three strings", loc :: env.call_trace)))
                 end
   | "regexpReplace" -> begin match args with
                 | [StringV pattern; StringV repl; StringV str] -> 
                   let regexp = Re.Pcre.regexp pattern in
                   StringV (Re.replace_string regexp ~by:repl str)
-                | _ -> raise (PrimOpArgumentError ("regexpReplace", args, "Expected three strings", loc :: env.call_trace))
+                | _ -> raise (EvalError (PrimOpArgumentError ("regexpReplace", args, "Expected three strings", loc :: env.call_trace)))
                 end
   | "regexpMatch" -> begin match args with
                 | [StringV pattern; StringV arg] ->
@@ -795,7 +795,7 @@ and eval_primop env op args loc = let open EvalError in
                   | Not_found -> ListV []
                   end
 
-                | _ -> raise (PrimOpArgumentError ("regexpMatch", args, "Expected (string, string)", loc :: env.call_trace))
+                | _ -> raise (EvalError (PrimOpArgumentError ("regexpMatch", args, "Expected (string, string)", loc :: env.call_trace)))
                 end
   | "regexpTransform" -> begin match args with
                 | [StringV pattern; transformClos; StringV str_v] ->
@@ -804,11 +804,11 @@ and eval_primop env op args loc = let open EvalError in
                     let transform group = 
                       match eval_app env loc transformClos [StringV (Re.Group.get group 0)] with
                       | StringV repl -> repl
-                      | value -> raise (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace))
+                      | value -> raise (EvalError (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace)))
                     in
 
                     StringV (Re.replace regexp ~f:transform str_v)
-                | _ -> raise (PrimOpArgumentError ("regexpTransform", args, "Expected (string, function, string)", loc :: env.call_trace))
+                | _ -> raise (EvalError (PrimOpArgumentError ("regexpTransform", args, "Expected (string, function, string)", loc :: env.call_trace)))
                 end
   | "regexpTransformAll" -> begin match args with
                 | [StringV pattern; transformClos; StringV str_v] ->
@@ -817,11 +817,11 @@ and eval_primop env op args loc = let open EvalError in
                   let transform group = 
                     match eval_app env loc transformClos [ListV (List.map (fun x -> StringV x) (Array.to_list (Re.Group.all group)))] with
                     | StringV repl -> repl
-                    | value -> raise (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace))
+                    | value -> raise (EvalError (PrimOpError ("regexpTransform", "Replacement function did not return a string. Returned value: " ^ Value.pretty value, loc :: env.call_trace)))
                   in
 
                   StringV (Re.replace regexp ~f:transform str_v)
-                | _ -> raise (PrimOpArgumentError ("regexpTransformAll", args, "Expected (string, function, string)", loc :: env.call_trace))
+                | _ -> raise (EvalError (PrimOpArgumentError ("regexpTransformAll", args, "Expected (string, function, string)", loc :: env.call_trace)))
                 end
   | "writeFile" -> begin match args with
                 | [path_v; content_v] ->
@@ -833,28 +833,28 @@ and eval_primop env op args loc = let open EvalError in
                   Out_channel.output_string channel content;
                   Out_channel.close channel;
                   unitV
-                | _ -> raise (PrimOpArgumentError ("writeFile", args, "Expected two string arguments", loc :: env.call_trace))
+                | _ -> raise (EvalError (PrimOpArgumentError ("writeFile", args, "Expected two string arguments", loc :: env.call_trace)))
                 end
   | "parseInt" -> begin match args with
                 | [StringV arg_str] ->
                   begin match int_of_string_opt (String.trim arg_str) with
                   |  Some(int_val) -> NumV (float_of_int int_val)
-                  |  None -> raise (PrimOpArgumentError ("parseInt", args, "Expected a string containing an integer literal", loc :: env.call_trace))
+                  |  None -> raise (EvalError (PrimOpArgumentError ("parseInt", args, "Expected a string containing an integer literal", loc :: env.call_trace)))
                   end
-                | _ -> raise (PrimOpArgumentError ("parseInt", args, "Expected a string", loc :: env.call_trace))
+                | _ -> raise (EvalError (PrimOpArgumentError ("parseInt", args, "Expected a string", loc :: env.call_trace)))
                 end
   | "parseNum" -> begin match args with
                 | [StringV arg_str] ->
                   begin match float_of_string_opt (String.trim arg_str) with
                   | Some(float_val) -> NumV float_val
-                  | None -> raise (PrimOpArgumentError ("parseNum", args, "Expected a string containing a numeric literal", loc :: env.call_trace))
+                  | None -> raise (EvalError (PrimOpArgumentError ("parseNum", args, "Expected a string containing a numeric literal", loc :: env.call_trace)))
                   end
-                | _ -> raise (PrimOpArgumentError ("parseNum", args, "Expected a strings", loc :: env.call_trace))
+                | _ -> raise (EvalError (PrimOpArgumentError ("parseNum", args, "Expected a strings", loc :: env.call_trace)))
                 end
   | "readLine" -> let prompt = match args with
                   | [] -> ""
                   | [StringV prompt] -> prompt
-                  | _ -> raise (PrimOpArgumentError ("readLine", args, "Expected no arguments or a single string", loc :: env.call_trace))
+                  | _ -> raise (EvalError (PrimOpArgumentError ("readLine", args, "Expected no arguments or a single string", loc :: env.call_trace)))
                   in
                   begin match Bestline.bestline prompt with
                   | Some input -> VariantConstructorV ("Just", [StringV input])
@@ -864,68 +864,68 @@ and eval_primop env op args loc = let open EvalError in
                 | [StringV path_str] -> 
                   Sys.chdir path_str;
                   unitV
-                | _ -> raise (PrimOpArgumentError ("chdir", args, "Expected a strings", loc :: env.call_trace))
+                | _ -> raise (EvalError (PrimOpArgumentError ("chdir", args, "Expected a strings", loc :: env.call_trace)))
                 end
   | "exit" -> begin match args with
               | [NumV arg] ->
                 exit (int_of_float arg)
-              | _ -> raise (PrimOpArgumentError ("exit", args, "Expected an integer", loc :: env.call_trace))
+              | _ -> raise (EvalError (PrimOpArgumentError ("exit", args, "Expected an integer", loc :: env.call_trace)))
               end
   | "toString" -> begin match args with
               | [arg] -> 
                 (* We have to use `Value.pretty` instead of `Float.to_string`, since
                     the latter always appends a trailing dot. *)
                 StringV (Value.pretty arg)
-              | _ -> raise (PrimOpArgumentError ("toString", args, "Expected a number", loc :: env.call_trace))
+              | _ -> raise (EvalError (PrimOpArgumentError ("toString", args, "Expected a number", loc :: env.call_trace)))
               end            
   | "getArgv" -> begin match args with
                   | [] -> ListV (List.map (fun x -> StringV x) env.argv)
-                  | _ -> raise (PrimOpArgumentError ("getArgv", args, "Expected no arguments", loc :: env.call_trace))
+                  | _ -> raise (EvalError (PrimOpArgumentError ("getArgv", args, "Expected no arguments", loc :: env.call_trace)))
                   end
   | "getEnv" -> begin match args with
                 | [StringV var] -> begin match Sys.getenv_opt var with
                   | None -> VariantConstructorV("Nothing", [])
                   | Some(value) -> VariantConstructorV("Just", [StringV value])
                   end
-                | _ -> raise (PrimOpArgumentError ("getEnv", args, "Expected a single string", loc :: env.call_trace))
+                | _ -> raise (EvalError (PrimOpArgumentError ("getEnv", args, "Expected a single string", loc :: env.call_trace)))
                 end
   | "fail" -> begin match args with
-              | [StringV msg] -> raise (RuntimeError (msg, loc :: env.call_trace))
-              | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))
+              | [StringV msg] -> raise (EvalError (RuntimeError (msg, loc :: env.call_trace)))
+              | _ -> raise (EvalError (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace)))
               end
   | "scriptLocal" -> begin match args with
               | [StringV path] -> 
                 StringV (Filename.dirname (List.hd env.argv) ^ "/" ^ path)
-              | _ -> raise (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace))
+              | _ -> raise (EvalError (PrimOpArgumentError("fail", args, "Expected a string", loc :: env.call_trace)))
               end
   | "commandExists" -> begin match args with
               | [StringV path] ->
                 BoolV (Util.command_exists path)
-              | _ -> raise (PrimOpArgumentError("commandExists", args, "Expected a string", loc :: env.call_trace))
+              | _ -> raise (EvalError (PrimOpArgumentError("commandExists", args, "Expected a string", loc :: env.call_trace)))
               end
   | "ensure" -> begin match args with
               | [StringV path] ->
                 if Util.command_exists path then
                   unitV
                 else
-                  raise (EnsureFailed (path, loc::env.call_trace))
-              | _ -> raise (PrimOpArgumentError("ensure", args, "Expected a string", loc :: env.call_trace))
+                  raise (EvalError (EnsureFailed (path, loc::env.call_trace)))
+              | _ -> raise (EvalError (PrimOpArgumentError("ensure", args, "Expected a string", loc :: env.call_trace)))
               end
   | "status" -> NumV (Float.of_int !(env.last_status))
   | "mod" -> begin match args with
               | [NumV x; NumV y] ->
                 NumV (float_of_int (int_of_float x mod int_of_float y))
-              | _ -> raise (PrimOpArgumentError("mod", args, "Expected two integers", loc :: env.call_trace))
+              | _ -> raise (EvalError (PrimOpArgumentError("mod", args, "Expected two integers", loc :: env.call_trace)))
               end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
 and progs_of_exprs env = function
   | ProgCall (loc, progName, args) :: exprs ->
-    let fail x = raise (EvalError.InvalidProcessArg (x, loc :: env.call_trace)) in
+    let fail x = raise (EvalError (InvalidProcessArg (x, loc :: env.call_trace))) in
     let arg_strings = List.concat_map (fun arg -> Value.as_args fail (eval_expr env arg)) args in
     (progName, arg_strings) :: progs_of_exprs env exprs
   | expr :: exprs -> 
-    raise (EvalError.NonProgCallInPipe (expr, Typed.get_loc expr :: env.call_trace))
+    raise (EvalError (NonProgCallInPipe (expr, Typed.get_loc expr :: env.call_trace)))
   | [] -> []
 
 and empty_eval_env (argv: string list): eval_env = {
@@ -1008,7 +1008,7 @@ let eval_header (env : eval_env) (header : Typed.header) : eval_env =
   ; usage
   } in
 
-  let args = Argparse.run infos prog_info (fun msg -> raise (EvalError.ArgParseError msg)) (List.tl env.argv) in
+  let args = Argparse.run infos prog_info (fun msg -> raise (EvalError (ArgParseError msg))) (List.tl env.argv) in
 
   { !env_ref with argv = (List.hd env.argv :: args) }
 

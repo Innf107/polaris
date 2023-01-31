@@ -15,14 +15,25 @@ let run_polaris ~filename lexbuf =
 
 
 let update_diagnostics ~filename lexbuf =
-  try
-    let _typed_header, _typed_exprs, _rename_scope, _global_type_env = run_polaris ~filename lexbuf in
-    []
-  with
-  | Polaris.Driver.ParseError (loc, msg) -> [Diagnostic.{
+
+  let on_error err = 
+
+    let text_style = Polaris.Errormessage.make_text_style ~enable_color:false in
+
+    let (mloc, message) = Polaris.Error.pretty_error text_style (fun loc msg -> (loc, msg)) err in
+    let loc = Option.value ~default:Polaris.Loc.internal mloc in
+
+
+    [Diagnostic.{
       loc;
       severity = `Error;
       source = "polaris";
-      message = "Parse Error: " ^ msg
-    }]
+      message;
+    }] in
+
+  Polaris.Error.handle_errors on_error (fun () -> 
+    let _typed_header, _typed_exprs, _rename_scope, _global_type_env = 
+      run_polaris ~filename lexbuf 
+    in
+    [])
 

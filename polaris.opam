@@ -15,6 +15,7 @@ depends: [
   "menhir"
   "menhirLib"
   "re"
+  "json-rpc"
   "odoc" {with-doc}
 ]
 build: [

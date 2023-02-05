@@ -24,7 +24,7 @@ let output_newline_cr out_channel =
 let parse_request_to_string in_channel =
   let rec parse known_length =
     match input_line_cr in_channel with
-    | None -> raise (Failure "Error parsing request: Unexpected end of file")
+    | None -> raise End_of_file
     | Some "" -> 
       begin match known_length with
       | None -> raise (Failure "Error parsing request: Missing Content-Length header")
@@ -32,7 +32,7 @@ let parse_request_to_string in_channel =
         let buffer = Bytes.make length '\n' in
         
         begin match In_channel.really_input in_channel buffer 0 length with
-        | None -> raise (Failure "Error parsing request: Unexpected end of file")
+        | None -> raise End_of_file
         | Some () -> String.of_bytes buffer
         end 
       end
@@ -58,6 +58,7 @@ let rpc_error ?(data=`Null) request_id code message =
   ]
 
 let run in_channel out_channel ~handler ~notification_handler = 
+  try
   while true do
     try
       let body_string = parse_request_to_string in_channel in
@@ -98,12 +99,16 @@ let run in_channel out_channel ~handler ~notification_handler =
         let response_size = String.length response_string in
         output_endline_cr out_channel ("Content-Length: " ^ string_of_int response_size);
         output_newline_cr out_channel;
-        output_endline_cr out_channel response_string;
+        output_string out_channel response_string;
         flush out_channel
     with      
     | Failure message -> prerr_endline ("Error: " ^ message)
+    (* Bubble up to exit the outer loop *)
+    | End_of_file -> raise End_of_file 
     | err -> prerr_endline ("Error: " ^ Printexc.to_string err)
   done
+  with
+  | End_of_file -> prerr_endline "Exiting on EOF"
 
 (* TODO: Send this to an implicit(?) out channel *)
 let send_notification notification_method data =
@@ -120,6 +125,5 @@ let send_notification notification_method data =
   let size = String.length json_string in
   output_endline_cr out_channel ("Content-Length: " ^ string_of_int size);
   output_newline_cr out_channel;
-  output_endline_cr out_channel json_string;
-  output_newline_cr out_channel;
+  output_string out_channel json_string;
   flush out_channel

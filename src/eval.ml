@@ -264,7 +264,7 @@ let rec eval_mod_expr env = function
 and eval_expr (env : eval_env) (expr : Typed.expr) : value =
   let open Typed in
   match expr with
-  | Var (loc, x) ->
+  | Var ((loc, _ty), x) ->
       if x.index = Name.primop_index
       then PrimOpV x.name
       else lookup_var env loc x

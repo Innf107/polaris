@@ -251,7 +251,7 @@ module Template = struct
 
   and expr =
     (* Lambda calculus *)
-    | Var of loc * name                     (* x *)
+    | Var of var_ext * name                     (* x *)
     | DataConstructor of loc * name         (* X *)
     (* The renamer replaces these by the data constructor with the (unique)
        name from the module where it is defined. This sets mod_subscript_tycon_ext to void *)
@@ -569,7 +569,8 @@ module Template = struct
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
 
   let get_loc = function
-    | Var (loc, _) | DataConstructor(loc, _) | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
+    | Var (ext, _) -> var_ext_loc ext
+    | DataConstructor(loc, _) | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
     | Subscript(loc, _, _) | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
     | BinOp(loc, _, _, _) | Not(loc, _)
@@ -622,9 +623,10 @@ module Template = struct
           | StringLit _ | NumLit _ | BoolLit _ | UnitLit _ | EnvVar _ -> 
             expression, state
           (* Recursive boilerplate *)
-          | Var (loc, name) ->
+          | Var (ext, name) ->
+            let ext, state = traverse_var_ext_ty state self#traverse_type ext in
             let name, state = self#traverse_name state name in
-            Var (loc, name), state
+            Var (ext, name), state
           | DataConstructor (loc, name) ->
             let name, state = self#traverse_name state name in
             DataConstructor (loc, name), state
@@ -1046,6 +1048,10 @@ module Parsed = Template (struct
   let import_ext_loc x = x
 
   type mod_subscript_tycon_ext = unit
+
+  type var_ext = loc
+  let var_ext_loc x = x
+  let traverse_var_ext_ty state _ loc = loc, state
 end) [@@ttg_pass]
 
 
@@ -1060,6 +1066,12 @@ module Typed = Template (struct
   let import_ext_loc (loc, _, _) = loc
 
   type mod_subscript_tycon_ext = void
+
+  type var_ext = loc * ty
+  let var_ext_loc (loc, _) = loc
+  let traverse_var_ext_ty state f (loc, ty) =
+    let ty, state = f state ty in
+    (loc, ty), state
 end) [@@ttg_pass]
 
 type module_exports = Typed.module_exports
@@ -1077,6 +1089,11 @@ module Renamed = Template (struct
   let import_ext_loc (loc, _, _) = loc
 
   type mod_subscript_tycon_ext = void
+
+  type var_ext = loc
+
+  let var_ext_loc loc = loc
+  let traverse_var_ext_ty state _ loc = loc, state
 end) [@@ttg_pass]
 
 

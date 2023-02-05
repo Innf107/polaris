@@ -432,8 +432,9 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
     | Var (loc, x) -> 
       begin match NameMap.find_opt x env.local_types with
       | Some ty -> 
-        ( instantiate ty
-        , Var(loc, x)
+        let instantiated_type = instantiate ty in
+        ( instantiated_type
+        , Var((loc, instantiated_type), x)
         )
       | None -> panic __LOC__ ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")
       end

@@ -9,6 +9,9 @@ val of_list : 'a list -> 'a t
 (* O(n) *)
 val to_list : 'a t -> 'a list
 
+(* O(n) *)
+val to_seq : 'a t -> 'a Seq.t
+
 (* O(n), but independent of the size of the appended list *)
 val append_to_list : 'a t -> 'a list -> 'a list
 

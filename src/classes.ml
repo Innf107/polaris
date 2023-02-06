@@ -55,3 +55,30 @@ let monoid_or : (module Monoid with type t = bool)
             let empty = false     
         end in
         (module BoolM)
+
+
+module type Monad = sig 
+    type 'a t
+    val bind : 'a t -> ('a -> 'b t) -> 'b t
+    val pure : 'a -> 'a t
+end
+
+module MonadUtil(M : Monad) = struct 
+    let rec traverse : ('a -> 'b M.t) -> 'a list -> 'b list M.t = 
+        let (let*) = M.bind in
+        fun f list -> match list with
+            | [] -> M.pure []
+            | (a :: rest) ->
+                let* b = f a in
+                let* rest = traverse f rest in
+                M.pure (b :: rest)
+end
+
+module MonadOption : Monad = struct 
+    type 'a t = 'a option
+    let bind = Option.bind
+    let pure = Option.some
+end
+
+module Option = MonadUtil(MonadOption)
+

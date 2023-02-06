@@ -7,6 +7,8 @@ let of_list list = fun xs -> list @ xs
 
 let to_list dl = dl []
 
+let to_seq dl = List.to_seq (to_list dl)
+
 let append_to_list dl list = dl list
 
 let append dl1 dl2 = fun list -> dl1 (dl2 list)

@@ -1,51 +1,73 @@
+open Polaris
 
 exception NonexistantField of string * Yojson.Basic.t
 exception NonObjectDereference of string * Yojson.Basic.t
 exception WrongTypeAsserted of string * Yojson.Basic.t
 
 
-type _ json_type =
-  | Any    : Yojson.Basic.t json_type
-  | Bool   : bool json_type
-  | Float  : float json_type
-  | Int    : int json_type
-  | Null   : unit json_type
-  | String : string json_type
-  | List   : 'a json_type -> 'a list json_type
-  | Assoc  : 'a json_type -> (string * 'a) list json_type
+exception ParseError
+type 'a json_parser = { 
+  name: string;
+  parser : Yojson.Basic.t -> 'a
+}
 
-let rec string_of_json_type : type a. a json_type -> string = 
-  function
-  | Any -> "Any"
-  | Assoc ty -> "Assoc(" ^ string_of_json_type ty ^ ")"
-  | Bool -> "Bool"
-  | Float -> "Float"
-  | Int -> "Int"
-  | List ty -> "List(" ^ string_of_json_type ty ^ ")"
-  | Null -> "Null"
-  | String -> "String"
+let make_parser_exn name parser = { name; parser }
 
-let rec assert_json : type a. a json_type -> Yojson.Basic.t -> a =
-  fun json_type json -> 
-    match json_type, json with
-    | Any, _ -> json
-    | Bool, `Bool value -> value
-    | Float, `Float value -> value
-    | Int, `Int value -> value
-    | String, `String value -> value 
-    | Assoc inner_type, `Assoc fields ->
-      List.map (fun (key, value) -> (key, assert_json inner_type value)) fields
-    | List inner_type, `List values ->
-      List.map (assert_json inner_type) values
-    | Null, `Null -> ()
-    | _ -> raise (WrongTypeAsserted (string_of_json_type json_type, json))
+let make_parser name parser = make_parser_exn name begin fun json -> 
+    match parser json with
+    | Some value -> value
+    | None -> raise ParseError
+  end
 
-let coerce_json : type a. a json_type -> Yojson.Basic.t -> a option =
-  fun json_type json ->
+
+let any = make_parser "any" (fun json -> Some json)
+let bool = make_parser "bool" (function
+  | `Bool value -> Some value
+  | _ -> None)
+let float = make_parser "float" (function
+  | `Float value -> Some value
+  | _ -> None)
+let int = make_parser "int" (function
+  | `Int value -> Some value
+  | _ -> None)
+let null = make_parser "null" (function
+  | `Null -> Some ()
+  | _ -> None)
+let string = make_parser "string" (function
+  | `String value -> Some value 
+  | _ -> None)
+let list inner_parser = make_parser ("List(" ^ inner_parser.name ^ ")") (function
+  | `List values -> begin
     try
-      Some (assert_json json_type json)
+      let values = List.map inner_parser.parser values in
+      Some values
     with
-      WrongTypeAsserted _ -> None
+    | ParseError -> None
+    end
+  | _ -> None)
+
+let assoc inner_parser = make_parser ("Assoc(" ^ inner_parser.name ^ ")") (function
+  | `Assoc values -> begin
+    try
+      let values = List.map (fun (key, value) -> (key, inner_parser.parser value)) values in
+      Some values
+    with
+    | ParseError -> None
+    end
+  | _ -> None)
+
+
+let assert_json : 'a json_parser -> Yojson.Basic.t -> 'a =
+  fun json_parser json -> 
+    match json_parser.parser json with
+    | value -> value
+    | exception ParseError -> raise (WrongTypeAsserted (json_parser.name, json))
+
+let coerce_json : 'a json_parser -> Yojson.Basic.t -> 'a option =
+  fun json_parser json ->
+    match json_parser.parser json with
+    | value -> Some value
+    | exception ParseError -> None
 
 let field_opt field json_type = function
   | `Assoc fields ->
@@ -80,3 +102,11 @@ let nested_field_opt fields json_type json =
   with
   | NonexistantField _
   | NonObjectDereference _ -> None
+
+let () =
+  Printexc.register_printer (function
+      | NonexistantField(field, json) -> Some ("JSON assertion failure: Nonexistant field '" ^ field ^ "' in JSON: " ^ Yojson.Basic.show json)
+      | NonObjectDereference(field, json) -> Some ("JSON assertion failure: Trying to dereference field '" ^ field ^ "' of non-object: " ^ Yojson.Basic.show json)
+      | WrongTypeAsserted(ty, json) -> Some ("JSON assertion failure: Asserted wrong type '" ^ ty ^ "' for JSON: " ^ Yojson.Basic.show json)
+      | _ -> None
+  )

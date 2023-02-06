@@ -1,7 +1,6 @@
 open Syntax
 open Syntax.Renamed
 open Util
-open Classes
 
 let _tc_category,    trace_tc    = Trace.make ~flag:"types" ~prefix:"Types" 
 let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
@@ -192,7 +191,7 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * 
       let var_ty = fresh_unif () in
       ( var_ty
       , insert_var varname var_ty
-      , VarPat(loc, varname)
+      , VarPat((loc, var_ty), varname)
       )
     | AsPat (loc, pattern, name) ->
       let pattern_ty, env_trans, pattern = infer_pattern env pattern in
@@ -333,7 +332,7 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) * Typ
       (These would be rejected by unification) *)
     | VarPat (loc, var), expected_ty -> 
       ( insert_var var expected_ty
-      , VarPat(loc, var)
+      , VarPat((loc, expected_ty), var)
       )
     | AsPat (loc, pattern, name), expected_ty ->
       let env_trans, pattern = check_pattern env pattern expected_ty in
@@ -1004,7 +1003,7 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
     let exprs = check_seq (env_trans env) loc expected_ty exprs in
     expr :: exprs
 
-let rec occurs subst u = Ty.collect monoid_or begin function
+let rec occurs subst u = Ty.collect Classes.monoid_or begin function
       | Unif (u2, _) -> 
         if Unique.equal u u2 then
           true
@@ -1319,7 +1318,7 @@ let solve_constraints : local_env -> ty_constraint list -> Subst.t =
 
 
 let free_unifs : ty -> UnifSet.t =
-  Ty.collect (monoid_set (module UnifSet)) begin function
+  Ty.collect (Classes.monoid_set (module UnifSet)) begin function
     | Unif (u, name) -> UnifSet.of_list [(u, name)]
     | _ -> UnifSet.empty 
     end

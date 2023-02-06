@@ -236,7 +236,7 @@ let match_pat pat scrut locs =
 
 let rec match_params patterns arg_vals locs = match patterns, arg_vals with
 | [], [] -> fun x -> x
-| ([] as pats), (_ as args) | (_ as pats), ([] as args) -> 
+| [], _ | _ , [] -> 
   panic __LOC__ ("Invalid number of arguments at runtime")
 | pat :: pats, arg :: args -> 
   let trans = match_pat pat arg locs in
@@ -795,8 +795,7 @@ and eval_primop env op args loc =
                 end
   | "writeFile" -> begin match args with
                 | [StringV path; StringV content] ->
-                  let context = "Trying to apply 'writeFile'" in
-
+                  
                   let channel = open_out path in
                   Out_channel.output_string channel content;
                   Out_channel.close channel;

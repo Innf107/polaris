@@ -66,9 +66,9 @@ let run in_channel out_channel ~handler ~notification_handler =
 
       let request = Yojson.Basic.from_string body_string in
 
-      let request_method = Jsonutil.field     "method" Jsonutil.String request in
-      let request_params = Jsonutil.field_opt "params" Jsonutil.Any request in
-      let request_id     = Jsonutil.field_opt "id"     Jsonutil.Any request in
+      let request_method = Jsonutil.field     "method" Jsonutil.string request in
+      let request_params = Jsonutil.field_opt "params" Jsonutil.any request in
+      let request_id     = Jsonutil.field_opt "id"     Jsonutil.any request in
 
       (* We pass null as the parameter in case it doesn't exist on the request. 
          This is technically not spec compliant but should be fine for us *)
@@ -127,3 +127,10 @@ let send_notification notification_method data =
   output_newline_cr out_channel;
   output_string out_channel json_string;
   flush out_channel
+
+let position = Jsonutil.make_parser "position" (fun json ->
+  let (let*) = Option.bind in
+  let* line = Jsonutil.field_opt "line" Jsonutil.int json in
+  let* character = Jsonutil.field_opt "character" Jsonutil.int json in
+  Some (line, character)
+)

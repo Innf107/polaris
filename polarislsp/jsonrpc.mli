@@ -9,3 +9,4 @@ val run : in_channel
 
 val unsupported_method : unit -> 'a
 
+val position : (int * int) Jsonutil.json_parser

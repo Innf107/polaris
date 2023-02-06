@@ -218,7 +218,7 @@ module Template = struct
   end
 
   type pattern =
-    | VarPat of loc * name
+    | VarPat of var_pat_ext * name
     | AsPat of loc * pattern * name
     | ConsPat of loc * pattern * pattern
     | ListPat of loc * pattern list
@@ -583,7 +583,8 @@ module Template = struct
     -> loc
 
   let get_pattern_loc = function
-    | VarPat (loc, _) | AsPat(loc, _, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
+    | VarPat (ext, _) -> var_pat_ext_loc ext
+    | AsPat(loc, _, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
     | NumPat (loc, _) | StringPat(loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _) | DataPat (loc, _, _)
     | VariantPat(loc, _, _)
     -> loc
@@ -1052,6 +1053,10 @@ module Parsed = Template (struct
   type var_ext = loc
   let var_ext_loc x = x
   let traverse_var_ext_ty state _ loc = loc, state
+
+  type var_pat_ext = loc
+  let var_pat_ext_loc loc = loc
+  let traverse_var_pat_ext_ty state _ loc = loc, state
 end) [@@ttg_pass]
 
 
@@ -1070,6 +1075,12 @@ module Typed = Template (struct
   type var_ext = loc * ty
   let var_ext_loc (loc, _) = loc
   let traverse_var_ext_ty state f (loc, ty) =
+    let ty, state = f state ty in
+    (loc, ty), state
+
+  type var_pat_ext = loc * ty
+  let var_pat_ext_loc (loc, _) = loc
+  let traverse_var_pat_ext_ty state f (loc, ty) =
     let ty, state = f state ty in
     (loc, ty), state
 end) [@@ttg_pass]
@@ -1094,6 +1105,10 @@ module Renamed = Template (struct
 
   let var_ext_loc loc = loc
   let traverse_var_ext_ty state _ loc = loc, state
+
+  type var_pat_ext = loc
+  let var_pat_ext_loc loc = loc
+  let traverse_var_pat_ext_ty state _ loc = loc, state
 end) [@@ttg_pass]
 
 

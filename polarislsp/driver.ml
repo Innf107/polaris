@@ -14,7 +14,7 @@ let run_polaris ~filename lexbuf =
     Polaris.Rename.RenameScope.empty
 
 
-let update_diagnostics ~filename lexbuf =
+let try_update_model ~filename lexbuf =
 
   let on_error err = 
 
@@ -29,11 +29,11 @@ let update_diagnostics ~filename lexbuf =
       severity = `Error;
       source = "polaris";
       message;
-    }] in
+    }], None in
 
   Polaris.Error.handle_errors on_error (fun () -> 
-    let _typed_header, _typed_exprs, _rename_scope, _global_type_env = 
-      run_polaris ~filename lexbuf 
+    let typed_header, typed_exprs, _rename_scope, _global_type_env = 
+      run_polaris ~filename lexbuf
     in
-    [])
+    [], Some (Model.build typed_exprs))
 

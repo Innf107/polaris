@@ -1307,12 +1307,17 @@ let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
         deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (Unwrap(loc, ty, ty2))
 
 let rec solve_program_arg : loc -> local_env -> unify_state -> ty -> unit =
-  fun loc env state ty -> match ty with
+  fun loc env state ty -> match partial_apply state ty with
   | String | Number -> ()
   | List ty -> solve_program_arg loc env state ty
-  (* Fall back to matching against strings. This might be a little
-     brittle, but we're going to replace this with type classes in the future anyway *)
-  | ty -> solve_unify loc env state ty String
+  | ty -> 
+    match state.deferred_constraints with
+    | None ->
+      (* Fall back to matching against strings. This might be a little
+       brittle, but we're going to replace this with type classes in the future anyway. *)
+      solve_unify loc env state ty String
+    | Some deferred_constraint_ref ->
+      deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (ProgramArg (loc, ty))
 
 let solve_constraints : local_env -> ty_constraint list -> Subst.t =
   fun env constraints ->

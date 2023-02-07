@@ -3,5 +3,5 @@
 let _ = {
     let args = split("|", "a|b");
 
-    !echo "test" 
+    !echo "test" args
 }

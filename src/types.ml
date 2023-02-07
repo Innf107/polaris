@@ -31,6 +31,7 @@ end)
 
 type ty_constraint = Unify of loc * ty * ty
                    | Unwrap of loc * ty * ty
+                   | ProgramArg of loc * ty
 
 type global_env = {
   var_types : Typed.ty NameMap.t;
@@ -77,6 +78,10 @@ let subsumes : local_env -> loc -> ty -> ty -> unit =
 let unwrap_constraint : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
     env.constraints := Difflist.snoc !(env.constraints) (Unwrap (loc, ty1, ty2))
+
+let prog_arg_constraint : local_env -> loc -> ty -> unit =
+  fun env loc ty ->
+    env.constraints := Difflist.snoc !(env.constraints) (ProgramArg (loc, ty))
 
 let fresh_unif_raw_with raw_name =
   let index = Unique.fresh() in
@@ -642,11 +647,15 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       ( result_ty
       , LetEnv(loc, envvar, body, rest) 
       )
-    | ProgCall (loc, prog, args) ->
-      (* TODO: We really need some kind of toString typeclass here *)
-      let args = List.map (check env String) args in
+    | ProgCall (loc, program, args) ->
+      let args_with_types = List.map (infer env) args in
+      (* We require a ProgramArgument constraint on every argument for now.
+         In the future, this is going to be replaced by a type class,
+         which should also be more robust. *)
+      List.iter (fun (arg_type, arg) -> prog_arg_constraint env (Typed.get_loc arg) arg_type) args_with_types;
+
       ( String
-      , ProgCall (loc, prog, args)
+      , ProgCall (loc, program, List.map snd args_with_types)
       )
     | Pipe (loc, exprs) -> 
       let rec check_progcalls = function
@@ -953,8 +962,11 @@ and check_seq_expr : local_env -> expr -> (local_env -> local_env) * Typed.expr 
     | LetTypeSeq(loc, alias_name, params, ty) ->
       insert_type_alias alias_name params ty, LetTypeSeq(loc, alias_name, params, ty)
     | ProgCall (loc, prog, args) ->
-      let exprs = List.map (check env String) args in
-      Fun.id, ProgCall (loc, prog, exprs)
+      let args_with_types = List.map (infer env) args in
+      (* See the inference rule for ProgCall expressions *)
+      List.iter (fun (arg_type, arg) -> prog_arg_constraint env (Typed.get_loc arg) arg_type) args_with_types;
+
+      Fun.id, ProgCall (loc, prog, List.map snd args_with_types)
     | Pipe _ as expr ->
       (* We defer to `infer` here. We don't care about the result type, since
          a) We know it is `String`
@@ -1294,6 +1306,14 @@ let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | Some deferred_constraint_ref ->
         deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (Unwrap(loc, ty, ty2))
 
+let rec solve_program_arg : loc -> local_env -> unify_state -> ty -> unit =
+  fun loc env state ty -> match ty with
+  | String | Number -> ()
+  | List ty -> solve_program_arg loc env state ty
+  (* Fall back to matching against strings. This might be a little
+     brittle, but we're going to replace this with type classes in the future anyway *)
+  | ty -> solve_unify loc env state ty String
+
 let solve_constraints : local_env -> ty_constraint list -> Subst.t =
   fun env constraints ->
     let go unify_state constraints = 
@@ -1302,6 +1322,8 @@ let solve_constraints : local_env -> ty_constraint list -> Subst.t =
           solve_unify loc env unify_state ty1 ty2
         | Unwrap (loc, ty1, ty2) ->
           solve_unwrap loc env unify_state ty1 ty2
+        | ProgramArg (loc, ty) ->
+          solve_program_arg loc env unify_state ty
         end constraints;
     in
     let subst = Subst.make () in

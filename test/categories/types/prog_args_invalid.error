@@ -1,0 +1,8 @@
+test/categories/types/prog_args_invalid.pls:2:17-2:19: ERROR:
+Unable to unify types '()'
+                  and 'String'
+While trying to unify '()'
+                  and 'String'
+  | 
+2 | !echo "a" ["b"] ()
+  |                 ^^

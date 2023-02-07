@@ -1,5 +1,5 @@
-# EXPECT: [["a", 0], ["b", 1], ["c", 2]]
+# EXPECT: [("a", 0), ("b", 1), ("c", 2)]
 
-let List = require("list.pls")
+module List = import("../../../lib/list.pls")
 
 print(List.indexed(["a", "b", "c"]))

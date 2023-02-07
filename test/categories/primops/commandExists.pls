@@ -1,8 +1,8 @@
-# EXPECT: true true false true
+# EXPECT: [true, true, false, true]
 
-print(
+print([
     commandExists("polaris"),
     commandExists("ls"),
     commandExists("definitelynonexistant"),
     commandExists("/usr/bin/ls")
-    )
+    ])

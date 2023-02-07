@@ -2,6 +2,9 @@
 exception TODO of string
 exception Panic of string
 
+(* Should be used as `panic __LOC__ "message"`*)
+let panic loc msg = raise (Panic (loc ^ ": " ^ msg))
+
 (* Should be used as `todo __LOC__` *)
 let todo str = raise (TODO str)
 
@@ -36,6 +39,12 @@ let rec sequence_options = function
   | None :: _ -> None
   | Some(v) :: opts -> Option.map (fun x -> v :: x) (sequence_options opts) 
   | [] -> Some []
+
+let sequence_options_array arr =
+  if Array.for_all Option.is_some arr then
+    Some (Array.map Option.get arr)
+  else
+    None
 
 let quiet_command cmd args =
   match Unix.fork () with
@@ -72,3 +81,21 @@ let rec extract : ('a -> bool) -> 'a list -> ('a * 'a list) option =
       match extract pred xs with
       | None -> None
       | Some (y, ys) -> Some(y, x::ys)
+
+let (<<) f g x = f (g x)
+
+
+let path_relative_to : string -> string -> string =
+  fun base_file path ->
+    if Filename.is_relative path then
+      Filename.concat (Filename.dirname base_file) path
+    else
+      path
+
+let rec split3 = function
+    | [] -> ([], [], [])
+    | ((x, y, z) :: rest) ->
+      let (xs, ys, zs) = split3 rest in
+      (x :: xs, y :: ys, z :: zs)
+
+let compose funs = List.fold_right (fun t r x -> t (r x)) funs (fun x -> x)

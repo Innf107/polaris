@@ -1,0 +1,7 @@
+test/categories/types/fancy_letrec_mismatch.pls:2:1-3:16: ERROR:
+Function declared with different names.
+    The type signature calls it        'f'
+    but its definition refers to it as 'notF'
+  | 
+2 | let f : Number -> Number
+  | ^^^^^^^^^^^^^^^^^^^^^^^^

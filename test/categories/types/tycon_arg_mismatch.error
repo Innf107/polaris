@@ -1,0 +1,7 @@
+test/categories/types/tycon_arg_mismatch.pls:7:1-7:26: ERROR:
+Invalid number of arguments supplied to type constructor 'Const'.
+    The type constructor takes 2 arguments
+                 but was given 1
+  | 
+7 | let x : Const(a) = loop()
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^

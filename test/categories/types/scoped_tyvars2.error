@@ -1,0 +1,5 @@
+test/categories/types/scoped_tyvars2.pls:3:1-3:42: ERROR:
+Type variable or constructor not found: 'a'
+  | 
+3 | let g : a = let loop() = loop() in loop()
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

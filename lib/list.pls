@@ -1,159 +1,170 @@
 # Utility functions operating on lists
+export {
+    foldr,
+    foldl,
+    
+    map,
+    filter,
 
+    zip,
+    zipWith,
+    indexed,
+    
+    contains,
+    find,
+
+    sum,
+    product,
+
+    for,
+    forConcurrent,
+
+    fst,
+    snd,
+
+    length,
+
+    reverse,
+
+    partition,
+    sort,
+}
 
 # O(n)
+let foldr : forall a b. ((a, b) -> b, b, List(a)) -> b
 let foldr(f, z, xs) = match xs {
     [] -> z
-    (x : xs) -> f(x, foldr(f, z, xs))
+    (x :: xs) -> f(x, foldr(f, z, xs))
 }
     
 
 # O(n), tail recursive
+let foldl : forall a b. ((b, a) -> b, b, List(a)) -> b
 let foldl(f, z, xs) = match xs {
     [] -> z
-    (x : xs) -> foldl(f, f(z, x), xs)
+    (x :: xs) -> foldl(f, f(z, x), xs)
 }
 
-# O(n)
-let map(f, xs) = foldr(\(x, r) -> [f(x)] ~ r, [], xs)
+# O(length(xs))
+let append : forall a. (List(a), List(a)) -> List(a)
+let append(xs, ys) = foldr(\x xs -> x :: xs, ys, xs)
 
 # O(n)
+let map : forall a b. (a -> b, List(a)) -> List(b)
+let map(f, xs) = foldr(\x r -> f(x) :: r, [], xs)
+
+# O(n)
+let filter : forall a. (a -> Bool, List(a)) -> List(a)
 let filter(f, xs) = match xs {
     [] -> []
-    (x : xs) -> 
+    (x :: xs) -> 
         if f(x) then
-            [x] ~ filter(f, xs)
+            x :: filter(f, xs)
         else
             filter(f, xs)
 }
 
 # O(min(n, m))
-let zipWith(f, xs, ys) = match [xs, ys] {
-    [[], _] | [_, []]-> []
-    [x : xs, y : ys] -> [f(x, y)] ~ zipWith(f, xs, ys)
+let zipWith : forall a b c. ((a, b) -> c, List(a), List(b)) -> List(c)
+let zipWith(f, xs, ys) = match (xs, ys) {
+    ([], _) | (_, [])-> []
+    (x :: xs, y :: ys) -> f(x, y) :: zipWith(f, xs, ys)
 }
 
 # O(min(n, m))
-let zip(xs, ys) = zipWith(\(x, y) -> [x, y], xs, ys);
+let zip : forall a b. (List(a), List(b)) -> List((a, b))
+let zip(xs, ys) = zipWith(\x y -> (x, y), xs, ys);
 
 # O(n)
+let indexed : forall a. List(a) -> List((a, Number))
 let indexed(xs) = {
     let go(ix, xs) = match xs {
         [] -> []
-        (x : xs) -> [[x, ix]] ~ go(ix + 1, xs)
+        (x :: xs) -> (x, ix) :: go(ix + 1, xs)
     }
     go(0, xs)
 }
 
-# Returns the first item `x` in the list, such that `pred(x) = true`
-# or `null`, if no such item exists.
 # O(n), tail recursive
+let contains : forall a. (a, List(a)) -> Bool
+let contains(needle, haystack) = match haystack {
+    [] -> false
+    (value :: rest) -> if value == needle then true else contains(needle, rest)
+}
+
+# O(n), tail recursive
+let find : forall a. ((a -> Bool), List(a)) -> < Just(a), Nothing >
 let find(pred, xs) = match xs {
-    [] -> null
-    x : xs -> 
+    [] -> Nothing
+    (x :: xs) -> 
         if pred(x) then
-            x
+            Just(x)
         else
             find(pred, xs)
+    
 }
 
 # O(1)
-let fst(t) = head(t)
+let fst : forall a b. ((a, b)) -> a
+let fst((x, y)) = x
 
 # O(1)
-let snd(t) = head(tail(t))
-
-# Takes a list of pair and retuns the second element of the first
-# pair `p`, where `pred(fst(p)) = true` or null, if no such pair exists.
-# O(n), tail recursive
-let lookupWith(pred, xs) =
-    let result = find(\t -> pred(fst(t)), xs) in
-    if result == null then
-        null
-    else
-        snd(result);
-
-# O(n), tail recursive
-let lookup(k, xs) = lookupWith(\x -> x == k, xs);
+let snd : forall a b. ((a, b)) -> b
+let snd((x, y)) = y
 
 # Specialized folds
 
 # O(n), tail recursive
-let sum(xs) = foldl(\(r, x) -> r + x, 0, xs);
+let sum : List(Number) -> Number
+let sum(xs) = foldl(\r x -> r + x, 0, xs);
 # O(n), tail recursive
-let product(xs) = foldl(\(r, x) -> r * x, 1, xs);
+let product : List(Number) -> Number
+let product(xs) = foldl(\r x -> r * x, 1, xs);
 
 
 # O(n), tail recursive
+let for : forall a. (List(a), a -> ()) -> ()
 let for(xs, f) = match xs {
     [] -> ()
-    (x : xs) -> {
+    (x :: xs) -> {
         f(x)
         for(xs, f)
     }
 }
 
 # Evaluates each argument on a separate thread
-# O(n), tail recursive
+# O(n), technically tail recursive, but it is probably not a good idea to run this on a large list
+let forConcurrent : forall a. (List(a), a -> ()) -> ()
 let forConcurrent(xs, f) = {
-    let promises = [(async f(x)) | x <- xs]
+    let promises = [(async f(x)) | let x <- xs]
     for(promises, \p -> await p)
 }
 
+# O(n), tail recursive
+let length : forall a. List(a) -> Number
+let length(xs) = foldl(\r _ -> r + 1, 0, xs)
 
-let length(xs) = foldl(\(r, _) -> r + 1, 0, xs)
+# O(n), tail recursive
+let reverse : forall a. List(a) -> List(a)
+let reverse(xs) = foldl(\xs x -> x :: xs, [], xs)
 
-let reverse(xs) = foldl(\(xs, x) -> cons(x, xs), [], xs)
-
+# O(n), tail recursive
+let partition : forall a. (a -> Bool, List(a)) -> (List(a), List(a))
 let partition(pred, xs) = {
     let go(passed, failed, xs) = match xs {
-        [] -> [passed, failed]
-        (x : xs) -> 
+        [] -> (passed, failed)
+        (x :: xs) -> 
             if pred(x) then
-                go([x] ~ passed, failed, xs)
+                go(x :: passed, failed, xs)
             else
-                go(passed, [x] ~ failed, xs)
+                go(passed, x :: failed, xs)
     }
     go([], [], xs)
 }
 
+let sort : List(Number) -> List(Number)
 let sort(xs) = match xs {
     [] -> []
     # TODO: Write with let destructuring
-    (x : xs) -> match partition(\y -> y < x, xs) {
-        [smaller, larger] -> sort(smaller) ~ [x] ~ sort(larger)
-    }
+    (x :: xs) -> let (smaller, larger) = partition(\y -> y < x, xs) in append(sort(smaller), (x :: sort(larger)))
 }
-
-#{
-    foldr: foldr,
-    foldl: foldl,
-    
-    map: map,
-    filter: filter,
-
-    zip: zip,
-    zipWith: zipWith,
-    indexed: indexed,
-
-    find: find,
-    lookupWith: lookupWith,
-    lookup: lookup,
-    
-    sum: sum,
-    product: product,
-
-    for: for,
-    forConcurrent: forConcurrent,
-
-    fst: fst,
-    snd: snd,
-
-    length: length,
-
-    reverse: reverse,
-
-    partition: partition,
-    sort: sort,
-}
-

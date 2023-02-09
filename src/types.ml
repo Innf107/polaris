@@ -1227,7 +1227,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
         | None -> 
           unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
             match remaining1 with
-            | [] -> bind state unif_unique unif_name (VariantUnif (Array.of_list remaining2, (skol_unique, skol_name)))
+            | [] -> bind state unif_unique unif_name (VariantSkol (Array.of_list remaining2, (skol_unique, skol_name)))
             | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
           end
         end

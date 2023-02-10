@@ -15,6 +15,7 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | OccursCheck of Unique.t * name * ty * ty * ty
                 | FunctionsWithDifferentArgCounts of ty list * ty list * ty * ty
                 | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
+                | IncorrectNumberOfArgsInLambda of int * ty list * ty
                 | NonProgCallInPipe of expr
                 | MissingRecordFields of (string * ty) list * (string * ty) list * ty * ty
                 | MissingVariantConstructors of (string * ty list) list * (string * ty list) list * ty * ty
@@ -191,7 +192,9 @@ let rec eval_module_env : local_env -> module_expr -> global_env * Typed.module_
 
 
 let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * Typed.pattern =
-  fun env pat -> match pat with
+  fun env pat -> 
+    trace_tc (lazy ("inferring pattern '" ^ pretty_pattern pat ^ "'"));
+    match pat with
     | VarPat (loc, varname) ->
       let var_ty = fresh_unif () in
       ( var_ty
@@ -358,13 +361,13 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) * Typ
       )
     | ListPat _, _ -> defer_to_inference ()
     | TuplePat (loc, patterns), Tuple arg_tys ->
-      if List.compare_length_with patterns (Array.length arg_tys) <> 0 then
-        todo __LOC__
-      else
-        let transformers, patterns = List.split (List.map2 (check_pattern env) patterns (Array.to_list arg_tys)) in
-        ( Util.compose transformers
-        , TuplePat(loc, patterns)
-        )
+      let transformers, patterns = match Base.List.map2 patterns (Array.to_list arg_tys) ~f:(check_pattern env) with
+      | Ok transformers_and_patterns -> List.split transformers_and_patterns
+      | Unequal_lengths -> todo __LOC__
+      in
+      ( Util.compose transformers
+      , TuplePat(loc, patterns)
+      )
     | TuplePat _, _ -> defer_to_inference ()
     | NumPat(loc, number), Number -> Fun.id, NumPat(loc, number)
     | NumPat _, _ -> defer_to_inference ()
@@ -432,7 +435,9 @@ let rec split_ref_ty : local_env -> loc -> ty -> ty =
     inner_type
 
 let rec infer : local_env -> expr -> ty * Typed.expr =
-  fun env expr -> match expr with
+  fun env expr -> 
+    trace_tc (lazy ("inferring expression '" ^ pretty expr ^ "'"));
+    match expr with
     | Var (loc, x) -> 
       begin match NameMap.find_opt x env.local_types with
       | Some ty -> 
@@ -476,12 +481,10 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let fun_ty, fun_expr = infer env fun_expr in
       let (param_tys, result_ty) = split_fun_ty env loc (List.length args) fun_ty in
 
-      if List.compare_lengths args param_tys <> 0 then begin
-        raise (TypeError (loc, PassedIncorrectNumberOfArgsToFun(List.length args, param_tys, result_ty)))
-      end;
-
-      let args = List.map2 (check env) param_tys args in
-
+      let args = match Base.List.map2 param_tys args ~f:(check env) with
+      | Ok(args) -> args
+      | Unequal_lengths -> raise (TypeError (loc, PassedIncorrectNumberOfArgsToFun(List.length args, param_tys, result_ty)))
+      in
       result_ty, App(loc, fun_expr, args)
     | Lambda (loc, args, body) -> 
       let arg_tys, transformers, args = Util.split3 (List.map (fun p -> infer_pattern env p) args) in
@@ -738,6 +741,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
 
 and check : local_env -> ty -> expr -> Typed.expr =
   fun env expected_ty expr ->
+    trace_tc (lazy ("checking expression '" ^ pretty expr ^ "' : " ^ pretty_type expected_ty));
     let expected_ty = skolemize expected_ty in
 
     let defer_to_inference () =
@@ -755,7 +759,11 @@ and check : local_env -> ty -> expr -> Typed.expr =
     | App _, _ -> defer_to_inference ()
     | Lambda(loc, param_patterns, body), expected_ty ->
       let (param_tys, result_ty) = split_fun_ty env loc (List.length param_patterns) expected_ty in
-      let transformers, param_patterns = List.split (List.map2 (check_pattern env) param_patterns param_tys) in
+    
+      let transformers, param_patterns = match Base.List.map2 param_patterns param_tys ~f:(check_pattern env) with
+      | Ok typed_pats -> List.split typed_pats
+      | Unequal_lengths -> raise (TypeError (loc, IncorrectNumberOfArgsInLambda(List.length param_patterns, param_tys, result_ty)))
+      in
       let env_transformer = Util.compose transformers in
       let body = check (env_transformer env) result_ty body in
       Lambda (loc, param_patterns, body)
@@ -766,7 +774,10 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let elems = List.map (check env elem_ty) elems in
       ListLit (loc, elems)
     | TupleLit (loc, elems), Tuple(elem_tys) ->
-      let elems = List.map2 (check env) (Array.to_list elem_tys) elems in
+      let elems = match Base.List.map2 (Array.to_list elem_tys) elems ~f:(check env) with
+      | Ok elems -> elems
+      | Unequal_lengths -> todo __LOC__
+      in
       TupleLit (loc, elems)
       (* Record literals would be hard to check directly since the fields are order independent,
          so we just defer to inference and let the unifier deal with this. *)
@@ -899,13 +910,12 @@ and check_seq_expr : local_env -> expr -> (local_env -> local_env) * Typed.expr 
         | None -> 
           let arg_tys, transformers, patterns = Util.split3 (List.map (infer_pattern env) patterns) in
           arg_tys, transformers, patterns, fresh_unif (), Fun.id
-        | Some (Fun(arg_tys, result_ty), ty_skolemizer) ->
-          if (List.compare_lengths arg_tys patterns != 0) then
-            raise (TypeError (loc, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length patterns)))
-          else begin
-            let transformers, patterns = List.split (List.map2 (check_pattern env) patterns arg_tys) in
-            arg_tys, transformers, patterns, result_ty, ty_skolemizer
-          end
+        | Some (Fun(arg_tys, result_ty), ty_skolemizer) ->            
+          let transformers, patterns = match Base.List.map2 patterns arg_tys ~f:(check_pattern env) with
+          | Ok transformers_and_patterns -> List.split transformers_and_patterns
+          | Unequal_lengths -> raise (TypeError (loc, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length patterns)))
+          in
+          arg_tys, transformers, patterns, result_ty, ty_skolemizer
         | Some (ty, _) -> raise (TypeError (loc, NonFunTypeInLetRec(fun_name, ty)))
       in
 

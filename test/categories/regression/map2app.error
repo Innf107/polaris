@@ -1,0 +1,7 @@
+test/categories/regression/map2app.pls:16:16-16:59: ERROR:
+Incorrect number of parameters in lambda. This lambda takes 1 arguments
+                  but its type suggests that it should take 2.
+    When checking a lambda of expected type '(a$238, b$239) -> b$239'
+   | 
+16 |     List.foldr(\(x, r) -> regexpReplace(fst(x), snd(x), r), content, toReplace)
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -554,7 +554,15 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       ( RecordUnif (Array.map (fun (x, (ty, _)) -> (x, ty)) field_tys, (u, u_name))
       , RecordExtension (loc, expr, Array.to_list (Array.map (fun (x, (_, expr)) -> (x, expr)) field_tys))
       )
-    | DynLookup _ -> todo __LOC__
+    | DynLookup(loc, list_expr, index_expr) ->
+      let list_type, list_expr = infer env list_expr in
+      let element_type = fresh_unif () in
+      subsumes env loc list_type (List element_type);
+      let index_expr = check env Number index_expr in
+      ( element_type 
+      , DynLookup(loc, list_expr, index_expr)
+      )
+
     | BinOp (loc, expr1, ((Add | Sub | Mul | Div) as op), expr2) ->
       let expr1 = check env Number expr1 in
       let expr2 = check env Number expr2 in
@@ -799,7 +807,10 @@ and check : local_env -> ty -> expr -> Typed.expr =
     | RecordUpdate _, _ -> defer_to_inference ()
     (* TODO: This can probably be done more efficiently *)
     | RecordExtension _, _ -> defer_to_inference ()
-    | DynLookup _, _ -> todo __LOC__
+    | DynLookup(loc, list_expr, index_expr), element_type -> 
+      let list_expr = check env (List element_type) list_expr in
+      let index_expr = check env Number index_expr in
+      DynLookup(loc, list_expr, index_expr)
     | BinOp (loc, expr1, Cons, expr2), List(elem_ty) ->
       let expr1 = check env elem_ty expr1 in
       let expr2 = check env (List elem_ty) expr2 in

@@ -50,17 +50,17 @@ type local_env = {
 }
 
 let replace_unif : Unique.t -> ty -> ty -> ty =
-  fun var replacement -> Ty.transform begin function
+  fun var replacement -> Traversal.transform_type begin function
     | Unif (typeref, _) when Unique.equal (Typeref.get_unique typeref) var -> replacement
     | ty -> ty
     end
 
-let normalize_unif : ty -> ty =
+let rec normalize_unif : ty -> ty =
   function
   | Unif (typeref, name) as ty -> 
     begin match Typeref.get typeref with
     | None -> ty
-    | Some inner_ty -> inner_ty
+    | Some inner_ty -> normalize_unif inner_ty
     end
   | RecordUnif (fields, (typeref, name)) as ty ->
     begin match Typeref.get typeref with
@@ -130,16 +130,15 @@ let insert_type_alias : name -> name list -> ty -> local_env -> local_env =
 
 
 let replace_tvar : name -> ty -> ty -> ty =
-  fun var replacement -> Ty.transform begin fun ty ->
-    match normalize_unif ty with
-    (* We rely on the renamer and generalization to eliminate
-       and name shadowing, so we don't need to deal with foralls here *)
-    | TyVar tv when tv = var -> replacement
-    | ty -> ty
+  fun name_to_replace replacement_type ->
+    Traversal.transform_type begin fun ty -> 
+      match normalize_unif ty with
+      | TyVar name when Name.equal name name_to_replace -> replacement_type
+      | ty -> ty
     end
 
 let replace_tvars : ty NameMap.t -> ty -> ty =
-  fun vars -> Ty.transform begin function
+  fun vars -> Traversal.transform_type begin function
     | TyVar tv -> begin match NameMap.find_opt tv vars with
       | None -> TyVar tv
       | Some ty -> ty
@@ -1318,12 +1317,20 @@ let solve_constraints : local_env -> ty_constraint list -> unit =
 
 
 
-let free_unifs : ty -> TyperefSet.t =
-  Ty.collect (Classes.monoid_set (module TyperefSet)) begin fun ty ->
-    match normalize_unif ty with
-    | Unif (typeref, name) -> TyperefSet.of_list [(typeref, name)]
-    | _ -> TyperefSet.empty 
-    end
+let free_unifs : ty -> TyperefSet.t = 
+  fun ty ->
+    let traversal = object
+      inherit [TyperefSet.t] Traversal.traversal
+
+      method! ty state ty =
+        match normalize_unif ty with
+        | Unif (typeref, name) as ty -> (ty, TyperefSet.add (typeref, name) state)
+        | ty -> (ty, state)
+
+    end in
+    let _, typerefs = traversal#traverse_type TyperefSet.empty ty in
+    typerefs
+
 
 (** Generalizes a given type by turning residual unification variables into
     forall-bound type variables. 
@@ -1333,12 +1340,15 @@ let free_unifs : ty -> TyperefSet.t =
     This is going to change once we introduce a value restriction!  *)
 let generalize : ty -> ty =
   fun ty -> 
+    let free_unifs_in_type = free_unifs ty in
+    trace_tc (lazy ("[generalize]: free unification variables: " 
+      ^ String.concat "" (List.of_seq (Seq.map (fun x -> pretty_type ty) (TyperefSet.to_seq free_unifs_in_type)))));
     let ty' = TyperefSet.fold 
       (fun (typeref, name) r -> 
         let new_name = Name.refresh name in
         bind typeref name (TyVar new_name);
         Forall(new_name, r)) 
-      (free_unifs ty) 
+      free_unifs_in_type
       ty
     in
     trace_tc (lazy ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty'));

@@ -11,7 +11,7 @@ let find unique subst =
 
 (* TODO: Put this in some kind of common type operation module *)
 let replace_unif : Unique.t -> ty -> ty -> ty =
-  fun var replacement -> Ty.transform begin function
+  fun var replacement -> Traversal.transform_type begin function
     | Unif (typeref, _) when Unique.equal (Typeref.get_unique typeref) var -> replacement
     | ty -> ty
     end
@@ -20,7 +20,7 @@ let replace_unif : Unique.t -> ty -> ty -> ty =
 let add unif ty subst =
   subst := UniqueMap.add unif ty (UniqueMap.map (replace_unif unif ty) !subst)
 
-let apply subst = Ty.transform begin function
+let apply subst = Traversal.transform_type begin function
 | Unif (typeref, _) as ty ->
   begin match find (Typeref.get_unique typeref) subst with
   | None -> ty

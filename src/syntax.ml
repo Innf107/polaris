@@ -98,7 +98,7 @@ module Template = struct
         let (module M) = monoid in
         let rec go ty = 
           let result = get ty in
-          let remaining = match ty with
+          let rec remaining ty = match ty with
             | Forall (_, ty) -> go ty
             | Fun (args, ty) ->
               M.append (mconcat monoid (List.map go args)) (go ty)
@@ -129,9 +129,13 @@ module Template = struct
             | ModSubscriptTyCon (_ext, _mod_name, _name, args) ->
               fold monoid go args
             (* non-recursive cases *)
-            | TyVar _ | Unif _ | Skol _ | Number | Bool | String -> M.empty
+            | Unif (typeref, name) -> begin match Typeref.get typeref with
+              | Some inner_ty -> remaining inner_ty
+              | None -> M.empty
+              end
+            | TyVar _ | Skol _ | Number | Bool | String -> M.empty
           in
-          M.append result remaining
+          M.append result (remaining ty)
         in
         go ty
       
@@ -170,51 +174,6 @@ module Template = struct
       VariantVar (Array.append fields fields2, var)
     | ty -> panic __LOC__ ("Variant extension variable replaced with non-variant type")
 
-    (* Recursively apply a transformation function over every node of a type 
-       (in a bottom-up fashion / post-order traversal). *)
-    let rec transform : (t -> t) -> t -> t =
-      fun trans ty ->
-        let transformed = match ty with
-        | Forall (x, ty) -> Forall (x, transform trans ty)
-        | Fun (args, res) -> Fun (List.map (transform trans) args, transform trans res)
-        | Tuple tys -> Tuple (Array.map (transform trans) tys)
-        | List ty -> List (transform trans ty)
-        | Promise ty -> Promise (transform trans ty)
-        | Ref ty -> Ref (transform trans ty)
-        | RecordClosed tys -> RecordClosed (Array.map (fun (x, ty) -> (x, transform trans ty)) tys)
-        | VariantClosed tys -> VariantClosed (Array.map (fun (x, tys) -> (x, List.map (transform trans) tys)) tys)
-        | RecordUnif (fields, (typeref, name)) -> 
-          let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
-          let extension_type = transform trans (Unif (typeref, name)) in
-          replace_record_extension fields extension_type
-        | VariantUnif (fields, (typeref, name)) -> 
-          let fields = Array.map (fun (x, ty) -> (x, List.map(transform trans) ty)) fields in
-          let extension_type = transform trans (Unif (typeref, name)) in
-          replace_variant_extension fields extension_type  
-        | RecordVar (fields, var) ->
-          let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
-          let extension_type = transform trans (TyVar var) in
-          replace_record_extension fields extension_type
-        | VariantVar (fields, var) ->
-          let fields = Array.map (fun (x, ty) -> (x, List.map (transform trans) ty)) fields in
-          let extension_type = transform trans (TyVar var) in
-          replace_variant_extension fields extension_type    
-        | RecordSkol (fields, (u, name)) ->
-          let fields = Array.map (fun (x, ty) -> (x, transform trans ty)) fields in
-          let extension_type = transform trans (Skol (u, name)) in
-          replace_record_extension fields extension_type
-        | VariantSkol (fields, (u, name)) ->
-          let fields = Array.map (fun (x, ty) -> (x, List.map (transform trans) ty)) fields in
-          let extension_type = transform trans (Skol (u, name)) in
-          replace_variant_extension fields extension_type  
-        | TyConstructor (name, args) -> TyConstructor (name, List.map (transform trans) args)
-        | TypeAlias (name, args) -> TypeAlias (name, List.map (transform trans) args)
-        | ModSubscriptTyCon (ext, mod_name, name, args) -> 
-          ModSubscriptTyCon (ext, mod_name, name, List.map (transform trans) args)
-        (* Non-recursive cases *)
-        | (TyVar _ | Unif _ | Skol _ | Number | Bool | String) as ty -> ty
-        in
-        trans transformed
   end
 
   type pattern =
@@ -895,7 +854,7 @@ module Template = struct
           List(ty), state
         | Promise(ty) ->
           let ty, state = self#traverse_type state ty in
-          List(ty), state
+          Promise(ty), state
         | Ref(ty) ->
           let ty, state = self#traverse_type state ty in
           Ref(ty), state
@@ -1037,6 +996,15 @@ module Template = struct
           exprs
           ([], state)
     end
+
+    let transform_type trans ty =
+      let traversal = object
+        inherit [unit] traversal
+        method! ty () ty =
+          let ty = trans ty in
+          ty, ()  
+      end in
+      fst (traversal#traverse_type () ty)
   end
 end [@@ttg_template]
 

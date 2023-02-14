@@ -138,6 +138,10 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
     | PassedIncorrectNumberOfArgsToFun (actual_count, expected_types, result_ty) ->
         "Trying to pass " ^ text_style.number actual_count ^ " arguments to a function that expects " ^ text_style.number (List.length expected_types) ^ ".\n"
       ^ "Incorrect number of arguments passed to a function of type " ^ text_style.ty (Renamed.pretty_type (Fun(expected_types, result_ty)))
+    | IncorrectNumberOfArgsInLambda (actual_count, expected_types, result_ty) ->
+        "Incorrect number of parameters in lambda. This lambda takes " ^ text_style.number actual_count ^ " arguments\n"
+      ^ "                  but its type suggests that it should take " ^ text_style.number (List.length expected_types)  ^ ".\n"
+      ^ "    When checking a lambda of expected type " ^ text_style.ty (Renamed.pretty_type (Fun(expected_types, result_ty)))
     | NonProgCallInPipe expr ->
       (* TODO: Is this even possible? *)
       "Non program call expression in a pipe."

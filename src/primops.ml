@@ -15,8 +15,8 @@ let primops = PrimOpMap.of_seq (List.to_seq [
   "regexpReplace", [String; String; String] --> String;
   "regexpMatch", [String; String] --> List String;
   "regexpMatchGroups", [String; String] --> List(List String);
-  "regexpTransform", [String; [String] --> String] --> String;
-  "regexpTransformAll", [String; [String] --> String] --> String;
+  "regexpTransform", [String; [String] --> String; String] --> String;
+  "regexpTransformAll", [String; [List(String)] --> String; String] --> String;
   "writeFile", [String; String] --> Ty.unit;
   "parseInt", [String] --> Number;
   "parseNum", [String] --> Number;

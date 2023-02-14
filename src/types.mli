@@ -7,7 +7,7 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | DifferentVariantConstrArgs of string * ty list * ty list * ty * ty
                 | MismatchedTyCon of name * name * ty * ty
                 | Impredicative of (ty * ty) * (ty * ty)
-                | OccursCheck of Unique.t * name * ty * ty * ty
+                | OccursCheck of ty Typeref.t * name * ty * ty * ty
                 | FunctionsWithDifferentArgCounts of ty list * ty list * ty * ty
                 | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
                 | NonProgCallInPipe of expr

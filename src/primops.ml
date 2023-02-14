@@ -28,8 +28,8 @@ let primops = PrimOpMap.of_seq (List.to_seq [
   "getEnv", forall' (fun a -> [] --> VariantVar ([|("Nothing", []); ("Just", [String])|], a));
   "fail", forall (fun a -> [String] --> a);
   "scriptLocal", [String] --> String;
-  "commandExists", [String] --> String;
-  "ensure", [String] --> String;
+  "commandExists", [String] --> Bool;
+  "ensure", [String] --> Ty.unit;
   "status", [] --> Number;
   "mod", [Number; Number] --> Number;
 ])

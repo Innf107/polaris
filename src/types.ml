@@ -12,7 +12,7 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
                 | DifferentVariantConstrArgs of string * ty list * ty list * ty * ty
                 | MismatchedTyCon of name * name * ty * ty
                 | Impredicative of (ty * ty) * (ty * ty)
-                | OccursCheck of Unique.t * name * ty * ty * ty
+                | OccursCheck of ty Typeref.t * name * ty * ty * ty
                 | FunctionsWithDifferentArgCounts of ty list * ty list * ty * ty
                 | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
                 | NonProgCallInPipe of expr
@@ -24,9 +24,9 @@ type type_error = UnableToUnify of (ty * ty) * (ty * ty)
 
 exception TypeError of loc * type_error
 
-module UnifSet = Set.Make(struct
-  type t = Unique.t * name
-  let compare (u1, _) (u2, _) = Unique.compare u1 u2
+module TyperefSet = Set.Make(struct
+  type t = ty Typeref.t * name
+  let compare (ref1, _) (ref2, _) = Unique.compare (Typeref.get_unique ref1) (Typeref.get_unique ref2)
 end)
 
 type ty_constraint = Unify of loc * ty * ty
@@ -48,22 +48,40 @@ type local_env = {
   type_aliases : (name list * ty) NameMap.t;
 }
 
-
 let replace_unif : Unique.t -> ty -> ty -> ty =
   fun var replacement -> Ty.transform begin function
-    | Unif (u, _) when Unique.equal u var -> replacement
+    | Unif (typeref, _) when Unique.equal (Typeref.get_unique typeref) var -> replacement
     | ty -> ty
     end
 
+let normalize_unif : ty -> ty =
+  function
+  | Unif (typeref, name) as ty -> 
+    begin match Typeref.get typeref with
+    | None -> ty
+    | Some inner_ty -> inner_ty
+    end
+  | RecordUnif (fields, (typeref, name)) as ty ->
+    begin match Typeref.get typeref with
+    | None -> ty
+    | Some inner_ty -> Ty.replace_record_extension fields inner_ty
+    end
+  | VariantUnif (fields, (typeref, name)) as ty ->
+    begin match Typeref.get typeref with
+    | None -> ty
+    | Some inner_ty -> Ty.replace_variant_extension fields inner_ty
+    end  
+  | ty -> ty
 
 let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
-    match ty1, ty2 with
+    match normalize_unif ty1, normalize_unif ty2 with
     (* We can skip obviously equal constraints. 
        This will make debugging vastly simpler and might improve performance a little. *)
     | (Number, Number) | (Bool, Bool)| (String, String) | (RecordClosed [||], RecordClosed [||]) -> ()
     | (TyVar name1, TyVar name2) when Name.equal name1 name2 -> ()
-    | (Unif(u1, _), Unif(u2, _)) | (Skol(u1, _), Skol(u2, _)) when Unique.equal u1 u2 -> ()
+    | (Unif(typeref1, _), Unif(typeref2, _)) when Typeref.equal typeref1 typeref2 -> ()
+    | (Skol(u1, _), Skol(u2, _)) when Unique.equal u1 u2 -> ()
     | _ -> env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
 
 (* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2.
@@ -84,19 +102,19 @@ let prog_arg_constraint : local_env -> loc -> ty -> unit =
     env.constraints := Difflist.snoc !(env.constraints) (ProgramArg (loc, ty))
 
 let fresh_unif_raw_with raw_name =
-  let index = Unique.fresh() in
-  index, Name.{ name = raw_name; index }
+  let typeref = Typeref.make () in
+  typeref, Name.{ name = raw_name; index = Typeref.get_unique typeref }
     
 let fresh_unif_raw () =
   fresh_unif_raw_with "α"
 
 let fresh_unif () = 
-  let index, name = fresh_unif_raw () in
-  Unif (index, name)
+  let typeref, name = fresh_unif_raw () in
+  Unif (typeref, name)
 
 let fresh_unif_with name =
-  let index, name = fresh_unif_raw_with name in
-  Unif (index, name)
+  let typeref, name = fresh_unif_raw_with name in
+  Unif (typeref, name)
 
 let insert_var : name -> ty -> local_env -> local_env =
   fun x ty env -> { env with local_types = NameMap.add x ty env.local_types }
@@ -111,7 +129,8 @@ let insert_type_alias : name -> name list -> ty -> local_env -> local_env =
 
 
 let replace_tvar : name -> ty -> ty -> ty =
-  fun var replacement -> Ty.transform begin function
+  fun var replacement -> Ty.transform begin fun ty ->
+    match normalize_unif ty with
     (* We rely on the renamer and generalization to eliminate
        and name shadowing, so we don't need to deal with foralls here *)
     | TyVar tv when tv = var -> replacement
@@ -140,9 +159,10 @@ let instantiate_type_alias : local_env -> name -> ty list -> ty =
     
 
 let rec instantiate_with_function : ty -> (ty * (ty -> ty)) =
-  function
+  fun ty -> 
+  match normalize_unif ty with
   | Forall (tv, ty) ->
-    let unif = Unif (Unique.fresh (), tv) in
+    let unif = Unif (Typeref.make (), tv) in
     (* TODO: Collect all tyvars first to avoid multiple traversals *)
     let replacement_fun = replace_tvar tv unif in
     let instantiated, inner_replacement_fun = instantiate_with_function (replacement_fun ty) in
@@ -155,7 +175,7 @@ let instantiate : ty -> ty =
     instaniated
 
 let rec skolemize_with_function : ty -> ty * (ty -> ty) =
-  function
+  fun ty -> match normalize_unif ty with
   | Forall (tv, ty) ->
     let skol = Skol (Unique.fresh (), tv) in
     let replacement_fun = replace_tvar tv skol in
@@ -397,7 +417,7 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) * Typ
     If the type is not statically known to be a function, this is achieved by unifying
     with a function type consisting of type variables (This is why the number of arguments has to be known beforehand). *)
 let rec split_fun_ty : local_env -> loc -> int -> ty -> (ty list * ty) =
-  fun env loc arg_count -> function
+  fun env loc arg_count ty -> match normalize_unif ty with
   | Fun(args, result) -> 
     (* TODO: Should we check that the argument count matches here? *)
     (args, result)
@@ -421,7 +441,7 @@ let rec split_fun_ty : local_env -> loc -> int -> ty -> (ty list * ty) =
 (** Find the type under a reference. This will match on the type directly if possible or
     use unification otherwise *)
 let rec split_ref_ty : local_env -> loc -> ty -> ty =
-  fun env loc -> function
+  fun env loc ty -> match normalize_unif ty with
   | Ref(ty) -> ty
   | TypeAlias(alias_name, args) ->
     let real_type = instantiate_type_alias env alias_name args in
@@ -1015,33 +1035,25 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
     let exprs = check_seq (env_trans env) loc expected_ty exprs in
     expr :: exprs
 
-let rec occurs subst u = Ty.collect Classes.monoid_or begin function
-      | Unif (u2, _) -> 
-        if Unique.equal u u2 then
-          true
-        else
-          begin match Subst.find u2 subst with
-          | None -> false
-          | Some ty -> occurs subst u ty
-          end
-      | _ -> false
-      end
+let rec occurs needle = Ty.collect Classes.monoid_or begin fun ty ->
+    match normalize_unif ty with
+    | Unif (typeref, _) when Typeref.equal needle typeref -> true 
+    | _ -> false
+    end
 
 type unify_state = {
-  (* This uses a 'ref' instead of a mutable field to allow the
-     possibility of adding immutable fields later *)
-  subst : Subst.t;
-
   deferred_constraints : ty_constraint Difflist.t ref option
 }
 
-let partial_apply state ty =
-  Subst.apply state.subst ty
+let bind : ty Typeref.t -> name -> ty -> unit =
+  fun typeref name ty ->
+    trace_subst (lazy (pretty_type (Unif (typeref, name)) ^ " := " ^ pretty_type ty));
+    match Typeref.get typeref with
+    | Some previous_ty -> panic __LOC__ ("Trying to bind already bound type variable " ^ pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ ".\n"
+                                        ^ "    previous type: " ^ pretty_type previous_ty ^ "\n"
+                                        ^ "         new type: " ^ pretty_type ty)
+    | None -> Typeref.set typeref ty
 
-let bind : unify_state -> Unique.t -> name -> ty -> unit =
-  fun state u name ty ->
-    trace_subst (lazy (pretty_type (Unif (u, name)) ^ " := " ^ pretty_type ty));
-    Subst.add u ty state.subst
 
 let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
   fun loc env state original_ty1 original_ty2 ->
@@ -1083,32 +1095,23 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
         else
           List.iter2 go params1 params2
       in
-      match ty1, ty2 with
-      | Unif (u, name), ty | ty, Unif (u, name) -> 
-        begin match Subst.find u state.subst with
-        | Some subst_ty -> go subst_ty ty
-        | None ->
-          begin match ty with
-          (* Ignore 'a ~ a' constraints. These are mostly harmless,
-            but might hang the type checker if they become part of the substitution 
-          *)
-          | Unif (u2, _) when u = u2 -> ()
-          | Unif (u2, _) -> 
-            begin match Subst.find u2 state.subst with
-            | Some subst_ty -> go (Unif (u, name)) subst_ty
-            | None -> bind state u name ty
-            end
-          | _ -> 
-            if occurs state.subst u ty then
-              raise (TypeError (loc, OccursCheck(u, name, partial_apply state ty, partial_apply state original_ty1, partial_apply state original_ty2)))
-            else begin
-              bind state u name ty
-          end
-        end
+      match normalize_unif ty1, normalize_unif ty2 with
+      | Unif (typeref, name), ty | ty, Unif (typeref, name) -> 
+        (* Thanks to normalize_unif, we know that these have to be unbound unification variables *)
+        begin match normalize_unif ty with
+        (* Ignore 'a ~ a' constraints. These are mostly harmless,
+          but might hang the type checker if they become part of the substitution 
+        *)
+        | Unif (typeref2, _) when Typeref.equal typeref typeref2 -> ()
+        | ty -> 
+          if occurs typeref ty then
+            raise (TypeError (loc, OccursCheck(typeref, name, ty, original_ty1, original_ty2)))
+          else 
+            bind typeref name ty
       end
       | TyConstructor(name1, args1), TyConstructor(name2, args2) ->
         if Name.compare name1 name2 <> 0 then
-          raise (TypeError (loc, MismatchedTyCon(name1, name2, partial_apply state original_ty1, partial_apply state original_ty2)))
+          raise (TypeError (loc, MismatchedTyCon(name1, name2, original_ty1, original_ty2)))
         else
           if List.compare_lengths args1 args2 <> 0 then
             panic __LOC__ (Loc.pretty loc ^ ": Trying to unify applications of type constructor '" ^ Name.pretty name1 ^ "' to different numbers of arguments.\n    ty1: " ^ pretty_type ty1 ^ "\n    ty2: " ^ pretty_type ty2)
@@ -1117,11 +1120,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | Fun (dom1, cod1), Fun (dom2, cod2) ->
         if List.compare_lengths dom1 dom2 != 0 then
           raise (TypeError (loc, 
-            FunctionsWithDifferentArgCounts(
-              List.map (partial_apply state) dom1,  
-              List.map (partial_apply state) dom2, 
-              partial_apply state original_ty1, 
-              partial_apply state original_ty2)))
+            FunctionsWithDifferentArgCounts(dom1, dom2, original_ty1, original_ty2)))
         else begin
           List.iter2 go dom1 dom2;
           go cod1 cod2
@@ -1143,117 +1142,73 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
           raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2))))
       (* unif, closed *)
       | RecordUnif (fields1, (u, name)), RecordClosed fields2 ->
-        begin match Subst.find u state.subst with
-        | Some subst_ty -> go (replace_unif u subst_ty ty1) ty2
-        | None -> 
-          unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
-            match remaining1 with
-            | [] -> bind state u name (RecordClosed (Array.of_list remaining2))
-            | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], original_ty1, original_ty2)))
-          end
+        unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
+          match remaining1 with
+          | [] -> bind u name (RecordClosed (Array.of_list remaining2))
+          | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], original_ty1, original_ty2)))
         end
       | VariantUnif (fields1, (u, name)), VariantClosed fields2 ->
-        begin match Subst.find u state.subst with
-        | Some subst_ty -> go (replace_unif u subst_ty ty1) ty2
-        | None ->
-          unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
-            match remaining1 with
-            | [] -> bind state u name (VariantClosed (Array.of_list remaining2))
-            | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
-          end
+        unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
+          match remaining1 with
+          | [] -> bind u name (VariantClosed (Array.of_list remaining2))
+          | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
         end
       (* closed, unif *)
       | RecordClosed fields1, RecordUnif (fields2, (u, name)) ->
-        begin match Subst.find u state.subst with
-        | Some subst_ty -> go ty1 (replace_unif u subst_ty ty2) 
-        | None -> 
-          unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
-            match remaining2 with
-            | [] -> bind state u name (RecordClosed (Array.of_list remaining1))
-            | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, original_ty1, original_ty2)))
-          end
+        unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
+          match remaining2 with
+          | [] -> bind u name (RecordClosed (Array.of_list remaining1))
+          | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, original_ty1, original_ty2)))
         end
       | VariantClosed fields1, VariantUnif (fields2, (u, name)) ->
-        begin match Subst.find u state.subst with
-        | Some subst_ty -> go ty1 (replace_unif u subst_ty ty2) 
-        | None -> 
-          unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
-            match remaining2 with
-            | [] -> bind state u name (VariantClosed (Array.of_list remaining1))
-            | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, original_ty1, original_ty2)))
-          end
-        end  
+        unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
+          match remaining2 with
+          | [] -> bind u name (VariantClosed (Array.of_list remaining1))
+          | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, original_ty1, original_ty2)))
+        end
       (* unif, unif *)
       | RecordUnif (fields1, (u1, name1)), RecordUnif (fields2, (u2, name2)) ->
-        begin match Subst.find u1 state.subst with
-        | Some subst_ty -> go (replace_unif u1 subst_ty ty1) ty2
-        | None -> match Subst.find u2 state.subst with
-          | Some subst_ty -> go ty1 (replace_unif u2 subst_ty ty2)
-          | None ->
-            unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
-              let new_u, new_name = fresh_unif_raw_with "µ" in
-              bind state u1 name1 (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
-              bind state u2 name2 (RecordUnif (Array.of_list remaining1, (new_u, new_name)))
-          end
+        unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
+          let new_u, new_name = fresh_unif_raw_with "µ" in
+          bind u1 name1 (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
+          bind u2 name2 (RecordUnif (Array.of_list remaining1, (new_u, new_name)))
         end
       | VariantUnif (fields1, (u1, name1)), VariantUnif (fields2, (u2, name2)) ->
-        begin match Subst.find u1 state.subst with
-        | Some subst_ty -> go (replace_unif u1 subst_ty ty1) ty2
-        | None -> match Subst.find u2 state.subst with
-          | Some subst_ty -> go ty1 (replace_unif u2 subst_ty ty2)
-          | None ->
-            unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
-              let new_u, new_name = fresh_unif_raw_with "µ" in
-              bind state u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
-              bind state u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
-          end
-        end  
+        unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
+          let new_u, new_name = fresh_unif_raw_with "µ" in
+          bind u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
+          bind u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
+        end
       (* unif, skolem *)
       (* This is almost exactly like the (unif, closed) case, except that we need to carry the
          skolem extension field over *)
       | RecordUnif (fields1, (unif_unique, unif_name)), RecordSkol (fields2, (skol_unique, skol_name)) ->
-        begin match Subst.find unif_unique state.subst with
-        | Some subst_ty -> go (replace_unif unif_unique subst_ty ty1) ty2
-        | None -> 
-          unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
-            match remaining1 with
-            | [] -> bind state unif_unique unif_name (RecordSkol (Array.of_list remaining2, (skol_unique, skol_name)))
-            | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], original_ty1, original_ty2)))
-          end
+        unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
+          match remaining1 with
+          | [] -> bind unif_unique unif_name (RecordSkol (Array.of_list remaining2, (skol_unique, skol_name)))
+          | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], original_ty1, original_ty2)))
         end
       | VariantUnif (fields1, (unif_unique, unif_name)), VariantSkol (fields2, (skol_unique, skol_name)) ->
-        begin match Subst.find unif_unique state.subst with
-        | Some subst_ty -> go (replace_unif unif_unique subst_ty ty1) ty2
-        | None -> 
-          unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
-            match remaining1 with
-            | [] -> bind state unif_unique unif_name (VariantUnif (Array.of_list remaining2, (skol_unique, skol_name)))
-            | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
-          end
+        unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
+          match remaining1 with
+          | [] -> bind unif_unique unif_name (VariantSkol (Array.of_list remaining2, (skol_unique, skol_name)))
+          | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
         end
       (* skolem, unif *)
       (* This is almost exactly like the (closed, unif) case, except that we need to carry the
          skolem extension field over *)
       | RecordSkol (fields1, (skolem_unique, skolem_name)), RecordUnif (fields2, (unif_unique, unif_name)) -> 
-        begin match Subst.find unif_unique state.subst with
-        | Some subst_ty -> go ty1 (replace_unif unif_unique subst_ty ty2) 
-        | None -> 
-          unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
-            match remaining2 with
-            | [] -> bind state unif_unique unif_name (RecordSkol (Array.of_list remaining1, (skolem_unique, skolem_name)))
-            | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, original_ty1, original_ty2)))
-          end
+        unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
+          match remaining2 with
+          | [] -> bind unif_unique unif_name (RecordSkol (Array.of_list remaining1, (skolem_unique, skolem_name)))
+          | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, original_ty1, original_ty2)))
         end
       | VariantSkol (fields1, (skolem_unique, skolem_name)), VariantUnif (fields2, (unif_unique, unif_name)) -> 
-        begin match Subst.find unif_unique state.subst with
-        | Some subst_ty -> go ty1 (replace_unif unif_unique subst_ty ty2) 
-        | None -> 
-          unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
-            match remaining2 with
-            | [] -> bind state unif_unique unif_name (VariantSkol (Array.of_list remaining1, (skolem_unique, skolem_name)))
-            | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, original_ty1, original_ty2)))
-          end
-        end  
+        unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
+          match remaining2 with
+          | [] -> bind unif_unique unif_name (VariantSkol (Array.of_list remaining1, (skolem_unique, skolem_name)))
+          | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, original_ty1, original_ty2)))
+        end
       (* skolem, skolem *)
       (* Skolem rows only unify if the skolem fields match and
           all fields unify (similar to closed rows) *)
@@ -1282,14 +1237,13 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | other_type, TypeAlias (name, args) ->
         let real_type = instantiate_type_alias env name args in
         go other_type real_type  
-      | _ -> raise (TypeError (loc, UnableToUnify ((partial_apply state ty1, partial_apply state ty2), 
-                                                   (partial_apply state original_ty1, partial_apply state original_ty2))))
+      | _ -> raise (TypeError (loc, UnableToUnify ((ty1, ty2), (original_ty1, original_ty2))))
     in
     go original_ty1 original_ty2
 
 let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
   fun loc env state ty1 ty2 ->
-    match partial_apply state ty1 with
+    match normalize_unif ty1 with
     | TyConstructor(name, args) ->
       let var_names, underlying_type_raw = begin match NameMap.find_opt name env.data_definitions with
       | None -> panic __LOC__ (Loc.pretty loc ^ ": Data constructor '" ^ Name.pretty name ^ "' not found in unwrap expression. This should have been caught earlier!")
@@ -1307,7 +1261,7 @@ let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
         deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (Unwrap(loc, ty, ty2))
 
 let rec solve_program_arg : loc -> local_env -> unify_state -> ty -> unit =
-  fun loc env state ty -> match partial_apply state ty with
+  fun loc env state ty -> match normalize_unif ty with
   | String | Number -> ()
   | List ty -> solve_program_arg loc env state ty
   | ty -> 
@@ -1319,7 +1273,7 @@ let rec solve_program_arg : loc -> local_env -> unify_state -> ty -> unit =
     | Some deferred_constraint_ref ->
       deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (ProgramArg (loc, ty))
 
-let solve_constraints : local_env -> ty_constraint list -> Subst.t =
+let solve_constraints : local_env -> ty_constraint list -> unit =
   fun env constraints ->
     let go unify_state constraints = 
       List.iter begin function
@@ -1331,23 +1285,23 @@ let solve_constraints : local_env -> ty_constraint list -> Subst.t =
           solve_program_arg loc env unify_state ty
         end constraints;
     in
-    let subst = Subst.make () in
 
     let initial_deferred_constraint_ref = ref Difflist.empty in
-    let initial_unify_state = { subst = subst; deferred_constraints = Some initial_deferred_constraint_ref } in
+    let initial_unify_state = { deferred_constraints = Some initial_deferred_constraint_ref } in
     (* We try to solve the constraints once, collect any deferred ones and try again *)
     go initial_unify_state constraints;
     
-    let updated_unify_state = { subst = subst; deferred_constraints = None } in
-    go updated_unify_state (Difflist.to_list !initial_deferred_constraint_ref);
-
-    subst
+    let updated_unify_state = { deferred_constraints = None } in
+    go updated_unify_state (Difflist.to_list !initial_deferred_constraint_ref)
 
 
-let free_unifs : ty -> UnifSet.t =
-  Ty.collect (Classes.monoid_set (module UnifSet)) begin function
-    | Unif (u, name) -> UnifSet.of_list [(u, name)]
-    | _ -> UnifSet.empty 
+
+
+let free_unifs : ty -> TyperefSet.t =
+  Ty.collect (Classes.monoid_set (module TyperefSet)) begin fun ty ->
+    match normalize_unif ty with
+    | Unif (typeref, name) -> TyperefSet.of_list [(typeref, name)]
+    | _ -> TyperefSet.empty 
     end
 
 (** Generalizes a given type by turning residual unification variables into
@@ -1358,10 +1312,11 @@ let free_unifs : ty -> UnifSet.t =
     This is going to change once we introduce a value restriction!  *)
 let generalize : ty -> ty =
   fun ty -> 
-    let ty' = UnifSet.fold 
-      (fun (u, name) r -> 
-        let name = Name.refresh name in
-        Forall(name, replace_unif u (TyVar name) r)) 
+    let ty' = TyperefSet.fold 
+      (fun (typeref, name) r -> 
+        let new_name = Name.refresh name in
+        bind typeref name (TyVar new_name);
+        Forall(new_name, r)) 
       (free_unifs ty) 
       ty
     in
@@ -1399,7 +1354,7 @@ let typecheck_top_level : global_env -> expr -> global_env * Typed.expr =
         var_types = 
           NameMap.union (fun _ _ x -> Some x) 
             (global_env.var_types) 
-            (NameMap.map (generalize << Subst.apply subst) temp_local_env.local_types);
+            (NameMap.map generalize temp_local_env.local_types);
         module_var_contents =
           NameMap.union (fun _ _ x -> Some x)
             (global_env.module_var_contents)

@@ -124,8 +124,8 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
       ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2) ^ "\n"
       ^ "Unification involving forall-types is not supported (and most likely a bug)"
-    | OccursCheck (u, name, ty, original_ty1, original_ty2) -> 
-                        "Unable to construct the infinite type " ^ text_style.ty (Renamed.pretty_type (Unif (u, name))) ^ "\n"
+    | OccursCheck (typeref, name, ty, original_ty1, original_ty2) -> 
+                        "Unable to construct the infinite type " ^ text_style.ty (Renamed.pretty_type (Unif (typeref, name))) ^ "\n"
                       ^ "                                    ~ " ^ text_style.ty (Renamed.pretty_type ty) ^ "\n"
                      ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
                      ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2)

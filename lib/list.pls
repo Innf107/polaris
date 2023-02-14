@@ -4,6 +4,7 @@ export {
     foldl,
     
     map,
+    concatMap,
     filter,
 
     zip,
@@ -52,6 +53,9 @@ let append(xs, ys) = foldr(\x xs -> x :: xs, ys, xs)
 # O(n)
 let map : forall a b. (a -> b, List(a)) -> List(b)
 let map(f, xs) = foldr(\x r -> f(x) :: r, [], xs)
+
+let concatMap : forall a b. (a -> List(b), List(a)) -> List(b)
+let concatMap(f, xs) = foldr(\x r -> append(f(x), r), [], xs)
 
 # O(n)
 let filter : forall a. (a -> Bool, List(a)) -> List(a)

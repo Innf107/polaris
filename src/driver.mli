@@ -13,6 +13,8 @@ type driver_options = {
   print_tokens : bool;
 }
 
+val run : driver_options -> Lexing.lexbuf -> unit
+
 val run_env : driver_options 
            -> Lexing.lexbuf 
            -> Eval.eval_env 

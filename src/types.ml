@@ -49,12 +49,6 @@ type local_env = {
   type_aliases : (name list * ty) NameMap.t;
 }
 
-let replace_unif : Unique.t -> ty -> ty -> ty =
-  fun var replacement -> Traversal.transform_type begin function
-    | Unif (typeref, _) when Unique.equal (Typeref.get_unique typeref) var -> replacement
-    | ty -> ty
-    end
-
 let rec normalize_unif : ty -> ty =
   function
   | Unif (typeref, name) as ty -> 
@@ -1055,11 +1049,16 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
     let exprs = check_seq (env_trans env) loc expected_ty exprs in
     expr :: exprs
 
-let rec occurs needle = Ty.collect Classes.monoid_or begin fun ty ->
-    match normalize_unif ty with
-    | Unif (typeref, _) when Typeref.equal needle typeref -> true 
-    | _ -> false
-    end
+let occurs needle ty =
+  let traversal = object
+    inherit [bool] Traversal.traversal
+
+    method! ty state ty =
+      match normalize_unif ty with
+      | Unif (typeref, _) as ty when Typeref.equal needle typeref -> (ty, true)
+      | ty -> (ty, state)
+  end in
+  snd (traversal#traverse_type false ty)
 
 type unify_state = {
   deferred_constraints : ty_constraint Difflist.t ref option
@@ -1340,15 +1339,12 @@ let free_unifs : ty -> TyperefSet.t =
     This is going to change once we introduce a value restriction!  *)
 let generalize : ty -> ty =
   fun ty -> 
-    let free_unifs_in_type = free_unifs ty in
-    trace_tc (lazy ("[generalize]: free unification variables: " 
-      ^ String.concat "" (List.of_seq (Seq.map (fun x -> pretty_type ty) (TyperefSet.to_seq free_unifs_in_type)))));
     let ty' = TyperefSet.fold 
       (fun (typeref, name) r -> 
         let new_name = Name.refresh name in
         bind typeref name (TyVar new_name);
         Forall(new_name, r)) 
-      free_unifs_in_type
+      (free_unifs ty)
       ty
     in
     trace_tc (lazy ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty'));
@@ -1379,7 +1375,7 @@ let typecheck_top_level : global_env -> expr -> global_env * Typed.expr =
       type_aliases = NameMap.empty;
     } in
 
-    let subst = solve_constraints local_env (Difflist.to_list !(local_env.constraints)) in
+    solve_constraints local_env (Difflist.to_list !(local_env.constraints));
 
     let global_env = { 
         var_types = 

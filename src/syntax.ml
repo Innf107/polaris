@@ -87,64 +87,7 @@ module Template = struct
   module Ty = struct 
     type t = ty
     
-    let unit = RecordClosed [||]
-
-    (** Recursively apply a list returning operation over every constructor of 
-      a type and concatenate the results with a provided monoid implementation.
-      The type is traversed in pre-order
-      The results are collected in a `Difflist.t`, so concatenation is very efficient *)
-    let collect : type a. (module Monoid with type t = a) -> (t -> a) -> t -> a =
-      fun monoid get ty ->
-        let (module M) = monoid in
-        let rec go ty = 
-          let result = get ty in
-          let rec remaining ty = match ty with
-            | Forall (_, ty) -> go ty
-            | Fun (args, ty) ->
-              M.append (mconcat monoid (List.map go args)) (go ty)
-            | Tuple tys ->
-              mconcat monoid (Array.to_list (Array.map go tys))
-            | List ty | Promise ty | Ref ty -> go ty
-            | RecordClosed fields -> mconcat monoid (Array.to_list (Array.map (go << snd) fields))
-            | VariantClosed fields ->
-              mconcat monoid (Array.to_list (Array.map (fold monoid go << snd) fields))
-            (* We traverse the variable as if it was its own node, so
-               callers only need to handle `Unif` to handle all unification variables *)
-            | RecordUnif (fields, (typeref, name)) ->
-              M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (Unif (typeref, name)))
-            | VariantUnif (fields, (typeref, name)) ->
-              M.append (mconcat monoid (Array.to_list (Array.map (fold monoid go << snd) fields))) (go (Unif (typeref, name)))
-            (* We do the same for skolems *)
-            | RecordSkol (fields, (u, name)) ->
-              M.append (fold monoid (go << snd) (Array.to_list fields)) (go (Skol (u, name)))
-            | VariantSkol (fields, (u, name)) ->
-              M.append (fold monoid (fold monoid go << snd) (Array.to_list fields)) (go (Skol (u, name)))
-            | RecordVar (fields, var) -> M.append (mconcat monoid (Array.to_list (Array.map (go << snd) fields))) (go (TyVar var))
-            | VariantVar (fields, var) ->
-              M.append (mconcat monoid (Array.to_list (Array.map (fold monoid go << snd) fields))) (go (TyVar var))
-            | TyConstructor (_name, args) ->
-              fold monoid go args
-            | TypeAlias (_name, args) ->
-              fold monoid go args  
-            | ModSubscriptTyCon (_ext, _mod_name, _name, args) ->
-              fold monoid go args
-            (* non-recursive cases *)
-            | Unif (typeref, name) -> begin match Typeref.get typeref with
-              | Some inner_ty -> remaining inner_ty
-              | None -> M.empty
-              end
-            | TyVar _ | Skol _ | Number | Bool | String -> M.empty
-          in
-          M.append result (remaining ty)
-        in
-        go ty
-      
-    (* Like `collect` but returns the result in a list instead of an arbitrary monoid.
-       This function uses `Difflist`s internally, so it should be significantly faster
-       than `collect monoid_list`*)
-    let collect_list : 'a. (t -> 'a list) -> t -> 'a list =
-      fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
-  
+    let unit = RecordClosed [||]  
 
     let replace_record_extension fields = function
     | Unif (typeref, name) -> RecordUnif (fields, (typeref, name))

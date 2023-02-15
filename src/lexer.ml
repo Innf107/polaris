@@ -356,7 +356,7 @@ let token (state : lex_state) (lexbuf : lexbuf): Parser.token =
         let _ = next_char lexbuf in
         set_state (Default) state lexbuf;
         BANGEQUALS
-      | Some('.') | Some('!') ->
+      | Some('.') | Some('!') | Some(',') ->
         set_state Default state lexbuf;
         BANG
       | Some(c) when is_prog_char c ->

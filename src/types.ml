@@ -924,10 +924,25 @@ and check_list_comp : local_env -> list_comp_clause list -> local_env * Typed.li
 
 and check_seq_expr : local_env -> expr -> (local_env -> local_env) * Typed.expr =
     fun env expr -> match expr with
-    | LetSeq (loc, pat, e) ->
+    | LetSeq (loc, pat, body) ->
       let ty, env_trans, pat = infer_pattern env pat in
-      let e = check env ty e in
-      env_trans, LetSeq(loc, pat, e)
+      let ty, skolemizer = skolemize_with_function ty in
+
+      let traversal = object(self)
+        inherit [unit] Traversal.traversal
+
+        method! ty () ty =
+          skolemizer ty, ()
+
+        (* `skolemizer` is already recursive, so we skip any unnecessary (quadratic!) traversals *)
+        method! traverse_type state ty = self#ty state ty
+      end in
+
+      let body, () = traversal#traverse_expr () body in 
+
+      let body = check env ty body in
+
+      env_trans, LetSeq(loc, pat, body)
     | LetRecSeq(loc, mty, fun_name, patterns, body) ->
       let arg_tys, transformers, patterns, result_ty, ty_skolemizer = 
         match Option.map skolemize_with_function mty with

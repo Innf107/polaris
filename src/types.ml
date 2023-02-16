@@ -456,7 +456,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       | Some ty -> 
         let instantiated_type = instantiate ty in
         ( instantiated_type
-        , Var((loc, instantiated_type), x)
+        , Var((loc, ty), x)
         )
       | None -> panic __LOC__ ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")
       end

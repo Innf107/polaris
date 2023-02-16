@@ -14,7 +14,7 @@ let fail_usage message =
   exit 1
 
 let rec parse_args = function
-  | [] -> ()
+  | [] | [""] -> ()
   | ("--help" :: _) -> 
     print_endline usage_message;
     exit 0

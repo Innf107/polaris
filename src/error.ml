@@ -95,7 +95,8 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
     | UnterminatedString -> print_fun None (
         "Unterminated string"
       )
-    | InvalidChar (loc, char) -> print_fun (Some loc) ("Invalid char " ^ text_style.identifier (Base.String.of_char char))
+    | InvalidChar (loc, char) -> 
+      print_fun (Some loc) ("Unexpected character " ^ text_style.identifier (Base.String.of_char char))
   end
   | TypeError (loc, err) -> print_fun (Some loc) begin match err with
     | UnableToUnify ((ty1, ty2), (original_ty1, original_ty2)) -> 

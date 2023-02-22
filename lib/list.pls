@@ -2,7 +2,9 @@
 export {
     foldr,
     foldl,
-    
+
+    append,
+
     map,
     concatMap,
     filter,

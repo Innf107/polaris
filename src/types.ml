@@ -66,7 +66,7 @@ let rec normalize_unif : ty -> ty =
     | None -> ty
     | Some inner_ty -> Ty.replace_variant_extension fields inner_ty
     end  
-  | ty -> ty
+  | ty -> ty     
 
 let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
@@ -77,7 +77,7 @@ let unify : local_env -> loc -> ty -> ty -> unit =
     | (TyVar name1, TyVar name2) when Name.equal name1 name2 -> ()
     | (Unif(typeref1, _), Unif(typeref2, _)) when Typeref.equal typeref1 typeref2 -> ()
     | (Skol(u1, _), Skol(u2, _)) when Unique.equal u1 u2 -> ()
-    | _ -> env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
+    | ty1, ty2 -> env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
 
 (* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2.
    
@@ -1093,7 +1093,19 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
   fun loc env state original_ty1 original_ty2 ->
     trace_unify (lazy (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2));
 
-    let rec go ty1 ty2 = 
+    let rec bind_or_unify typeref name ty =
+      trace_unify (lazy 
+        ("bind_or_unify: " ^ Name.pretty name ^ "$" ^ (Unique.display name.index) ^ " = " 
+        ^ (match Typeref.get typeref with None -> "None" | Some ty -> pretty_type ty)
+        ^ " ~ " ^ pretty_type ty));
+      match Typeref.get typeref with
+      | None -> bind typeref name ty
+      (* TODO: Preserve the order somehow for the sake of error messages *)
+      | Some previous_ty -> 
+        trace_unify (lazy ("AAAAAAAAAAAA: " ^ pretty_type previous_ty ^ " ~ " ^ pretty_type ty));
+        go previous_ty ty 
+
+    and go ty1 ty2 = 
       (* `remaining_cont` is called with the remaining fields from both rows,
         that is the fields that are not part of the other row. 
         Closed rows will generally error on this, but unif rows might continue.
@@ -1181,10 +1193,11 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
           | [] -> bind u name (RecordClosed (Array.of_list remaining2))
           | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], original_ty1, original_ty2)))
         end
-      | VariantUnif (fields1, (u, name)), VariantClosed fields2 ->
+      | VariantUnif (fields1, (typeref, name)), VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining1 with
-          | [] -> bind u name (VariantClosed (Array.of_list remaining2))
+          | [] -> 
+            bind typeref name (VariantClosed (Array.of_list remaining2))
           | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
         end
       (* closed, unif *)
@@ -1210,8 +1223,9 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | VariantUnif (fields1, (u1, name1)), VariantUnif (fields2, (u2, name2)) ->
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
           let new_u, new_name = fresh_unif_raw_with "µ" in
-          bind u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
-          bind u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
+
+          bind_or_unify u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
+          bind_or_unify u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
         end
       (* unif, skolem *)
       (* This is almost exactly like the (unif, closed) case, except that we need to carry the

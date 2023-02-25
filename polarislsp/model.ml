@@ -51,14 +51,14 @@ let build exprs =
   let _, var_types = var_type_traversal#traverse_list var_type_traversal#traverse_expr Difflist.empty exprs in
   { hover_entries_at_loc = LocOverlapMap.of_seq (Difflist.to_seq var_types) }
 
-let find_hover_entry_at ~file (line, column) model =
+let find_hover_entry_at ~file Lsp.{ line; character } model =
   (* LSP locations are zero-based! *)
   let loc = Polaris.Loc.{ 
       file;
       start_line = line + 1; 
       end_line = line + 1;
-      start_col = column + 1;
-      end_col = column + 1;
+      start_col = character + 1;
+      end_col = character + 1;
     }
   in
   LocOverlapMap.find_opt loc model.hover_entries_at_loc

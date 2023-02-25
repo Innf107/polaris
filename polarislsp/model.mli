@@ -17,4 +17,4 @@ type hover_entry = Var of name * ty
 
 val build : expr list -> model
 
-val find_hover_entry_at : file:string -> int * int -> model -> (loc * hover_entry) option
+val find_hover_entry_at : file:string -> Lsp.position -> model -> (loc * hover_entry) option

@@ -4,7 +4,8 @@
  (libraries 
     polaris
     base
-    yojson))
+    yojson)
+  (preprocess (pps ppx_deriving.show ppx_yojson_conv)))
 
 (env
   (dev

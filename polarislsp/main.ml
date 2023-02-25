@@ -28,8 +28,8 @@ let rec parse_args = function
   | (flag :: _) -> fail_usage ("Invalid option: '" ^ flag ^ "'")
 
 
-let on_initialize body = 
-  Yojson.Basic.from_string {|{ 
+let on_initialize = 
+  Yojson.Safe.from_string {|{ 
     "capabilities": {
       "hoverProvider": true,
       "textDocumentSync": {
@@ -45,16 +45,15 @@ let on_initialize body =
 let filename_of_uri file =
   Base.String.chop_prefix_exn file ~prefix:"file://" 
 
-let on_change model_ref body =
+let on_change model_ref (params : Lsp.did_change_params) =
   let open Jsonutil in
-  let file_uri = nested_field ["textDocument"; "uri"] string body in
-  let content_changes = Jsonutil.field "contentChanges" (list (assoc string)) body in
-  let content = match content_changes with
-  | [[("text", content)]] -> content
+
+  let content = match params.contentChanges with
+  | [|{ text; _ }|] -> text
   | _ -> raise (Failure "Unexpected content changes in textDocument/didChange notification")
   in
 
-  let filename = filename_of_uri file_uri in
+  let filename = filename_of_uri params.textDocument.uri in
 
   let diagnostics, model_option = Driver.try_update_model ~filename (Lexing.from_string content) in
 
@@ -67,11 +66,11 @@ let on_change model_ref body =
   Jsonrpc.send_notification 
     "textDocument/publishDiagnostics" 
     (`Assoc [
-      "uri", `String file_uri;
+      "uri", `String params.textDocument.uri;
       "diagnostics", `List (List.map Diagnostic.to_json diagnostics)
     ])
 
-let on_hover model_ref body =
+let on_hover model_ref (hover_params : Lsp.hover_params) =
   let model = !model_ref in
 
   let no_response () = `Null in
@@ -79,12 +78,10 @@ let on_hover model_ref body =
   match model with
   | None -> no_response ()
   | Some model ->
-    let file_uri = Jsonutil.nested_field ["textDocument"; "uri"] Jsonutil.string body in
-    let position = Jsonutil.field "position" Jsonrpc.position body in
-    
+    let file_uri = hover_params.textDocument.uri in
     let file = filename_of_uri file_uri in
-    
-    match Model.find_hover_entry_at ~file position model with
+
+    match Model.find_hover_entry_at ~file hover_params.position model with
     | Some (loc, (Model.Var (var_name, ty) | Model.VarPattern (var_name, ty))) ->
       `Assoc [
         "range", Diagnostic.loc_to_json loc;
@@ -101,17 +98,23 @@ let () =
 
   let model_ref = ref None in
 
+  let x : Lsp.document_uri = "AAA" in
+
   prerr_endline "Running Polaris LSP server";
   Jsonrpc.run stdin stdout
-    ~handler:(fun ~request_method -> 
-      match request_method with
-      | "initialize" -> on_initialize
-      | "textDocument/hover" -> on_hover model_ref
-      | _ -> fun _ -> Jsonrpc.unsupported_method ()
+    ~handler:(fun ~request_method body -> 
+      match Lsp.parse_client_request request_method body with
+      | Some Initialize -> on_initialize
+      | Some (Hover params) -> on_hover model_ref params
+      | None -> Jsonrpc.unsupported_method ()
+      | exception (Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error(error, json)) -> 
+        Jsonrpc.parse_error (Printexc.to_string error ^ "\nwhile parsing: " ^ Yojson.Safe.pretty_to_string json)
     )
-    ~notification_handler:(fun ~notification_method -> 
-      match notification_method with
-      | "textDocument/didChange" -> on_change model_ref
-      | _ -> fun _ -> Jsonrpc.unsupported_method ()  
+    ~notification_handler:(fun ~notification_method body -> 
+      match Lsp.parse_client_notification notification_method body with
+      | Some (DidChange params) -> on_change model_ref params
+      | None -> Jsonrpc.unsupported_method ()  
+      | exception (Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error(error, json)) -> 
+        Jsonrpc.parse_error (Printexc.to_string error ^ "\nwhile parsing: " ^ Yojson.Safe.pretty_to_string json)
     )
 

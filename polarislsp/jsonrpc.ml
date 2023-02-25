@@ -4,8 +4,11 @@ let _response_category, trace_response = Trace.make ~flag:"response" ~prefix:"RE
 
 
 exception UnsupportedMethod
+exception ParseError of string
 
 let unsupported_method () = raise UnsupportedMethod
+
+let parse_error message = raise (ParseError message)
 
 let input_line_cr in_channel =
   match In_channel.input_line in_channel with
@@ -57,6 +60,16 @@ let rpc_error ?(data=`Null) request_id code message =
     ])
   ]
 
+let send_response out_channel response =
+  let response_string = Yojson.Safe.to_string response in
+  trace_response (lazy response_string);
+  let response_size = String.length response_string in
+  output_endline_cr out_channel ("Content-Length: " ^ string_of_int response_size);
+  output_newline_cr out_channel;
+  output_string out_channel response_string;
+  flush out_channel  
+
+
 let run in_channel out_channel ~handler ~notification_handler = 
   try
   while true do
@@ -64,7 +77,7 @@ let run in_channel out_channel ~handler ~notification_handler =
       let body_string = parse_request_to_string in_channel in
       trace_request (lazy body_string);
 
-      let request = Yojson.Basic.from_string body_string in
+      let request = Yojson.Safe.from_string body_string in
 
       let request_method = Jsonutil.field     "method" Jsonutil.string request in
       let request_params = Jsonutil.field_opt "params" Jsonutil.any request in
@@ -75,8 +88,13 @@ let run in_channel out_channel ~handler ~notification_handler =
       let request_params = Option.value ~default:`Null request_params in
       
       match request_id with
-      | None ->
-        notification_handler ~notification_method:request_method request_params
+      | None -> begin
+        try
+          notification_handler ~notification_method:request_method request_params
+        with
+        | ParseError message -> 
+          send_response out_channel (rpc_error `Null (-32700) ("Parse error: " ^ message))
+        end
         (* This is a notification, so we don't send a response *)
       | Some request_id ->
         let response = 
@@ -90,17 +108,11 @@ let run in_channel out_channel ~handler ~notification_handler =
           with
           | UnsupportedMethod ->
             rpc_error ?data:(Some(`String request_method)) request_id (-32601) ("Unsupported method: '" ^ request_method ^ "'")
+          | ParseError message ->
+            rpc_error request_id (-32700) ("Parse error: " ^ message)
         in
         
-
-        let response_string = Yojson.Basic.to_string response in
-        trace_response (lazy response_string);
-
-        let response_size = String.length response_string in
-        output_endline_cr out_channel ("Content-Length: " ^ string_of_int response_size);
-        output_newline_cr out_channel;
-        output_string out_channel response_string;
-        flush out_channel
+        send_response out_channel response
     with      
     | Failure message -> prerr_endline ("Error: " ^ message)
     (* Bubble up to exit the outer loop *)
@@ -120,7 +132,7 @@ let send_notification notification_method data =
     "params", data
   ]
   in
-  let json_string = Yojson.Basic.to_string json in
+  let json_string = Yojson.Safe.to_string json in
   trace_response (lazy ("[NOTIFICATION]: " ^  json_string));
   let size = String.length json_string in
   output_endline_cr out_channel ("Content-Length: " ^ string_of_int size);

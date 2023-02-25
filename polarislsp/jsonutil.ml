@@ -1,14 +1,14 @@
 open Polaris
 
-exception NonexistantField of string * Yojson.Basic.t
-exception NonObjectDereference of string * Yojson.Basic.t
-exception WrongTypeAsserted of string * Yojson.Basic.t
+exception NonexistantField of string * Yojson.Safe.t
+exception NonObjectDereference of string * Yojson.Safe.t
+exception WrongTypeAsserted of string * Yojson.Safe.t
 
 
 exception ParseError
 type 'a json_parser = { 
   name: string;
-  parser : Yojson.Basic.t -> 'a
+  parser : Yojson.Safe.t -> 'a
 }
 
 let make_parser_exn name parser = { name; parser }
@@ -57,13 +57,13 @@ let assoc inner_parser = make_parser ("Assoc(" ^ inner_parser.name ^ ")") (funct
   | _ -> None)
 
 
-let assert_json : 'a json_parser -> Yojson.Basic.t -> 'a =
+let assert_json : 'a json_parser -> Yojson.Safe.t -> 'a =
   fun json_parser json -> 
     match json_parser.parser json with
     | value -> value
     | exception ParseError -> raise (WrongTypeAsserted (json_parser.name, json))
 
-let coerce_json : 'a json_parser -> Yojson.Basic.t -> 'a option =
+let coerce_json : 'a json_parser -> Yojson.Safe.t -> 'a option =
   fun json_parser json ->
     match json_parser.parser json with
     | value -> Some value
@@ -105,8 +105,8 @@ let nested_field_opt fields json_type json =
 
 let () =
   Printexc.register_printer (function
-      | NonexistantField(field, json) -> Some ("JSON assertion failure: Nonexistant field '" ^ field ^ "' in JSON: " ^ Yojson.Basic.show json)
-      | NonObjectDereference(field, json) -> Some ("JSON assertion failure: Trying to dereference field '" ^ field ^ "' of non-object: " ^ Yojson.Basic.show json)
-      | WrongTypeAsserted(ty, json) -> Some ("JSON assertion failure: Asserted wrong type '" ^ ty ^ "' for JSON: " ^ Yojson.Basic.show json)
+      | NonexistantField(field, json) -> Some ("JSON assertion failure: Nonexistant field '" ^ field ^ "' in JSON: " ^ Yojson.Safe.show json)
+      | NonObjectDereference(field, json) -> Some ("JSON assertion failure: Trying to dereference field '" ^ field ^ "' of non-object: " ^ Yojson.Safe.show json)
+      | WrongTypeAsserted(ty, json) -> Some ("JSON assertion failure: Asserted wrong type '" ^ ty ^ "' for JSON: " ^ Yojson.Safe.show json)
       | _ -> None
   )

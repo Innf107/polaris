@@ -6,6 +6,6 @@ type t = {
     message : string
 }
 
-val loc_to_json : Polaris.Loc.t -> Yojson.Basic.t
+val loc_to_json : Polaris.Loc.t -> Yojson.Safe.t
 
-val to_json : t -> Yojson.Basic.t
+val to_json : t -> Yojson.Safe.t

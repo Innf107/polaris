@@ -14,8 +14,11 @@ type document_uri = string
 
 type text_document_item = {
   uri : document_uri;
-  language_id : string
-}
+  languageId : string;
+  version : int;
+  text : string;
+} [@@deriving yojson]
+
 type text_document_identifier = {
   uri : document_uri
 } [@@deriving yojson]
@@ -43,9 +46,7 @@ type versioned_text_document_identifier = {
 } [@@deriving yojson]
 
 type text_document_content_change_event = { 
-  (* According to the spec, the 'range' field should *not* be optional.
-     However, VS Code doesn't seem to send this for full document changes, so
-     we cannot rely on it :/ *)
+  (* This is None if the client sent the whole document *)
   range : range option [@yojson.option];
   text : string;
 } [@@deriving yojson]
@@ -55,8 +56,13 @@ type did_change_params = {
   contentChanges : text_document_content_change_event array;
 } [@@deriving yojson]
 
+type did_open_params = {
+  textDocument : text_document_item
+} [@@deriving yojson]
+
 type client_notification = 
   | DidChange of did_change_params
+  | DidOpen of did_open_params
   
 type client_request = 
   | Initialize (* TODO: Missing initialize_params *)
@@ -73,4 +79,5 @@ let parse_client_notification : string -> Yojson.Safe.t -> client_notification o
   fun req_method json ->
     match req_method with
     | "textDocument/didChange" -> Some (DidChange (did_change_params_of_yojson json))
+    | "textDocument/didOpen" -> Some (DidOpen (did_open_params_of_yojson json))
     | _ -> None

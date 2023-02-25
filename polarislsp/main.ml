@@ -33,6 +33,7 @@ let on_initialize =
     "capabilities": {
       "hoverProvider": true,
       "textDocumentSync": {
+        "openClose": 1,
         "change": 1
       }
     }, 
@@ -45,15 +46,8 @@ let on_initialize =
 let filename_of_uri file =
   Base.String.chop_prefix_exn file ~prefix:"file://" 
 
-let on_change model_ref (params : Lsp.did_change_params) =
-  let open Jsonutil in
-
-  let content = match params.contentChanges with
-  | [|{ text; _ }|] -> text
-  | _ -> raise (Failure "Unexpected content changes in textDocument/didChange notification")
-  in
-
-  let filename = filename_of_uri params.textDocument.uri in
+let process_document model_ref file_uri content =
+  let filename = filename_of_uri file_uri in
 
   let diagnostics, model_option = Driver.try_update_model ~filename (Lexing.from_string content) in
 
@@ -66,9 +60,20 @@ let on_change model_ref (params : Lsp.did_change_params) =
   Jsonrpc.send_notification 
     "textDocument/publishDiagnostics" 
     (`Assoc [
-      "uri", `String params.textDocument.uri;
+      "uri", `String file_uri;
       "diagnostics", `List (List.map Diagnostic.to_json diagnostics)
     ])
+
+let on_open model_ref (params : Lsp.did_open_params) =
+  if params.textDocument.languageId = "polaris" then
+    process_document model_ref params.textDocument.uri params.textDocument.text
+
+let on_change model_ref (params : Lsp.did_change_params) =
+  let content = match params.contentChanges with
+  | [|{ text; _ }|] -> text
+  | _ -> raise (Failure "Unexpected content changes in textDocument/didChange notification")
+  in
+  process_document model_ref params.textDocument.uri content
 
 let on_hover model_ref (hover_params : Lsp.hover_params) =
   let model = !model_ref in
@@ -98,8 +103,6 @@ let () =
 
   let model_ref = ref None in
 
-  let x : Lsp.document_uri = "AAA" in
-
   prerr_endline "Running Polaris LSP server";
   Jsonrpc.run stdin stdout
     ~handler:(fun ~request_method body -> 
@@ -112,6 +115,7 @@ let () =
     )
     ~notification_handler:(fun ~notification_method body -> 
       match Lsp.parse_client_notification notification_method body with
+      | Some (DidOpen params) -> on_open model_ref params
       | Some (DidChange params) -> on_change model_ref params
       | None -> Jsonrpc.unsupported_method ()  
       | exception (Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error(error, json)) -> 

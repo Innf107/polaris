@@ -1079,13 +1079,17 @@ type unify_state = {
   deferred_constraints : ty_constraint Difflist.t ref option
 }
 
-let bind : ty Typeref.t -> name -> ty -> unit =
+(** Bind a typeref to a new type.
+    This panics if the typeref has already been bound *)
+let bind_directly : ty Typeref.t -> name -> ty -> unit =
   fun typeref name ty ->
     trace_subst (lazy (pretty_type (Unif (typeref, name)) ^ " := " ^ pretty_type ty));
     match Typeref.get typeref with
-    | Some previous_ty -> panic __LOC__ ("Trying to bind already bound type variable " ^ pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ ".\n"
-                                        ^ "    previous type: " ^ pretty_type previous_ty ^ "\n"
-                                        ^ "         new type: " ^ pretty_type ty)
+    | Some previous_ty -> 
+        panic __LOC__ ("Trying to directly bind already bound type variable " ^ pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ ".\n"
+                     ^ "    previous type: " ^ pretty_type previous_ty ^ "\n"
+                     ^ "         new type: " ^ pretty_type ty ^ "\n"
+                     ^ "    Occurs check violation: " ^ string_of_bool (occurs typeref previous_ty))
     | None -> Typeref.set typeref ty
 
 
@@ -1093,16 +1097,13 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
   fun loc env state original_ty1 original_ty2 ->
     trace_unify (lazy (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2));
 
-    let rec bind_or_unify typeref name ty =
-      trace_unify (lazy 
-        ("bind_or_unify: " ^ Name.pretty name ^ "$" ^ (Unique.display name.index) ^ " = " 
-        ^ (match Typeref.get typeref with None -> "None" | Some ty -> pretty_type ty)
-        ^ " ~ " ^ pretty_type ty));
+    let rec bind typeref name ty =
       match Typeref.get typeref with
-      | None -> bind typeref name ty
+      | None -> bind_directly typeref name ty
       (* TODO: Preserve the order somehow for the sake of error messages *)
       | Some previous_ty -> 
-        trace_unify (lazy ("AAAAAAAAAAAA: " ^ pretty_type previous_ty ^ " ~ " ^ pretty_type ty));
+        trace_unify (lazy 
+        ("bind: " ^ pretty_type (Unif(typeref, name)) ^ " ~ " ^ pretty_type ty));
         go previous_ty ty 
 
     and go ty1 ty2 = 
@@ -1224,8 +1225,8 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
           let new_u, new_name = fresh_unif_raw_with "µ" in
 
-          bind_or_unify u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
-          bind_or_unify u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
+          bind u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
+          bind u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
         end
       (* unif, skolem *)
       (* This is almost exactly like the (unif, closed) case, except that we need to carry the
@@ -1371,7 +1372,7 @@ let generalize : ty -> ty =
     let ty' = TyperefSet.fold 
       (fun (typeref, name) r -> 
         let new_name = Name.refresh name in
-        bind typeref name (TyVar new_name);
+        bind_directly typeref name (TyVar new_name);
         Forall(new_name, r)) 
       (free_unifs ty)
       ty

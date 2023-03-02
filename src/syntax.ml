@@ -348,7 +348,11 @@ module Template = struct
     | Unif (typeref, name) -> 
       begin match Typeref.get typeref with
       | None -> pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref)
-      | Some ty -> pretty_type ty
+      | Some ty ->
+        if Config.print_subst_unif_vars () then
+          pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ "[= " ^ pretty_type ty ^ "]"
+        else
+          pretty_type ty
       end 
     | Skol (u, name) -> pretty_name name ^ "@" ^ Unique.display u
     | Number -> "Number"

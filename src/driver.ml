@@ -20,8 +20,9 @@ exception SpecificParseError = Parserprelude.SpecificParseError
 let rec parse_rename_typecheck : driver_options 
                               -> Lexing.lexbuf
                               -> RenameScope.t
+                              -> Types.global_env
                               -> Typed.header * Typed.expr list * RenameScope.t * Types.global_env
-= fun options lexbuf scope ->
+= fun options lexbuf scope type_env ->
   trace_driver (lazy ("Lexing with filename '" ^ options.filename));
   Lexing.set_filename lexbuf options.filename;
   
@@ -62,7 +63,7 @@ let rec parse_rename_typecheck : driver_options
   trace_driver (lazy ("Importing modules from (" ^ String.concat ", " (List.map snd imported_files) ^ ")"));
 
   let items_for_exports = List.map (fun (filename, path) -> 
-      (filename, parse_rename_typecheck {options with filename=path} (Lexing.from_channel (open_in path)) RenameScope.empty)
+      (filename, parse_rename_typecheck {options with filename=path} (Lexing.from_channel (open_in path)) RenameScope.empty Types.empty_env)
     ) imported_files in
 
   let import_map = FilePathMap.of_seq
@@ -79,21 +80,27 @@ let rec parse_rename_typecheck : driver_options
   else ();
 
   trace_driver (lazy "Typechecking...");
-  let type_env, typed_header, typed_exprs = Types.typecheck renamed_header renamed in
+  let type_env, typed_header, typed_exprs = Types.typecheck renamed_header renamed type_env in
 
   typed_header, typed_exprs, new_scope, type_env
 
 
-let run_env (options : driver_options) (lexbuf : Lexing.lexbuf) (env : eval_env) (scope : RenameScope.t) : value * eval_env * RenameScope.t = 
-  let renamed_header, renamed, new_scope, _new_ty_env = parse_rename_typecheck options lexbuf scope in
+let run_env : driver_options
+            -> Lexing.lexbuf
+            -> eval_env
+            -> RenameScope.t
+            -> Types.global_env
+            -> value * eval_env * RenameScope.t * Types.global_env
+  = fun options lexbuf env scope type_env ->
+  let renamed_header, renamed, new_scope, new_type_env = parse_rename_typecheck options lexbuf scope type_env in
   
   trace_driver (lazy "Evaluating...");
   let env = Eval.eval_header env renamed_header in
   let res, new_env = Eval.eval_seq_state env renamed in
-  res, new_env, new_scope
+  res, new_env, new_scope, new_type_env
 
 let run_eval (options : driver_options) (lexbuf : Lexing.lexbuf) : value =
-  let res, _, _ = run_env options lexbuf (Eval.empty_eval_env options.argv) RenameScope.empty in
+  let res, _, _, _ = run_env options lexbuf (Eval.empty_eval_env options.argv) RenameScope.empty Types.empty_env in
   res
 
 let run (options : driver_options) (lexbuf : Lexing.lexbuf) : unit =

@@ -30,5 +30,6 @@ type global_env = {
 
 
 (* Might throw 'TypeError' *)
-val typecheck : Renamed.header -> Renamed.expr list -> global_env * Typed.header * Typed.expr list
+val typecheck : Renamed.header -> Renamed.expr list -> global_env -> global_env * Typed.header * Typed.expr list
 
+val empty_env : global_env

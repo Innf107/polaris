@@ -19,11 +19,13 @@ val run_env : driver_options
            -> Lexing.lexbuf 
            -> Eval.eval_env 
            -> Rename.RenameScope.t 
-           -> Eval.value * Eval.eval_env * Rename.RenameScope.t
+           -> Types.global_env
+           -> Eval.value * Eval.eval_env * Rename.RenameScope.t * Types.global_env
 
 val parse_rename_typecheck : driver_options 
                           -> Lexing.lexbuf
                           -> Rename.RenameScope.t
+                          -> Types.global_env
                           -> Typed.header * Typed.expr list * Rename.RenameScope.t * Types.global_env
 
 

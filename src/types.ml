@@ -1463,21 +1463,23 @@ let typecheck_header header env =
           exports = typecheck_exports header.exports 
         }
 
-let typecheck header exprs = 
-  let prim_types = 
-    NameMap.of_seq (Seq.map (fun (name, ty) -> ({ name; index=Name.primop_index}, ty)) 
-      (Primops.PrimOpMap.to_seq Primops.primops))
-  in
-  (* TODO: Maybe primops should be part of an implicitly imported module? *)
-  let global_env = { 
-    var_types = prim_types; 
-    module_var_contents = NameMap.empty; 
-    data_definitions = NameMap.empty;
-    type_aliases = NameMap.empty;
-  } in
+let typecheck header exprs global_env = 
 
   let global_env, header = typecheck_header header global_env in
 
   let global_env, exprs = List.fold_left_map (fun env e -> typecheck_top_level env e) global_env exprs in
   (global_env, header, exprs)
 
+
+let prim_types = 
+  NameMap.of_seq (Seq.map (fun (name, ty) -> ({ name; index=Name.primop_index}, ty)) 
+    (Primops.PrimOpMap.to_seq Primops.primops))
+  
+
+(* TODO: Maybe primops should be part of an implicitly imported module? *)
+let empty_env = { 
+  var_types = prim_types; 
+  module_var_contents = NameMap.empty; 
+  data_definitions = NameMap.empty;
+  type_aliases = NameMap.empty;
+}

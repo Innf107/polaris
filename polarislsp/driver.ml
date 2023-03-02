@@ -12,6 +12,7 @@ let run_polaris ~filename lexbuf =
     driver_options
     lexbuf 
     Polaris.Rename.RenameScope.empty
+    Polaris.Types.empty_env
 
 
 let try_update_model ~filename lexbuf =

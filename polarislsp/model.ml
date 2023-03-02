@@ -21,6 +21,7 @@ module LocOverlapMap = Map.Make(LocByOverlap)
 
 type hover_entry = Var of name * ty
                  | VarPattern of name * ty
+                 | ModSubscript of name * ty
 
 type model = {
   (* Since matching in the map is a little fuzzy, we need to store the exact
@@ -32,24 +33,26 @@ type t = model
 
 let build exprs =
   let module Difflist = Polaris.Difflist in
-  let var_type_traversal = object 
+  let hover_entry_traversal = object 
     inherit [(loc * (loc * hover_entry)) Difflist.t] Traversal.traversal
 
-    method! expr var_types expr =
+    method! expr hover_entries expr =
       match expr with
       | Typed.Var ((loc, ty), name) -> 
-        expr, Difflist.append var_types (Difflist.of_list [(loc, (loc, Var (name, ty)))])
-      | _ -> expr, var_types
+        expr, Difflist.snoc hover_entries (loc, (loc, Var (name, ty)))
+      | Typed.ModSubscript ((loc, ty), _module_name, name) ->
+        expr, Difflist.snoc hover_entries (loc, (loc, ModSubscript (name, ty)))
+      | _ -> expr, hover_entries
 
-    method! pattern var_types pattern =
+    method! pattern hover_entries pattern =
       match pattern with
       | Typed.VarPat ((loc, ty), name) ->
-        pattern, Difflist.append var_types (Difflist.of_list [(loc, (loc, VarPattern (name, ty)))])
-      | _ -> pattern, var_types
+        pattern, Difflist.append hover_entries (Difflist.of_list [(loc, (loc, VarPattern (name, ty)))])
+      | _ -> pattern, hover_entries
   end
   in
-  let _, var_types = var_type_traversal#traverse_list var_type_traversal#traverse_expr Difflist.empty exprs in
-  { hover_entries_at_loc = LocOverlapMap.of_seq (Difflist.to_seq var_types) }
+  let _, hover_entries = hover_entry_traversal#traverse_list hover_entry_traversal#traverse_expr Difflist.empty exprs in
+  { hover_entries_at_loc = LocOverlapMap.of_seq (Difflist.to_seq hover_entries) }
 
 let find_hover_entry_at ~file Lsp.{ line; character } model =
   (* LSP locations are zero-based! *)

@@ -87,7 +87,7 @@ let on_hover model_ref (hover_params : Lsp.hover_params) =
     let file = filename_of_uri file_uri in
 
     match Model.find_hover_entry_at ~file hover_params.position model with
-    | Some (loc, (Model.Var (var_name, ty) | Model.VarPattern (var_name, ty))) ->
+    | Some (loc, (Model.Var (var_name, ty) | Model.VarPattern (var_name, ty) | Model.ModSubscript(var_name, ty))) ->
       `Assoc [
         "range", Diagnostic.loc_to_json loc;
         "contents", `Assoc [

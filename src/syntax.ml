@@ -173,7 +173,7 @@ module Template = struct
     (* Records *)
     | RecordLit of loc * (string * expr) list  (* #{x₁: e₁, .., xₙ: eₙ}*)
     | Subscript of loc * expr * string      (* e.x *)
-    | ModSubscript of loc * name * name     (* M.x *)
+    | ModSubscript of mod_subscript_ext * name * name     (* M.x *)
     | RecordUpdate of loc * expr * (string * expr) list (* #{r with x₁: e₁, .., xₙ: eₙ} *)
     | RecordExtension of loc * expr * (string * expr) list (* #{r extend x₁: e₁, .., xₙ: eₙ} *)
 
@@ -480,6 +480,7 @@ module Template = struct
 
   let get_loc = function
     | Var (ext, _) -> var_ext_loc ext
+    | ModSubscript (ext, _, _) -> mod_subscript_ext_loc ext
     | DataConstructor(loc, _) | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
     | Subscript(loc, _, _) | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
@@ -488,7 +489,7 @@ module Template = struct
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _, _) | LetEnvSeq(loc, _, _) 
     | LetDataSeq (loc, _, _, _) | LetTypeSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
-    | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _) | ModSubscript (loc, _, _)
+    | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _)
     | MakeRef(loc, _)
     -> loc
 
@@ -985,6 +986,10 @@ module Parsed = Template (struct
   type var_pat_ext = loc
   let var_pat_ext_loc loc = loc
   let traverse_var_pat_ext_ty state _ loc = loc, state
+
+  type mod_subscript_ext = loc
+  let mod_subscript_ext_loc loc = loc
+  let traverse_mod_subscript_ext_ty state _ loc = loc, state
 end) [@@ttg_pass]
 
 
@@ -1011,6 +1016,12 @@ module Typed = Template (struct
   let traverse_var_pat_ext_ty state f (loc, ty) =
     let ty, state = f state ty in
     (loc, ty), state
+
+  type mod_subscript_ext = loc * ty
+  let mod_subscript_ext_loc (loc, _) = loc
+  let traverse_mod_subscript_ext_ty state f (loc, ty) =
+    let ty, state = f state ty in
+    (loc, ty), state  
 end) [@@ttg_pass]
 
 type module_exports = Typed.module_exports
@@ -1037,6 +1048,10 @@ module Renamed = Template (struct
   type var_pat_ext = loc
   let var_pat_ext_loc loc = loc
   let traverse_var_pat_ext_ty state _ loc = loc, state
+
+  type mod_subscript_ext = loc
+  let mod_subscript_ext_loc loc = loc
+  let traverse_mod_subscript_ext_ty state _ loc = loc, state
 end) [@@ttg_pass]
 
 

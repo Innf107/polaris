@@ -543,7 +543,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
         | None -> panic __LOC__ ("Module does not contain variable: '" ^ Name.pretty key_name ^ "'. This should have been caught earlier!")
         | Some ty -> 
           ( instantiate ty
-          , ModSubscript (loc, mod_name, key_name)
+          , ModSubscript ((loc, ty), mod_name, key_name)
           )
         end
       end

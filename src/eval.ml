@@ -306,7 +306,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
       end
     | value -> panic __LOC__ (Loc.pretty loc ^ ": Subscript to non-record at runtme: " ^ Value.pretty value)
     end
-  | ModSubscript (loc, mod_name, name) ->
+  | ModSubscript ((loc, _), mod_name, name) ->
     let runtime_module = match VarMap.find_opt mod_name env.module_vars with
       | None -> panic __LOC__ (Loc.pretty loc ^ ": Module variable not found at runtime: '" ^ Name.pretty mod_name ^ "'. This should have been caught earlier!")
       | Some runtime_module -> runtime_module

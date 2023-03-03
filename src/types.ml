@@ -655,7 +655,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       )
     | LetRec (loc, mty, fun_name, pats, body, rest) ->
       (* We defer to `check_seq_expr` here, since the core logic is exactly the same *)
-      let env_trans, typed_seq_expr = check_seq_expr env (LetRecSeq(loc, mty, fun_name, pats, body)) in
+      let env_trans, typed_seq_expr = check_seq_expr env `Check (LetRecSeq(loc, mty, fun_name, pats, body)) in
       let (loc, mty, fun_name, pats, body) = match typed_seq_expr with
       | LetRecSeq(loc, mty, fun_name, pats, body) -> loc, mty, fun_name, pats, body
       | _ -> panic __LOC__ (Loc.pretty loc ^ ": check_seq_expr returned non-LetRecSeq expression when passed one")
@@ -860,7 +860,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
       Let (loc, pattern, body, rest)
     | LetRec (loc, mty, fun_name, pats, body, rest), expected_ty ->
       (* We defer to `check_seq_expr` here, since the core logic is exactly the same *)
-      let env_trans, expr = check_seq_expr env (LetRecSeq(loc, mty, fun_name, pats, body)) in
+      let env_trans, expr = check_seq_expr env `Check (LetRecSeq(loc, mty, fun_name, pats, body)) in
       let loc, mty, fun_name, pats, body = match expr with
       | LetRecSeq (loc, mty, fun_name, pats, body) -> loc, mty, fun_name, pats, body
       | _ -> panic __LOC__ (Loc.pretty loc ^ ": check_seq_expr returned non-LetRec expression when passed one")
@@ -922,8 +922,8 @@ and check_list_comp : local_env -> list_comp_clause list -> local_env * Typed.li
       let env, clauses = check_list_comp (env_trans env) clauses in
       env, DrawClause(pattern, expr) :: clauses
 
-and check_seq_expr : local_env -> expr -> (local_env -> local_env) * Typed.expr =
-    fun env expr -> match expr with
+and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> local_env) * Typed.expr =
+    fun env check_or_infer expr -> match expr with
     | LetSeq (loc, pat, body) ->
       let ty, env_trans, pat = infer_pattern env pat in
       let ty, skolemizer = skolemize_with_function ty in
@@ -1023,8 +1023,13 @@ and check_seq_expr : local_env -> expr -> (local_env -> local_env) * Typed.expr 
       let _, expr = infer env expr in
       Fun.id, expr
     | expr ->
-      let expr = check env Ty.unit expr in
-      Fun.id, expr
+      match check_or_infer with
+      | `Check ->
+        let expr = check env Ty.unit expr in
+        Fun.id, expr
+      | `Infer ->
+        let _type, expr = infer env expr in
+        Fun.id, expr
 
 and infer_seq : local_env -> expr list -> ty * Typed.expr list =
   fun env exprs -> match exprs with
@@ -1035,13 +1040,13 @@ and infer_seq : local_env -> expr list -> ty * Typed.expr list =
          but we do have to make sure to check the expression with `check_seq_expr`, 
          so it is not passed to `infer`
         *)
-      let _, expr = check_seq_expr env expr in
+      let _, expr = check_seq_expr env `Check expr in
       Ty.unit, [ expr ];
     | [ expr ] -> 
       let ty, expr = infer env expr in
       ty, [ expr ]
     | expr :: exprs -> 
-      let env_trans, expr = check_seq_expr env expr in
+      let env_trans, expr = check_seq_expr env `Check expr in
       let env, exprs = infer_seq (env_trans env) exprs in
       env, expr :: exprs
 and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
@@ -1055,12 +1060,12 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
        but we do have to make sure to check the expression with `check_seq_expr`, 
        so it is not passed to `check`
       *)
-    let _, expr = check_seq_expr env expr in
+    let _, expr = check_seq_expr env `Check expr in
     [expr]
   | [ expr ] -> 
     [ check env expected_ty expr ]
   | expr :: exprs ->
-    let env_trans, expr  = check_seq_expr env expr in
+    let env_trans, expr  = check_seq_expr env `Check expr in
     let exprs = check_seq (env_trans env) loc expected_ty exprs in
     expr :: exprs
 
@@ -1380,8 +1385,8 @@ let generalize : ty -> ty =
     trace_tc (lazy ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty'));
     ty'
     
-let typecheck_top_level : global_env -> expr -> global_env * Typed.expr =
-  fun global_env expr ->
+let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env * Typed.expr =
+  fun global_env check_or_infer expr ->
     let local_env = 
       { local_types = global_env.var_types;
         module_var_contents = global_env.module_var_contents;
@@ -1390,7 +1395,7 @@ let typecheck_top_level : global_env -> expr -> global_env * Typed.expr =
         type_aliases = global_env.type_aliases;
       } in
     
-    let local_env_trans, expr = check_seq_expr local_env expr in
+    let local_env_trans, expr = check_seq_expr local_env check_or_infer expr in
     
     (* This is *extremely hacky* right now.
         We temporarily construct a fake local environment to figure out the top-level local type bindings.
@@ -1463,11 +1468,12 @@ let typecheck_header header env =
           exports = typecheck_exports header.exports 
         }
 
-let typecheck header exprs global_env = 
+let typecheck check_or_infer_top_level header exprs global_env = 
+  trace_tc (lazy ((match check_or_infer_top_level with `Infer -> "Inferring" | `Check -> "Checking") ^ " top level definitions"));
 
   let global_env, header = typecheck_header header global_env in
 
-  let global_env, exprs = List.fold_left_map (fun env e -> typecheck_top_level env e) global_env exprs in
+  let global_env, exprs = List.fold_left_map (fun env e -> typecheck_top_level env check_or_infer_top_level e) global_env exprs in
   (global_env, header, exprs)
 
 

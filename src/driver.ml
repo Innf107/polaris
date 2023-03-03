@@ -17,12 +17,13 @@ exception ParseError of loc * string
 type specific_parse_error = Parserprelude.specific_parse_error
 exception SpecificParseError = Parserprelude.SpecificParseError
 
-let rec parse_rename_typecheck : driver_options 
+let rec parse_rename_typecheck : driver_options
                               -> Lexing.lexbuf
                               -> RenameScope.t
+                              -> ?check_or_infer_top_level : [`Check | `Infer]
                               -> Types.global_env
                               -> Typed.header * Typed.expr list * RenameScope.t * Types.global_env
-= fun options lexbuf scope type_env ->
+= fun options lexbuf scope ?(check_or_infer_top_level = `Check) type_env ->
   trace_driver (lazy ("Lexing with filename '" ^ options.filename));
   Lexing.set_filename lexbuf options.filename;
   
@@ -80,7 +81,7 @@ let rec parse_rename_typecheck : driver_options
   else ();
 
   trace_driver (lazy "Typechecking...");
-  let type_env, typed_header, typed_exprs = Types.typecheck renamed_header renamed type_env in
+  let type_env, typed_header, typed_exprs = Types.typecheck check_or_infer_top_level renamed_header renamed type_env in
 
   typed_header, typed_exprs, new_scope, type_env
 
@@ -89,10 +90,11 @@ let run_env : driver_options
             -> Lexing.lexbuf
             -> eval_env
             -> RenameScope.t
+            -> ?check_or_infer_top_level : [`Check | `Infer]
             -> Types.global_env
             -> value * eval_env * RenameScope.t * Types.global_env
-  = fun options lexbuf env scope type_env ->
-  let renamed_header, renamed, new_scope, new_type_env = parse_rename_typecheck options lexbuf scope type_env in
+  = fun options lexbuf env scope ?check_or_infer_top_level type_env ->
+  let renamed_header, renamed, new_scope, new_type_env = parse_rename_typecheck options lexbuf scope ?check_or_infer_top_level type_env in
   
   trace_driver (lazy "Evaluating...");
   let env = Eval.eval_header env renamed_header in

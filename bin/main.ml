@@ -109,7 +109,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.globa
     } in
   let env, scope, type_env, continue = match options.eval with
   | Some expr ->
-    let result, env, scope, type_env = Driver.run_env driver_options (Lexing.from_string expr) env scope type_env in
+    let result, env, scope, type_env = Driver.run_env driver_options (Lexing.from_string expr) env scope ?check_or_infer_top_level:(Some `Infer) type_env in
     begin match result with
     | v when isUnitV v -> ()
     | _ -> print_endline (Value.pretty result)
@@ -135,7 +135,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.globa
               exit 0
             | Some input -> 
               let _ = Bestline.history_add input in
-              let result, new_env, new_scope, new_type_env = Driver.run_env driver_options (Lexing.from_string input) env scope type_env in
+              let result, new_env, new_scope, new_type_env = Driver.run_env driver_options (Lexing.from_string input) env scope ?check_or_infer_top_level:(Some `Infer) type_env in
 
               begin match result with
               | v when isUnitV v -> ()

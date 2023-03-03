@@ -51,7 +51,7 @@ let build exprs =
       | _ -> pattern, hover_entries
   end
   in
-  let _, hover_entries = hover_entry_traversal#traverse_list hover_entry_traversal#traverse_expr Difflist.empty exprs in
+  let _, hover_entries = Traversal.traverse_list hover_entry_traversal#traverse_expr Difflist.empty exprs in
   { hover_entries_at_loc = LocOverlapMap.of_seq (Difflist.to_seq hover_entries) }
 
 let find_hover_entry_at ~file Lsp.{ line; character } model =

@@ -509,6 +509,17 @@ module Template = struct
        The syntax tree is always traversed in a bottom-up manner.
       *)
 
+    let traverse_list 
+      : 'state 'node. ('state -> 'node -> ('node * 'state)) -> 'state -> 'node list -> ('node list * 'state) 
+      = fun traversal state exprs ->
+        List.fold_right
+          (fun expr (exprs, state) -> 
+            let expr, state = traversal state expr in
+            (expr :: exprs, state)
+            )
+          exprs
+          ([], state)
+
     class ['state] traversal = object(self)
       method expr : 'state -> expr -> (expr * 'state) =
         fun state expr -> (expr, state)
@@ -543,7 +554,7 @@ module Template = struct
             let name, state = self#traverse_name state name in
             DataConstructor (loc, name), state
           | VariantConstructor (loc, name, args) ->
-            let args, state = self#traverse_list self#traverse_expr state args in
+            let args, state = traverse_list self#traverse_expr state args in
             VariantConstructor (loc, name, args), state
           | ModSubscriptDataCon (ext, loc, mod_name, name) ->
             let mod_name, state = self#traverse_name state mod_name in
@@ -551,20 +562,20 @@ module Template = struct
             ModSubscriptDataCon (ext, loc, mod_name, name), state
           | App (loc, fun_expr, arg_exprs) ->
             let fun_expr, state = self#traverse_expr state fun_expr in
-            let (arg_exprs, state) = self#traverse_list self#traverse_expr state arg_exprs in
+            let (arg_exprs, state) = traverse_list self#traverse_expr state arg_exprs in
             App (loc, fun_expr, arg_exprs), state
           | Lambda(loc, patterns, body) ->
-            let patterns, state = self#traverse_list self#traverse_pattern state patterns in
+            let patterns, state = traverse_list self#traverse_pattern state patterns in
             let body, state = self#traverse_expr state body in
             Lambda(loc, patterns, body), state
           | ListLit(loc, exprs) ->
-            let exprs, state = self#traverse_list self#traverse_expr state exprs in
+            let exprs, state = traverse_list self#traverse_expr state exprs in
             ListLit(loc, exprs), state
           | TupleLit(loc, exprs) ->
-            let exprs, state = self#traverse_list self#traverse_expr state exprs in
+            let exprs, state = traverse_list self#traverse_expr state exprs in
             TupleLit(loc, exprs), state
           | RecordLit (loc, fields) ->
-            let fields, state = self#traverse_list 
+            let fields, state = traverse_list 
               (fun state (field, expr) ->
                 let expr, state = self#traverse_expr state expr in
                 (field, expr), state) state fields 
@@ -575,7 +586,7 @@ module Template = struct
             Subscript(loc, expr, field), state
           | RecordUpdate(loc, expr, updates) ->
             let expr, state = self#traverse_expr state expr in
-            let updates, state = self#traverse_list 
+            let updates, state = traverse_list 
               (fun state (field, expr) ->
                 let expr, state = self#traverse_expr state expr in
                 (field, expr), state) state updates 
@@ -583,7 +594,7 @@ module Template = struct
             RecordUpdate(loc, expr, updates), state
           | RecordExtension(loc, expr, updates) ->
             let expr, state = self#traverse_expr state expr in
-            let updates, state = self#traverse_list 
+            let updates, state = traverse_list 
               (fun state (field, expr) ->
                 let expr, state = self#traverse_expr state expr in
                 (field, expr), state) state updates 
@@ -606,7 +617,7 @@ module Template = struct
             Range(loc, start_expr, end_expr), state
           | ListComp(loc, expr, clauses) -> 
             let expr, state = self#traverse_expr state expr in
-            let clauses, state = self#traverse_list self#traverse_list_comp_clause state clauses in
+            let clauses, state = traverse_list self#traverse_list_comp_clause state clauses in
             ListComp(loc, expr, clauses), state
           | If(loc, condition_expr, then_expr, else_expr) ->
             let condition_expr, state = self#traverse_expr state condition_expr in
@@ -614,7 +625,7 @@ module Template = struct
             let else_expr, state = self#traverse_expr state else_expr in
             If(loc, condition_expr, then_expr, else_expr), state
           | Seq(loc, exprs) ->
-            let exprs, state = self#traverse_list self#traverse_expr state exprs in
+            let exprs, state = traverse_list self#traverse_expr state exprs in
             Seq(loc, exprs), state
           | LetSeq(loc, pattern, expr) ->
             let pattern, state = self#traverse_pattern state pattern in
@@ -628,7 +639,7 @@ module Template = struct
               Some ty, state
             in
             let fun_name, state = self#traverse_name state fun_name in
-            let param_patterns, state = self#traverse_list self#traverse_pattern state param_patterns in
+            let param_patterns, state = traverse_list self#traverse_pattern state param_patterns in
             let body_expr, state = self#traverse_expr state body_expr in
             LetRecSeq(loc, maybe_typesig, fun_name, param_patterns, body_expr), state
           | LetEnvSeq(loc, env_var, expr) ->
@@ -636,12 +647,12 @@ module Template = struct
             LetEnvSeq(loc, env_var, expr), state
           | LetDataSeq(loc, data_name, params, ty) ->
             let data_name, state = self#traverse_name state data_name in
-            let params, state = self#traverse_list self#traverse_name state params in
+            let params, state = traverse_list self#traverse_name state params in
             let ty, state = self#traverse_type state ty in
             LetDataSeq(loc, data_name, params, ty), state
           | LetTypeSeq(loc, data_name, params, ty) ->
             let data_name, state = self#traverse_name state data_name in
-            let params, state = self#traverse_list self#traverse_name state params in
+            let params, state = traverse_list self#traverse_name state params in
             let ty, state = self#traverse_type state ty in
             LetTypeSeq(loc, data_name, params, ty), state  
           | Let(loc, pattern, expr, rest_expr) ->
@@ -657,7 +668,7 @@ module Template = struct
               Some ty, state
             in
             let fun_name, state = self#traverse_name state fun_name in
-            let param_patterns, state = self#traverse_list self#traverse_pattern state param_patterns in
+            let param_patterns, state = traverse_list self#traverse_pattern state param_patterns in
             let body_expr, state = self#traverse_expr state body_expr in
             let rest_expr, state = self#traverse_expr state rest_expr in
             LetRec(loc, maybe_typesig, fun_name, param_patterns, body_expr, rest_expr), state
@@ -670,10 +681,10 @@ module Template = struct
             let expr, state = self#traverse_expr state expr in
             Assign(loc, place_expr, expr), state
           | ProgCall(loc, progname, exprs) ->
-            let exprs, state = self#traverse_list self#traverse_expr state exprs in
+            let exprs, state = traverse_list self#traverse_expr state exprs in
             ProgCall(loc, progname, exprs), state
           | Pipe(loc, exprs) ->
-            let exprs, state = self#traverse_list self#traverse_expr state exprs in
+            let exprs, state = traverse_list self#traverse_expr state exprs in
             Pipe(loc, exprs), state
           | Async(loc, expr) -> 
             let expr, state = self#traverse_expr state expr in
@@ -683,7 +694,7 @@ module Template = struct
             Await(loc, expr), state
           | Match (loc, scrutinee_expr, branch_exprs) ->
             let scrutinee_expr, state = self#traverse_expr state scrutinee_expr in
-            let branch_exprs, state = self#traverse_list 
+            let branch_exprs, state = traverse_list 
               (fun state (pattern, expr) ->
                 let pattern, state = self#traverse_pattern state pattern in
                 let expr, state = self#traverse_expr state expr in
@@ -730,10 +741,10 @@ module Template = struct
           let tail_pattern, state = self#traverse_pattern state tail_pattern in
           ConsPat(loc, head_pattern, tail_pattern), state
         | ListPat(loc, patterns) ->
-          let patterns, state = self#traverse_list self#traverse_pattern state patterns in
+          let patterns, state = traverse_list self#traverse_pattern state patterns in
           ListPat(loc, patterns), state
         | TuplePat(loc, patterns) ->
-          let patterns, state = self#traverse_list self#traverse_pattern state patterns in
+          let patterns, state = traverse_list self#traverse_pattern state patterns in
           TuplePat(loc, patterns), state
         | OrPat(loc, left_pattern, right_pattern) ->
           let left_pattern, state = self#traverse_pattern state left_pattern in
@@ -748,7 +759,7 @@ module Template = struct
           let patterns, state = self#traverse_pattern state pattern in
           DataPat(loc, constructor_name, patterns), state
         | VariantPat(loc, unqualified_name, patterns) ->
-          let patterns, state = self#traverse_list self#traverse_pattern state patterns in
+          let patterns, state = traverse_list self#traverse_pattern state patterns in
           VariantPat(loc, unqualified_name, patterns), state
         in
         self#pattern state transformed
@@ -764,7 +775,7 @@ module Template = struct
           let ty, state = self#traverse_type state ty in
           Forall(var_name, ty), state
         | Fun (dom_types, cod_type) ->
-          let dom_types, state = self#traverse_list self#traverse_type state dom_types in
+          let dom_types, state = traverse_list self#traverse_type state dom_types in
           let cod_type, state = self#traverse_type state cod_type in
           Fun(dom_types, cod_type), state
         | TyVar(name) ->
@@ -772,16 +783,16 @@ module Template = struct
           TyVar(name), state
         | TyConstructor(name, arg_types) ->
           let name, state = self#traverse_name state name in
-          let arg_types, state = self#traverse_list self#traverse_type state arg_types in
+          let arg_types, state = traverse_list self#traverse_type state arg_types in
           TyConstructor(name, arg_types), state
         | TypeAlias(name, arg_types) ->
           let name, state = self#traverse_name state name in
-          let arg_types, state = self#traverse_list self#traverse_type state arg_types in
+          let arg_types, state = traverse_list self#traverse_type state arg_types in
           TypeAlias(name, arg_types), state  
         | ModSubscriptTyCon(ext, mod_name, name, arg_types) ->
           let mod_name, state = self#traverse_name state mod_name in
           let name, state = self#traverse_name state name in
-          let arg_types, state = self#traverse_list self#traverse_type state arg_types in
+          let arg_types, state = traverse_list self#traverse_type state arg_types in
           ModSubscriptTyCon(ext, mod_name, name, arg_types), state
         | Unif(typeref, name) ->
           begin match Typeref.get typeref with
@@ -795,7 +806,7 @@ module Template = struct
           let name, state = self#traverse_name state name in
           Skol(unique, name), state
         | Tuple(tys) ->
-          let tys, state = self#traverse_list self#traverse_type state (Array.to_list tys) in
+          let tys, state = traverse_list self#traverse_type state (Array.to_list tys) in
           Tuple(Array.of_list tys), state
         | List(ty) ->
           let ty, state = self#traverse_type state ty in
@@ -807,7 +818,7 @@ module Template = struct
           let ty, state = self#traverse_type state ty in
           Ref(ty), state
         | RecordClosed fields ->
-          let fields, state = self#traverse_list 
+          let fields, state = traverse_list 
             (fun state (field, ty) ->
               let ty, state = self#traverse_type state ty in
               (field, ty), state
@@ -817,9 +828,9 @@ module Template = struct
           in
           RecordClosed (Array.of_list fields), state
         | VariantClosed fields ->
-          let fields, state = self#traverse_list 
+          let fields, state = traverse_list 
             (fun state (field, tys) ->
-              let tys, state = self#traverse_list self#traverse_type state tys in
+              let tys, state = traverse_list self#traverse_type state tys in
               (field, tys), state
               ) 
             state 
@@ -827,7 +838,7 @@ module Template = struct
           in
           VariantClosed (Array.of_list fields), state  
         | RecordVar (fields, var) ->
-          let fields, state = self#traverse_list 
+          let fields, state = traverse_list 
             (fun state (field, ty) ->
               let ty, state = self#traverse_type state ty in
               (field, ty), state
@@ -841,9 +852,9 @@ module Template = struct
           let var, state = self#traverse_type state (TyVar var) in
           Ty.replace_record_extension (Array.of_list fields) var, state
         | VariantVar (fields, var) ->
-          let fields, state = self#traverse_list 
+          let fields, state = traverse_list 
             (fun state (field, tys) ->
-              let tys, state = self#traverse_list self#traverse_type state tys in
+              let tys, state = traverse_list self#traverse_type state tys in
               (field, tys), state
               ) 
             state 
@@ -854,7 +865,7 @@ module Template = struct
         | RecordUnif (fields, (typeref, var)) ->
           (* TODO: We *should* probably pretend like this constructor does not exist if the 
              unification variable is replaced. Not quite sure how to do that efficiently though *)
-          let fields, state = self#traverse_list 
+          let fields, state = traverse_list 
             (fun state (field, ty) ->
               let ty, state = self#traverse_type state ty in
               (field, ty), state
@@ -867,9 +878,9 @@ module Template = struct
         | VariantUnif (fields, (typeref, var)) ->
           (* TODO: We *should* probably pretend like this constructor does not exist if the 
              unification variable is replaced. Not quite sure how to do that efficiently though *)
-          let fields, state = self#traverse_list 
+          let fields, state = traverse_list 
             (fun state (field, tys) ->
-              let tys, state = self#traverse_list self#traverse_type state tys in
+              let tys, state = traverse_list self#traverse_type state tys in
               (field, tys), state
               ) 
             state 
@@ -878,7 +889,7 @@ module Template = struct
           let var, state = self#traverse_type state (Unif (typeref, var)) in
           Ty.replace_variant_extension (Array.of_list fields) var, state  
         | RecordSkol (fields, (unique, var)) ->
-          let fields, state = self#traverse_list 
+          let fields, state = traverse_list 
             (fun state (field, ty) ->
               let ty, state = self#traverse_type state ty in
               (field, ty), state
@@ -889,9 +900,9 @@ module Template = struct
           let var, state = self#traverse_type state (Skol (unique, var)) in
           Ty.replace_record_extension (Array.of_list fields) var, state
         | VariantSkol (fields, (unique, var)) ->
-          let fields, state = self#traverse_list 
+          let fields, state = traverse_list 
             (fun state (field, tys) ->
-              let tys, state = self#traverse_list self#traverse_type state tys in
+              let tys, state = traverse_list self#traverse_type state tys in
               (field, tys), state
               ) 
             state 
@@ -932,17 +943,6 @@ module Template = struct
           FilterClause(expr), state
         in
         self#list_comp_clause state transformed      
-
-    method traverse_list 
-      : 'state 'node. ('state -> 'node -> ('node * 'state)) -> 'state -> 'node list -> ('node list * 'state) 
-      = fun traversal state exprs ->
-        List.fold_right
-          (fun expr (exprs, state) -> 
-            let expr, state = traversal state expr in
-            (expr :: exprs, state)
-            )
-          exprs
-          ([], state)
     end
 
     let transform_type trans ty =

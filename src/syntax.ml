@@ -337,7 +337,6 @@ module Template = struct
   let rec pretty_type = function
     | Forall (var, ty) -> "∀" ^ pretty_name var ^ ". " ^ pretty_type ty
     | Fun (args, res) -> "(" ^ String.concat ", " (List.map pretty_type args) ^ ") -> " ^ pretty_type res
-    (* TODO: Add a flag to disambiguate 0-argument type constructors and type variables *)
     | TyConstructor (name, []) -> pretty_name name
     | TyConstructor (name, args) -> pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_type args) ^ ")"
     | TypeAlias (name, []) -> pretty_name name

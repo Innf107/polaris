@@ -171,6 +171,8 @@ let partition(pred, xs) = {
 let sort : List(Number) -> List(Number)
 let sort(xs) = match xs {
     [] -> []
-    # TODO: Write with let destructuring
-    (x :: xs) -> let (smaller, larger) = partition(\y -> y < x, xs) in append(sort(smaller), (x :: sort(larger)))
+    (x :: xs) -> { 
+        let (smaller, larger) = partition(\y -> y < x, xs)
+        append(sort(smaller), (x :: sort(larger)))
+    }
 }

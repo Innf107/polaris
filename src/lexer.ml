@@ -188,6 +188,9 @@ let ident_token = let open Parser in function
 | "data" -> DATA
 | "type" -> TYPE
 | "ref" -> REF
+| "exception" -> EXCEPTION
+| "try" -> TRY
+| "raise" -> RAISE
 | str -> IDENT(str)
 
 let op_token lexbuf = let open Parser in function

@@ -70,6 +70,7 @@ type expr_or_fun_def_ext =
 %token TYPE
 %token BACKTICK "`"
 %token REF
+%token EXCEPTION TRY RAISE
 %token EOF
 
 
@@ -282,6 +283,9 @@ expr_leaf:
     | DATA CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetDataSeq(loc $startpos $endpos, $2, $4, $7) }
     | TYPE CONSTRUCTOR "=" ty { LetTypeSeq(loc $startpos $endpos, $2, [], $4) }
     | TYPE CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetTypeSeq(loc $startpos $endpos, $2, $4, $7) }
+    | EXCEPTION CONSTRUCTOR "(" sep_trailing1(COMMA, typed_ident) ")" "=" expr { LetExceptionSeq(loc $startpos $endpos, $2, $4, $7) }
+    | TRY expr WITH "{" sep_trailing(SEMI+, try_branch) "}" { Try(loc $startpos $endpos, $2, $5) }
+    | RAISE expr { Raise(loc $startpos $endpos, $2) }
     | REF expr { MakeRef(loc $startpos $endpos, $2) }
 
 (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)
@@ -291,6 +295,10 @@ expr_or_fun_def_ext:
 
 match_branch:
     pattern "->" expr { ($1, $3) } 
+
+try_branch:
+    | CONSTRUCTOR "->" expr { ($1, [], $3) }
+    | CONSTRUCTOR "(" sep_trailing(COMMA, pattern) ")" "->" expr { ($1, $3, $6) }
 
 assign:
     IDENT "=" expr SEMI* { ($1, $3) }
@@ -357,6 +365,7 @@ ty2:
                                                                 | "Number" -> Number
                                                                 | "Bool" -> Bool
                                                                 | "String" -> String
+                                                                | "Exception" -> Exception
                                                                 | _ -> TyConstructor($1, [])
                                                             }
     | CONSTRUCTOR "." CONSTRUCTOR                           { ModSubscriptTyCon((), $1, $3, []) }
@@ -386,3 +395,6 @@ record_entry:
 variant_entry:
     | CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")" { ($1, $3) }
     | CONSTRUCTOR                                 { ($1, []) }
+
+typed_ident:
+    IDENT ":" ty { ($1, $3) }

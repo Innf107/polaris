@@ -34,6 +34,7 @@ type global_env = {
   data_definitions : (name list * Typed.ty) NameMap.t;
   type_aliases : (name list * Typed.ty) NameMap.t;
   ambient_level : Typeref.level;
+  exception_definitions : ty list NameMap.t;
 }
 
 

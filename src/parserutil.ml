@@ -66,3 +66,6 @@ let pretty_token = function
 | TYPE -> "TYPE"
 | BACKTICK -> "BACKTICK"
 | REF -> "REF"
+| EXCEPTION -> "EXCEPTION"
+| TRY -> "TRY"
+| RAISE -> "RAISE"

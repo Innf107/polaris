@@ -10,11 +10,14 @@ type rename_error =
     | ModuleVarNotFound of string * loc
     | TyVarNotFound of string * loc
     | TyConNotFound of string * loc
+    | DataConNotFound of string * loc
+    | TooManyArgsToDataConPattern of name * Renamed.pattern list * loc
     | SubscriptVarNotFound of string * loc
     | LetSeqInNonSeq of Parsed.expr * loc
     | SubModuleNotFound of string * loc
     | HigherRankType of Parsed.ty * loc
     | WrongNumberOfTyConArgs of name * int * Parsed.ty list * loc
+    | NonExceptionInTry of name * loc
 
 
 exception RenameError of rename_error
@@ -28,7 +31,7 @@ module RenameScope = struct
         (* Polaris does not have a Haskell-style kind system, so we
            just check that type constructors are always fully applied in the renamer. *)
         ty_constructors: (name * int * type_constructor_sort) RenameMap.t;
-        data_constructors: name RenameMap.t;
+        data_constructors: (name * data_constructor_sort) RenameMap.t;
     }
 
     let empty : t = { 
@@ -51,8 +54,8 @@ module RenameScope = struct
     let insert_type_constructor old renamed arg_count sort scope =
         { scope with ty_constructors = add old (renamed, arg_count, sort) scope.ty_constructors }
 
-    let insert_data_constructor old renamed scope =
-        { scope with data_constructors = add old renamed scope.data_constructors }    
+    let insert_data_constructor old renamed sort scope =
+        { scope with data_constructors = add old (renamed, sort) scope.data_constructors }    
 
     let lookup_var (scope : t) (loc : loc) (var : string) : name =
         try 
@@ -60,11 +63,17 @@ module RenameScope = struct
         with
             Not_found -> raise (RenameError (VarNotFound (var, loc)))
 
-    let lookup_data (scope : t) (loc : loc) (data : string) : name =
+    let lookup_data (scope : t) (loc : loc) (data : string) : name * data_constructor_sort =
         try 
             find data scope.data_constructors 
         with
-            Not_found -> raise (RenameError (TyConNotFound (data, loc)))
+            Not_found -> raise (RenameError (DataConNotFound (data, loc)))
+
+    let lookup_tycon (scope : t) (loc : loc) (data : string) : name * int * type_constructor_sort =
+        try 
+            find data scope.ty_constructors 
+        with
+            Not_found -> raise (RenameError (TyConNotFound (data, loc)))        
 
     let lookup_mod_var (scope : t) (loc : loc) (var : string) : name * t =
         try
@@ -75,6 +84,25 @@ end
 
 let fresh_var = Name.fresh
 
+let rename_type_constructor : (Parsed.ty -> Renamed.ty) 
+                           -> loc -> RenameScope.t 
+                           -> string 
+                           -> Parsed.ty list 
+                           -> Renamed.ty
+    = fun rename_nonbinding loc scope name args ->
+        let name, arg_count, sort = match RenameMap.find_opt name scope.ty_constructors with
+        | None -> raise (RenameError (TyConNotFound(name, loc)))
+        | Some (name, arg_count, sort) -> (name, arg_count, sort)
+        in
+        if List.compare_length_with args arg_count <> 0 then begin
+            raise (RenameError (WrongNumberOfTyConArgs(name, arg_count, args, loc)))
+        end;
+        let args = List.map rename_nonbinding args in
+        begin match sort with
+        | TypeAliasSort -> TypeAlias (name, args)
+        | DataConSort -> TyConstructor(name, args)
+        end
+
 let rename_type loc (scope : RenameScope.t) original_type = 
     let rec go (scope : RenameScope.t) ty = 
         (* Polaris does not support higher rank, let alone impredicative polymorphism,
@@ -84,6 +112,7 @@ let rename_type loc (scope : RenameScope.t) original_type =
         | Parsed.Number -> Renamed.Number
         | Bool -> Bool
         | String -> String
+        | Exception -> Exception
         | List(ty) -> List(rename_nonbinding ty)
         | Promise(ty) -> Promise(rename_nonbinding ty)
         | Ref(ty) -> Ref(rename_nonbinding ty)
@@ -102,31 +131,16 @@ let rename_type loc (scope : RenameScope.t) original_type =
             | None -> raise (RenameError (TyVarNotFound(varname, loc)))
             end
         | TyConstructor(name, args) ->
-            let name, arg_count, sort = match RenameMap.find_opt name scope.ty_constructors with
-            | None -> raise (RenameError (TyConNotFound(name, loc)))
-            | Some (name, arg_count, sort) -> (name, arg_count, sort)
-            in
-            if List.compare_length_with args arg_count <> 0 then begin
-                raise (RenameError (WrongNumberOfTyConArgs(name, arg_count, args, loc)))
-            end;
-            let args = List.map rename_nonbinding args in
-            begin match sort with
-            | TypeAliasSort -> TypeAlias (name, args)
-            | DataConSort -> TyConstructor(name, args)
-            end
-        | TypeAlias(name, args) ->
-            panic __LOC__ (Loc.pretty loc ^ ": Type Alias found before renamer")
+            rename_type_constructor rename_nonbinding loc scope name args
         | ModSubscriptTyCon((), mod_name, name, args) -> 
             let _, module_export_scope = RenameScope.lookup_mod_var scope loc mod_name in
-            let name = RenameScope.lookup_data module_export_scope loc name in
-
-            let args = List.map rename_nonbinding args in
-
             (* The renamed name is guaranteed to be unique among all modules so we just get rid of the
-               ModSubscriptTyCon for later passes
-               TODO: The module might still be useful for debugging, so we should probably include it in the name somehow 
+                ModSubscriptTyCon for later passes
+                TODO: The module might still be useful for debugging, so we should probably include it in the name somehow 
             *)
-               TyConstructor(name, args)
+            rename_type_constructor rename_nonbinding loc module_export_scope name args
+        | TypeAlias(name, args) ->
+            panic __LOC__ (Loc.pretty loc ^ ": Type Alias found before renamer")
         | TyVar(tv) -> begin match RenameMap.find_opt tv scope.ty_vars with
             | Some tv' -> TyVar(tv')
             | None -> raise (RenameError (TyVarNotFound(tv, loc)))
@@ -238,8 +252,13 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t) (scope : RenameSc
     | DataPat(loc, constructor_name, pattern) ->
         let pattern, scope_transformer, type_transformer = rename_pattern or_bound_variables scope pattern in
         begin match RenameMap.find_opt constructor_name scope.data_constructors with
-        | Some constructor_name -> 
+        | Some (constructor_name, NewtypeConSort) -> 
             ( DataPat(loc, constructor_name, pattern)
+            , scope_transformer
+            , type_transformer
+            )
+        | Some (constructor_name, ExceptionSort) -> 
+            (ExceptionDataPat(loc, constructor_name, [pattern])
             , scope_transformer
             , type_transformer
             )
@@ -251,10 +270,22 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t) (scope : RenameSc
         end
     | VariantPat(loc, constructor_name, patterns) ->
         let patterns, scope_transformers, type_transformers = Util.split3 (List.map (rename_pattern or_bound_variables scope) patterns) in
-        ( VariantPat(loc, constructor_name, patterns)
-        , Util.compose scope_transformers
-        , Util.compose type_transformers
-        )
+        begin match RenameMap.find_opt constructor_name scope.data_constructors with
+        | Some (constructor_name, NewtypeConSort) ->
+            raise (RenameError (TooManyArgsToDataConPattern(constructor_name, patterns, loc)))
+        | Some (constructor_name, ExceptionSort) ->
+            (ExceptionDataPat(loc, constructor_name, patterns)
+            , Util.compose scope_transformers
+            , Util.compose type_transformers
+            )
+        | None -> 
+            ( VariantPat(loc, constructor_name, patterns)
+            , Util.compose scope_transformers
+            , Util.compose type_transformers
+            )
+        end
+    | ExceptionDataPat(loc, name, _) -> 
+        panic __LOC__ (Loc.pretty loc ^ ": Exception data pattern for exception '" ^ name ^ "' before renaming")
         
 let rename_pattern = rename_pattern RenameMap.empty
 
@@ -283,7 +314,7 @@ let rec rename_mod_expr : (module_exports * Typed.expr list) FilePathMap.t
                     (fun name (renamed, arg_count, sort) r ->
                         RenameScope.insert_type_constructor name renamed arg_count sort (
                         match sort with
-                        | DataConSort -> RenameScope.insert_data_constructor name renamed r
+                        | DataConSort -> RenameScope.insert_data_constructor name renamed NewtypeConSort r
                         | TypeAliasSort -> r))
                     mod_exports.exported_ty_constructors
                     RenameScope.empty)
@@ -326,27 +357,34 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
         VariantConstructor(loc, name, args)
     | DataConstructor (loc, constructor_name) ->
         begin match RenameMap.find_opt constructor_name scope.data_constructors with
-        | Some constructor_name ->
+        | Some (constructor_name, NewtypeConSort) ->
             DataConstructor (loc, constructor_name)
+        | Some (constructor_name, ExceptionSort) ->
+            ExceptionConstructor(loc, constructor_name)
         | None ->
             VariantConstructor (loc, constructor_name, [])
         end
+    | ExceptionConstructor (loc, _) -> panic __LOC__ (Loc.pretty loc ^ ": Invalid exception constructor before renamer")
     (* We need this special case since data constructors are represented as unapplied values
        (similar to variables), whereas variant constructors always have to appear fully applied.
        (Otherwise their type would be ambiguous if we want to allow `A to be equivalent to `A() ) *)
     | App (loc, DataConstructor (constructor_loc, constructor_name), args) ->
         let args = List.map (rename_expr exports scope) args in
         begin match RenameMap.find_opt constructor_name scope.data_constructors with
-        | Some constructor_name -> App(loc, DataConstructor(constructor_loc, constructor_name), args)
+        | Some (constructor_name, NewtypeConSort) -> App(loc, DataConstructor(constructor_loc, constructor_name), args)
+        | Some (constructor_name, ExceptionSort) -> App(loc, ExceptionConstructor(constructor_loc, constructor_name), args)
         | None -> VariantConstructor(loc, constructor_name, args)
         end
     | ModSubscriptDataCon ((), loc, mod_name, name) ->
         let _, module_export_scope = RenameScope.lookup_mod_var scope loc mod_name in
 
-        let name = RenameScope.lookup_data module_export_scope loc name in
+        let (name, sort) = RenameScope.lookup_data module_export_scope loc name in
         (* We get rid of the module subscript expression part, since the data constructor name
            is guaranteed to be unique among all modules so we don't need it after the renamer anymore *)
-        DataConstructor(loc, name)
+        begin match sort with
+        | NewtypeConSort -> DataConstructor(loc, name)
+        | ExceptionSort -> ExceptionConstructor (loc, name)
+        end
     | App (loc, f, args) -> App (loc, rename_expr exports scope f, List.map (rename_expr exports scope) args)
     
     | Lambda (loc, xs, e) ->
@@ -406,7 +444,8 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
 
     | LetSeq (loc, _, _) | LetRecSeq ({ main = loc; _ }, _, _, _, _) | LetEnvSeq (loc, _, _) 
     (* TODO: Improve this error message *)
-    | LetModuleSeq (loc, _, _) | LetDataSeq(loc, _, _, _) | LetTypeSeq(loc, _, _, _) -> raise (RenameError (LetSeqInNonSeq (expr, loc)))
+    | LetModuleSeq (loc, _, _) | LetDataSeq(loc, _, _, _) | LetTypeSeq(loc, _, _, _)
+    | LetExceptionSeq (loc, _, _, _) -> raise (RenameError (LetSeqInNonSeq (expr, loc)))
 
     | Let (loc, p, e1, e2) ->
         let p', scope_trans, ty_trans = rename_pattern scope p in
@@ -467,6 +506,23 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
         let place_expr = rename_expr exports scope place_expr in
         let expr = rename_expr exports scope expr in
         Assign (loc, place_expr, expr)
+    | Try(loc, try_expr, handlers) ->
+        let try_expr = rename_expr exports scope try_expr in
+
+        let rename_handler (exception_name, param_patterns, expr) = 
+            match RenameScope.lookup_data scope loc exception_name with
+            | (name, NewtypeConSort) -> raise (RenameError (NonExceptionInTry(name, loc)))
+            | (exception_name, ExceptionSort) -> 
+                let param_patterns, scope_transformer, _type_transformer = rename_patterns scope param_patterns in
+                let expr = rename_expr exports (scope_transformer scope) expr in
+                (exception_name, param_patterns, expr)
+        in
+
+        let handlers = List.map rename_handler handlers in
+        Try(loc, try_expr, handlers)
+    | Raise(loc, expr) ->
+        let expr = rename_expr exports scope expr in
+        Raise(loc, expr)
 
 and rename_seq_state (exports : (module_exports * Typed.expr list) FilePathMap.t) (scope : RenameScope.t) (exprs : Parsed.expr list) : Renamed.expr list * RenameScope.t = 
     let open RenameScope in
@@ -528,7 +584,7 @@ and rename_seq_state (exports : (module_exports * Typed.expr list) FilePathMap.t
 
         (* This uses 'scope' again since we really don't want bound type variables
            to bleed into the remaining expressions *)
-        let scope = insert_data_constructor data_name data_name' scope in
+        let scope = insert_data_constructor data_name data_name' NewtypeConSort scope in
 
         let exprs, scope = rename_seq_state exports scope exprs in
 
@@ -551,6 +607,21 @@ and rename_seq_state (exports : (module_exports * Typed.expr list) FilePathMap.t
 
         let exprs, scope = rename_seq_state exports scope exprs in
         LetTypeSeq (loc, alias_name', List.map snd renamed_params, underlying_type') :: exprs, scope
+    | LetExceptionSeq(loc, exception_name, params, message_expr) :: exprs ->
+        let rename_param scope (param_name, ty) = 
+            let param_name' = fresh_var param_name in
+            let ty, _ty_transformer = rename_type loc scope ty in
+            insert_var param_name param_name' scope, (param_name', ty)
+        in
+        let message_scope, params = List.fold_left_map rename_param scope params in
+        let message_expr = rename_expr exports message_scope message_expr in
+
+        let exception_name' = fresh_var exception_name in
+
+        let scope = insert_data_constructor exception_name exception_name' ExceptionSort scope in
+        
+        let exprs, scope = rename_seq_state exports scope exprs in
+        LetExceptionSeq(loc, exception_name', params, message_expr) :: exprs, scope
     | (e :: exprs) -> 
         let e' = rename_expr exports scope e in
         let exprs', res_state = rename_seq_state exports scope exprs in
@@ -585,7 +656,10 @@ let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.
 let rename_exports : RenameScope.t -> Parsed.export_item list -> Renamed.export_item list =
     fun scope -> List.map begin function
         | Parsed.ExportVal (loc, name) -> Renamed.ExportVal (loc, RenameScope.lookup_var scope loc name)
-        | Parsed.ExportType (loc, name) -> Renamed.ExportType (loc, RenameScope.lookup_data scope loc name)
+        | Parsed.ExportType (loc, name) -> 
+            (* TODO: Allow exception exports *)
+            let name, _, _ = RenameScope.lookup_tycon scope loc name in
+            Renamed.ExportType (loc, name)
     end
     
 

@@ -58,8 +58,13 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
   | RenameError error -> begin match error with
     | VarNotFound (x, loc) -> print_fun (Some loc) ("Variable not found: " ^ text_style.identifier x)
     | ModuleVarNotFound (x, loc) -> print_fun (Some loc) ("Module not found: " ^ text_style.identifier x)
-    | TyVarNotFound (x, loc) -> print_fun (Some loc) ("Type variable or constructor not found: " ^ text_style.ty x)
+    | TyVarNotFound (x, loc) -> print_fun (Some loc) ("Type variable not found: " ^ text_style.ty x)
     | TyConNotFound (x, loc) -> print_fun (Some loc) ("Type constructor not found: " ^ text_style.ty x)
+    | DataConNotFound (x, loc) -> print_fun (Some loc) ("Data constructor not found: " ^ text_style.ty x)
+    | TooManyArgsToDataConPattern(name, patterns, loc) ->
+      print_fun (Some loc) ("Too many arguments to data constructor " ^ text_style.identifier (Name.pretty name) ^ " in a pattern\n"
+      ^ "    Data constructors always take exactly " ^ text_style.number 1 ^ " arguments\n"
+      ^ "                   but this one was given " ^ text_style.number (List.length patterns))
     | SubscriptVarNotFound (x, loc) -> 
       print_fun (Some loc) ("Variable or module not found: " ^ text_style.identifier x)
     | LetSeqInNonSeq (expr, loc) -> print_fun (Some loc)
@@ -74,11 +79,14 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       print_fun (Some loc) ("Invalid number of arguments supplied to type constructor " ^ text_style.ty (Name.pretty name) ^ ".\n"
       ^ "    The type constructor takes " ^ text_style.number expected_arg_count ^ " arguments\n"
       ^ "                 but was given " ^ text_style.number (List.length args))
+    | NonExceptionInTry(name, loc) ->
+      print_fun (Some loc) ("Invalid non-exception data constructor " ^ text_style.identifier (Name.pretty name) ^ " in an exception handler")  
     end
   | EvalError error -> begin match error with
-    | MapDoesNotContain (map, key, loc::locs) -> 
-      print_fun (Some loc) ("Map does not contain key '" ^ key ^ "': " ^ Value.pretty (RecordV map)
-        ^ "\n" ^ pretty_call_trace locs
+    | PolarisException (name, arguments, loc::locs, message_lazy) ->
+      print_fun (Some loc) (text_style.error "Exception" ^ ": " ^ Lazy.force message_lazy
+      ^ "\n    Caused by " ^ text_style.identifier (Name.pretty name)
+      ^ "\n" ^ pretty_call_trace locs
       )
     | PrimOpArgumentError (primop_name, vals, msg, loc::locs) -> 
       print_fun (Some loc) ("Invalid arguments to builtin function '" ^ primop_name ^ "': " ^ msg ^ "\n"

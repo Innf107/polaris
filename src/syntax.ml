@@ -8,6 +8,7 @@ module StringMap = Map.Make(String)
 type name = { name : string; index : Unique.t }
 
 type type_constructor_sort = DataConSort | TypeAliasSort
+type data_constructor_sort = NewtypeConSort | ExceptionSort
 
 module Name = struct
   type t = name
@@ -61,6 +62,7 @@ module MakeTy(Ext : sig
     | Number
     | Bool
     | String
+    | Exception
     | Tuple of ty array
     | List of ty
     | Ref of ty
@@ -130,6 +132,7 @@ module Template = struct
     | OrPat of loc * pattern * pattern
     | TypePat of loc * pattern * ty
     | DataPat of loc * name * pattern
+    | ExceptionDataPat of loc * name * pattern list
     | VariantPat of loc * string * pattern list
 
   type module_exports = {
@@ -155,6 +158,7 @@ module Template = struct
     (* Lambda calculus *)
     | Var of VarExt.t * name                     (* x *)
     | DataConstructor of DataConExt.t * name         (* X *)
+    | ExceptionConstructor of loc * name
     (* The renamer replaces these by the data constructor with the (unique)
        name from the module where it is defined. This sets mod_subscript_tycon_ext to void *)
     | ModSubscriptDataCon of mod_subscript_tycon_ext * loc * name * name (* M.X *)
@@ -215,7 +219,10 @@ module Template = struct
     (* Mutable references *)
     | Assign of loc * expr * expr                     (* x := e *)
     | MakeRef of loc * expr                           (* ref e *)
-
+    (* Exceptions *)
+    | LetExceptionSeq of loc * name * (name * ty) list * expr (* exception name(x : t, .., x : t) = e *)
+    | Try of loc * expr * (name * pattern list * expr) list (* try expr with { x(p, ..) -> e, .. } *)
+    | Raise of loc * expr (* raise e *)
 
   and list_comp_clause =
     | DrawClause of pattern * expr (* p <- e *)
@@ -258,7 +265,7 @@ module Template = struct
         let rec go expr = 
           let result = get expr in
           let remaining = match expr with
-          | Var _ | DataConstructor _ | ModSubscriptDataCon _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
+          | Var _ | DataConstructor _ | ExceptionConstructor _ | ModSubscriptDataCon _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
           | UnitLit _ | ModSubscript _ | LetDataSeq _ | LetTypeSeq _ -> M.empty
           | VariantConstructor(_, _, args) ->
             fold monoid go args
@@ -296,6 +303,11 @@ module Template = struct
           | Unwrap(_, expr) -> go expr
           | Assign(_, place_expr, expr) -> M.append (go place_expr) (go expr)
           | MakeRef(_, expr) -> go expr
+          | LetExceptionSeq(_, name, params, message_expr) -> go message_expr
+          | Try (loc, try_expr, body_expr) -> 
+            M.append (go try_expr) (fold monoid (fun (_, _, expr) -> go expr) body_expr)
+          | Raise (loc, expr) -> 
+            go expr
           in
           M.append result remaining
         in
@@ -365,6 +377,7 @@ module Template = struct
     | Number -> "Number"
     | Bool -> "Bool"
     | String -> "String"
+    | Exception -> "Exception"
     | Tuple tys -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty_type tys)) ^ ")"
     | List ty -> "List(" ^ pretty_type ty ^ ")"
     | Promise ty -> "Promise(" ^ pretty_type ty ^ ")"
@@ -393,10 +406,12 @@ module Template = struct
     | TypePat (_, pat, ty) -> "(" ^ pretty_pattern pat ^ " : " ^ pretty_type ty ^ ")"
     | DataPat (_, name, pattern) -> pretty_name name ^ "(" ^ pretty_pattern pattern ^ ")"
     | VariantPat (_, name, patterns) -> "`" ^ name ^ "(" ^ String.concat ", " (List.map pretty_pattern patterns) ^ ")"
+    | ExceptionDataPat (_, name, patterns) -> pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_pattern patterns) ^ ")"
 
   let rec pretty = function
     | Var (_, x) -> pretty_name x
     | DataConstructor(_, x) -> pretty_name x
+    | ExceptionConstructor(_, x) -> pretty_name x
     | VariantConstructor(_, x, args) -> "`" ^ x ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")"
     | ModSubscriptDataCon(_, _, mod_name, name) -> pretty_name mod_name ^ "." ^ pretty_name name
     | App (_, f, args) ->
@@ -481,18 +496,29 @@ module Template = struct
     | Unwrap(_, expr) -> pretty expr ^ "!"
     | MakeRef(_, expr) -> "ref " ^ pretty expr ^ ""
     | Assign (_, x, e) -> pretty x ^ " = " ^ pretty e
+    | LetExceptionSeq(_, name, params, message_expr) -> 
+      "exception " ^ pretty_name name ^ "(" ^ String.concat "," (List.map (fun (param, ty) -> pretty_name param ^ " : " ^ pretty_type ty) params)
+      ^ ") = " ^ pretty message_expr
+    | Try(_, try_expr, branches) ->
+      "try " ^ pretty try_expr ^ " with {"
+      ^ "\n    " ^ String.concat ("\n    ") (List.map 
+        (fun (name, params, e) -> 
+          pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_pattern params) ^ " -> " ^ pretty e) 
+        branches)
+      ^ "\n}"
+    | Raise(_, expr) -> "raise " ^ pretty expr
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
 
   let get_loc = function
     | Var (ext, _) -> VarExt.loc ext
-    | DataConstructor(ext, _) -> ModSubscriptExt.loc ext 
+    | DataConstructor(ext, _) -> DataConExt.loc ext 
     | Subscript(ext, _, _) -> SubscriptExt.loc ext
     | ModSubscript (ext, _, _) -> ModSubscriptExt.loc ext
     | LetRec(ext, _, _, _, _, _)
     | LetRecSeq(ext, _, _, _, _) -> LetRecExt.loc ext
-    | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
+    | ExceptionConstructor(loc, _) | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
     | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
     | BinOp(loc, _, _, _) | Not(loc, _)
@@ -501,14 +527,14 @@ module Template = struct
     | LetDataSeq (loc, _, _, _) | LetTypeSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _)
-    | MakeRef(loc, _)
+    | MakeRef(loc, _) | LetExceptionSeq (loc, _, _, _) | Try(loc, _, _) | Raise(loc, _)
     -> loc
 
   let get_pattern_loc = function
     | VarPat (ext, _) -> VarPatExt.loc ext
     | AsPat(loc, _, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
     | NumPat (loc, _) | StringPat(loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _) | DataPat (loc, _, _)
-    | VariantPat(loc, _, _)
+    | VariantPat(loc, _, _) | ExceptionDataPat(loc, _, _)
     -> loc
 
 
@@ -564,6 +590,9 @@ module Template = struct
           | DataConstructor (loc, name) ->
             let name, state = self#traverse_name state name in
             DataConstructor (loc, name), state
+          | ExceptionConstructor (loc, name) ->
+            let name, state = self#traverse_name state name in
+            ExceptionConstructor (loc, name), state  
           | VariantConstructor (loc, name, args) ->
             let args, state = traverse_list self#traverse_expr state args in
             VariantConstructor (loc, name, args), state
@@ -730,6 +759,29 @@ module Template = struct
           | MakeRef(loc, expr) ->
             let expr, state = self#traverse_expr state expr in
             MakeRef(loc, expr), state
+          | LetExceptionSeq(loc, name, params, message_expr) ->
+            let name, state = self#traverse_name state name in
+            let params, state = traverse_list 
+              (fun state (name, ty) ->
+                let name, state = self#traverse_name state name in
+                let ty, state = self#traverse_type state ty in
+                (name, ty), state) state params
+            in
+            let message_expr, state = self#traverse_expr state message_expr in
+            LetExceptionSeq(loc, name, params, message_expr), state
+          | Try(loc, try_expr, branches) ->
+            let try_expr, state = self#traverse_expr state try_expr in
+            let branches, state = traverse_list 
+              (fun state (name, patterns, expr) ->
+                let name, state = self#traverse_name state name in
+                let patterns, state = traverse_list self#traverse_pattern state patterns in
+                let expr, state = self#traverse_expr state expr in
+                (name, patterns, expr), state) state branches 
+            in
+            Try(loc, try_expr, branches), state
+          | Raise(loc, expr) ->
+            let expr, state = self#traverse_expr state expr in
+            Raise(loc, expr), state
           in
           self#expr state transformed
 
@@ -772,6 +824,10 @@ module Template = struct
         | VariantPat(loc, unqualified_name, patterns) ->
           let patterns, state = traverse_list self#traverse_pattern state patterns in
           VariantPat(loc, unqualified_name, patterns), state
+        | ExceptionDataPat(loc, name, patterns) ->
+          let name, state = self#traverse_name state name in
+          let patterns, state = traverse_list self#traverse_pattern state patterns in
+          ExceptionDataPat(loc, name, patterns), state
         in
         self#pattern state transformed
 
@@ -779,7 +835,7 @@ module Template = struct
       fun state ty ->
         let transformed, state = match ty with
         (* Non-recursive cases *)
-        | Number | Bool | String -> ty, state
+        | Number | Bool | String | Exception -> ty, state
         (* Recursion *)
         | Forall (var_name, ty) ->
           let var_name, state = self#traverse_name state var_name in

@@ -17,6 +17,7 @@ type eval_env = {
 ; call_trace : loc list
 ; last_status : int ref
 ; module_vars : runtime_module VarMap.t
+; exceptions : (name list * eval_env * expr) VarMap.t
 }
 
 and runtime_module = {
@@ -54,6 +55,8 @@ and value =
   | DataConV of name * value
   (* Data constructors can be used like functions *)
   | PartialDataConV of name
+  | PartialExceptionV of name * name list * (eval_env * expr)
+  | ExceptionV of name * (name * value) list * (eval_env * expr)
   | VariantConstructorV of string * value list
   | RefV of value ref
 
@@ -63,7 +66,7 @@ let isUnitV = function
   | _ -> false
 
 type eval_error =
-  | MapDoesNotContain of value RecordVImpl.t * string * loc list
+  | PolarisException of name * (name * value) list * loc list * string Lazy.t
   | IndexOutOfRange of value list * int * loc list
 
   | RuntimeError of string * loc list
@@ -74,6 +77,7 @@ type eval_error =
   | NonExhaustiveMatch of value * loc list
 
   | EnsureFailed of string * loc list
+
 
 
 exception EvalError of eval_error
@@ -111,6 +115,10 @@ module Value = struct
       "<constructor: " ^ Name.pretty constructor_name ^ ">"
     | VariantConstructorV(constructor_name, args) ->
       "<" ^ constructor_name ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")>"
+    | PartialExceptionV(name, parameter_names, _message_closure) -> 
+      "<exception constructor: " ^ Name.pretty name ^ "(" ^ String.concat ", " (List.map Name.pretty parameter_names) ^ ")>"
+    | ExceptionV(exception_name, args, _message_closure) ->
+      Name.pretty exception_name ^ "(" ^ String.concat ", " (List.map (fun (name, value) -> Name.pretty name ^ " = " ^ pretty value) args) ^ ")"
     | RefV(value) -> "<ref: " ^ pretty !value ^ ">"
 
   let rec as_args (fail : t -> 'a) (x : t) : string list =
@@ -119,7 +127,7 @@ module Value = struct
     | NumV _ | BoolV _ -> [pretty x]
     (* TODO: Should records/maps be converted to JSON? *)
     | ClosureV _ | PrimOpV _ | TupleV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ | RefV _
-    | VariantConstructorV _ -> fail x
+    | VariantConstructorV _ | PartialExceptionV _ | ExceptionV _ -> fail x
     | ListV x -> List.concat_map (as_args fail) x
 end
 
@@ -140,7 +148,7 @@ let insert_env_var : loc -> string -> value -> eval_env -> eval_env =
     | StringV x -> { env with env_vars = EnvMap.add var x env.env_vars }
     | (NumV _ | BoolV _) as v -> { env with env_vars = EnvMap.add var (Value.pretty v) env.env_vars }
     | ClosureV _ | ListV _ | TupleV _ | PrimOpV _ | RecordV _ | PromiseV _ | DataConV _ | PartialDataConV _ | VariantConstructorV _
-    | RefV _
+    | RefV _ | PartialExceptionV _ | ExceptionV _
       -> panic __LOC__ (Loc.pretty loc ^ ": Invalid env var value: " ^ Value.pretty value)
 
 let insert_module_var : name -> runtime_module -> eval_env -> eval_env =
@@ -270,6 +278,12 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
       else lookup_var env loc x
   | DataConstructor (loc, name) ->
     PartialDataConV(name)
+  | ExceptionConstructor (loc, name) -> 
+    begin match NameMap.find_opt name env.exceptions with
+    | Some (parameter_names, env, message_expr) -> 
+      PartialExceptionV(name, parameter_names, (env, message_expr))
+    | None -> panic __LOC__ (Loc.pretty loc ^ ": Exception constructor not found at runtime: " ^ Name.pretty name)
+    end
   | VariantConstructor (loc, name, args) ->
     let arg_vals = List.map (eval_expr env) args in
     VariantConstructorV(name, arg_vals)
@@ -302,7 +316,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     | RecordV map -> 
       begin match RecordVImpl.find key map with
       | (value :: _) -> value
-      | [] -> raise (EvalError (MapDoesNotContain (map, key, loc :: env.call_trace)))
+      | [] -> panic __LOC__ (Loc.pretty loc ^ ": Record does not contain key '" ^ key ^ "' at runtime")
       end
     | value -> panic __LOC__ (Loc.pretty loc ^ ": Subscript to non-record at runtme: " ^ Value.pretty value)
     end
@@ -500,7 +514,8 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     | _ -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in if condition at runtime: " ^ Value.pretty condition)
       end
   | Seq (_, exprs) -> eval_seq env exprs
-  | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ -> raise (Panic "let assignment found outside of sequence expression")
+  | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ 
+  | LetExceptionSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
   | Let (loc, pat, e1, e2) ->
     let scrut = eval_expr env e1 in
@@ -594,6 +609,20 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
       unitV
     | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to assign to non-reference at runtime")
     end
+  | Try _ -> todo __LOC__
+  | Raise (loc, expr) -> 
+    begin match eval_expr env expr with
+    | ExceptionV (name, arguments, (message_env, message_expr)) -> 
+      let message = lazy begin 
+        let message_env = List.fold_right (fun (param, value) env -> insert_var param value env) arguments message_env in
+        match eval_expr message_env message_expr with
+        | StringV message -> message
+        | value -> panic __LOC__ ("Exception message returned non-string: " ^ Value.pretty value)
+        | exception (EvalError error) -> todo __LOC__
+      end in
+      raise (EvalError (PolarisException (name, arguments, loc :: env.call_trace, message)))
+    | value -> panic __LOC__ ("Trying to raise non-exception at runtime: " ^ Value.pretty value)
+    end
 
 and eval_app env loc fun_v arg_vals = 
   match fun_v with
@@ -608,6 +637,11 @@ and eval_app env loc fun_v arg_vals =
     begin match arg_vals with
     | [x] -> DataConV(constructor_name, x)
     | _ -> panic __LOC__ ("Invalid number of arguments for data constructor '" ^ Name.pretty constructor_name ^ "': [" ^ String.concat ", " (List.map Value.pretty arg_vals) ^ "]")
+    end
+  | PartialExceptionV (exception_name, parameter_names, message_closure) ->
+    begin match Base.List.zip parameter_names arg_vals with
+    | Ok arguments -> ExceptionV (exception_name, arguments, message_closure)
+    | Unequal_lengths -> todo __LOC__
     end
   | PrimOpV prim_name ->
       eval_primop {env with call_trace = loc :: env.call_trace} prim_name arg_vals loc
@@ -640,6 +674,11 @@ and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr,
   | (LetDataSeq (loc, _, _, _) | LetTypeSeq (loc, _, _, _)) :: exprs -> 
     (* Types are erased at runtime, so we don't need to do anything clever here *)
     eval_seq_cont env exprs cont
+  | LetExceptionSeq(_loc, exception_name, params, message_expr) :: exprs -> 
+    let updated_env = 
+      { env with exceptions = VarMap.add exception_name (List.map fst params, env, message_expr) env.exceptions } 
+    in
+    eval_seq_cont updated_env exprs cont
   (* Single program calls are just evaluated like pipes *)
   | ProgCall (loc, _, _) as expr :: exprs ->
     eval_seq_cont env (Pipe (loc, [expr]) :: exprs) cont
@@ -913,7 +952,8 @@ and empty_eval_env (argv: string list): eval_env = {
   argv = argv;
   call_trace = [];
   last_status = ref 0;
-  module_vars = VarMap.empty
+  module_vars = VarMap.empty;
+  exceptions = VarMap.empty;
 }
 
 let eval (argv : string list) (exprs : Typed.expr list) : value = eval_seq (empty_eval_env argv) exprs

@@ -25,6 +25,7 @@ type global_env = {
   var_types : ty NameMap.t;
   module_var_contents : global_env NameMap.t;
   data_definitions : (name list * ty) NameMap.t;
+  exception_definitions : ty list NameMap.t;
   type_aliases : (name list * ty) NameMap.t;
 }
 

@@ -38,6 +38,7 @@ type global_env = {
   var_types : Typed.ty NameMap.t;
   module_var_contents : global_env NameMap.t;
   data_definitions : (name list * Typed.ty) NameMap.t;
+  exception_definitions : ty list NameMap.t;
   type_aliases : (name list * Typed.ty) NameMap.t;
 }
 
@@ -46,6 +47,7 @@ type local_env = {
   constraints : ty_constraint Difflist.t ref;
   module_var_contents : global_env NameMap.t;
   data_definitions : (name list * ty) NameMap.t;
+  exception_definitions : ty list NameMap.t;
   type_aliases : (name list * ty) NameMap.t;
 }
 
@@ -73,7 +75,7 @@ let unify : local_env -> loc -> ty -> ty -> unit =
     match normalize_unif ty1, normalize_unif ty2 with
     (* We can skip obviously equal constraints. 
        This will make debugging vastly simpler and might improve performance a little. *)
-    | (Number, Number) | (Bool, Bool)| (String, String) | (RecordClosed [||], RecordClosed [||]) -> ()
+    | (Number, Number) | (Bool, Bool)| (String, String) | (Exception, Exception) | (RecordClosed [||], RecordClosed [||]) -> ()
     | (TyVar name1, TyVar name2) when Name.equal name1 name2 -> ()
     | (Unif(typeref1, _), Unif(typeref2, _)) when Typeref.equal typeref1 typeref2 -> ()
     | (Skol(u1, _), Skol(u2, _)) when Unique.equal u1 u2 -> ()
@@ -122,6 +124,9 @@ let insert_type_alias : name -> name list -> ty -> local_env -> local_env =
   fun constructor params underlying_type env ->
     { env with type_aliases = NameMap.add constructor (params, underlying_type) env.type_aliases }
 
+let insert_exception_definition : name -> ty list -> local_env -> local_env =
+  fun name params env ->
+    { env with exception_definitions = NameMap.add name params env.exception_definitions }
 
 let replace_tvar : name -> ty -> ty -> ty =
   fun name_to_replace replacement_type ->
@@ -195,6 +200,7 @@ let rec eval_module_env : local_env -> module_expr -> global_env * Typed.module_
       (* TODO: Allow modules to export other modules and include them here *)
       module_var_contents = NameMap.empty;
       data_definitions = mod_exports.exported_data_definitions;
+      exception_definitions = todo __LOC__;
       type_aliases = mod_exports.exported_type_aliases;
     }, Import ((loc, mod_exports, exprs), path)
   | SubModule (loc, mod_expr, name) ->
@@ -292,6 +298,9 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * 
       , Util.compose env_transformers
       , VariantPat(loc, constructor_name, patterns)
       )
+    | ExceptionDataPat(loc, name, patterns) -> 
+      (* Return type: Exception, check patterns against definition *)
+      todo __LOC__
       
 (* Note [Inferring Variant Patterns]
   Inference for variant patterns is quite complicated.
@@ -408,6 +417,7 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) * Typ
     | DataPat _, _ -> defer_to_inference ()
     | VariantPat _, _ -> 
       defer_to_inference ()
+    | ExceptionDataPat _, _ -> todo __LOC__
 
 (** Split a function type into its components.
     If the type is not statically known to be a function, this is achieved by unifying
@@ -472,6 +482,14 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
         )
       | None -> panic __LOC__ ("Unbound data constructor in type checker: '" ^ Name.pretty data_name ^ "'")
     end
+    | ExceptionConstructor(loc, exception_name) ->
+      begin match NameMap.find_opt exception_name env.exception_definitions with
+      | Some param_tys -> 
+          ( Fun(param_tys, Exception)
+          , ExceptionConstructor(loc, exception_name)
+          )
+      | None -> panic __LOC__ ("Unbound exception constructor in type checker: '" ^ Name.pretty exception_name ^ "'")
+      end
     | VariantConstructor(loc, constructor_name, args) ->
       (* We infer variant constructors to an open variant type.
         The reasoning behind this is that a constructor A(..) can be used as part of
@@ -644,7 +662,8 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       ( ty
       , Seq (loc, exprs)
       )
-    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
+    | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ 
+    | LetExceptionSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
     | Let (loc, pattern, body, rest) ->
       let ty, env_trans, pattern = infer_pattern env pattern in
       (* Lets are non-recursive, so we use the *unaltered* environment *)
@@ -757,7 +776,14 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let expr = check env ref_value_type expr in
       ( Ty.unit
       , Assign (loc, ref_expr, expr)
-      )  
+      )
+    | Try _ -> todo __LOC__
+    | Raise(loc, expr) ->
+      let expr = check env Exception expr in
+      let result_type = fresh_unif () in
+      ( result_type
+      , expr
+      )
 
 
 and check : local_env -> ty -> expr -> Typed.expr =
@@ -773,6 +799,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
     match expr, expected_ty with
     | Var _, _ -> defer_to_inference ()
     | DataConstructor _, _ -> defer_to_inference ()
+    | ExceptionConstructor _, _ -> todo __LOC__
     (* Variant constructors would be a bit complicated to check directly
        and we wouldn't gain much, so we just defer to inference. *)
     | VariantConstructor _, _ -> defer_to_inference ()
@@ -851,7 +878,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
     | Seq (loc, exprs), expected_ty ->
       let exprs = check_seq env loc expected_ty exprs in
       Seq (loc, exprs)
-    | (LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _), _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
+    | (LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ | LetExceptionSeq _), _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
     | Let (loc, pattern, body, rest), expected_ty ->
       let ty, env_trans, pattern = infer_pattern env pattern in
       (* Lets are non-recursive, so we use the *unaltered* environment *)
@@ -906,6 +933,11 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let expr = check env inner_type expr in
       Assign(loc, ref_expr, expr)
     | Assign _, _ -> defer_to_inference ()
+    | Try _, _ -> todo __LOC__
+    (* Raise returns something of type forall a. a, so we can safely ignore the type it is checked against *)
+    | Raise (loc, expr), _ ->
+      let expr = check env Exception expr in
+      Raise(loc, expr)
   
 and check_list_comp : local_env -> list_comp_clause list -> local_env * Typed.list_comp_clause list =
     fun env -> function
@@ -1010,6 +1042,14 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
       insert_data_definition data_name params ty, LetDataSeq(loc, data_name, params, ty)
     | LetTypeSeq(loc, alias_name, params, ty) ->
       insert_type_alias alias_name params ty, LetTypeSeq(loc, alias_name, params, ty)
+    | LetExceptionSeq (loc, exception_name, params, message_expr) -> 
+      
+      let message_env = List.fold_right (fun (param, ty) r -> insert_var param ty r) params env in
+      let message_expr = check message_env String message_expr in
+
+      ( insert_exception_definition exception_name (List.map snd params)
+      , LetExceptionSeq (loc, exception_name, params, message_expr)
+      )
     | ProgCall (loc, prog, args) ->
       let args_with_types = List.map (infer env) args in
       (* See the inference rule for ProgCall expressions *)
@@ -1183,7 +1223,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | Promise ty1, Promise ty2 -> go ty1 ty2
       | Ref ty1, Ref ty2 -> go ty1 ty2
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), (original_ty1, original_ty2))))
-      | (Number, Number) | (Bool, Bool) | (String, String) -> ()
+      | (Number, Number) | (Bool, Bool) | (String, String) | (Exception, Exception) -> ()
       | Skol (u1, _), Skol (u2, _) when Unique.equal u1 u2 -> ()
       (* closed, closed *)
       | RecordClosed fields1, RecordClosed fields2 ->
@@ -1392,6 +1432,7 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
         module_var_contents = global_env.module_var_contents;
         constraints = ref Difflist.empty;
         data_definitions = global_env.data_definitions;
+        exception_definitions = global_env.exception_definitions;
         type_aliases = global_env.type_aliases;
       } in
     
@@ -1407,6 +1448,7 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
       module_var_contents = NameMap.empty;
       constraints = local_env.constraints; 
       data_definitions = NameMap.empty;
+      exception_definitions = NameMap.empty;
       type_aliases = NameMap.empty;
     } in
 
@@ -1425,6 +1467,10 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
           NameMap.union (fun _ _ x -> Some x)
             (global_env.data_definitions)
             temp_local_env.data_definitions;
+        exception_definitions =
+          NameMap.union (fun _ _ x -> Some x)
+            (global_env.exception_definitions)
+            temp_local_env.exception_definitions;  
         type_aliases =
           NameMap.union (fun _ _ x -> Some x)
             (global_env.type_aliases)
@@ -1487,5 +1533,6 @@ let empty_env = {
   var_types = prim_types; 
   module_var_contents = NameMap.empty; 
   data_definitions = NameMap.empty;
+  exception_definitions = NameMap.empty;
   type_aliases = NameMap.empty;
 }

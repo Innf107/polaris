@@ -1389,7 +1389,6 @@ let bind_directly : loc -> ty Typeref.t -> name -> ty -> local_env -> unify_cont
       bind_unchecked typeref name ty
 
 
-
 let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> local_env -> unit =
   fun loc env state original_type1 original_type2 definition_env ->
     trace_unify (lazy (pretty_type original_type1 ^ " ~ " ^ pretty_type original_type2));

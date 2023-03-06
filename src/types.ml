@@ -1124,10 +1124,10 @@ type unify_state = {
   deferred_constraints : ty_constraint Difflist.t ref option
 }
 
-(** Bind a typeref to a new type.
-    This panics if the typeref has already been bound *)
-let bind_directly : ty Typeref.t -> name -> ty -> unit =
-  fun typeref name ty ->
+(** Bind a typeref to a new type
+    This is like bind_directly but skips the occurs check *)
+let bind_unchecked : ty Typeref.t -> name -> ty -> unit 
+  = fun typeref name ty ->
     trace_subst (lazy (pretty_type (Unif (typeref, name)) ^ " := " ^ pretty_type ty));
     match Typeref.get typeref with
     | Some previous_ty -> 
@@ -1137,6 +1137,16 @@ let bind_directly : ty Typeref.t -> name -> ty -> unit =
                      ^ "    Occurs check violation: " ^ string_of_bool (occurs typeref previous_ty))
     | None -> Typeref.set typeref ty
 
+(** Bind a typeref to a new type.
+    This panics if the typeref has already been bound *)
+let bind_directly : loc -> ty Typeref.t -> name -> ty -> ty -> ty -> unit 
+  = fun loc typeref name ty original_ty1 original_ty2 ->
+    if occurs typeref ty then
+      raise (TypeError (loc, OccursCheck (typeref, name, ty, original_ty1, original_ty2)))
+    else
+      bind_unchecked typeref name ty
+
+
 
 let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
   fun loc env state original_ty1 original_ty2 ->
@@ -1144,7 +1154,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
 
     let rec bind typeref name ty =
       match Typeref.get typeref with
-      | None -> bind_directly typeref name ty
+      | None -> bind_directly loc typeref name ty original_ty1 original_ty2
       (* TODO: Preserve the order somehow for the sake of error messages *)
       | Some previous_ty -> 
         trace_unify (lazy 
@@ -1417,7 +1427,7 @@ let generalize : ty -> ty =
     let ty' = TyperefSet.fold 
       (fun (typeref, name) r -> 
         let new_name = Name.refresh name in
-        bind_directly typeref name (TyVar new_name);
+        bind_unchecked typeref name (TyVar new_name);
         Forall(new_name, r)) 
       (free_unifs ty)
       ty

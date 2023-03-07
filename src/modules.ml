@@ -66,6 +66,7 @@ let build_export_map header exprs rename_scope global_env =
 
     exported_ty_constructors = StringMap.of_seq (List.to_seq exported_ty_constructors);
     exported_data_definitions = NameMap.of_seq (List.to_seq exported_data_definitions);
+    exported_exceptions = NameMap.empty; (* TODO: Allow exporting exceptions *)
 
     exported_type_aliases = NameMap.of_seq (List.to_seq exported_type_aliases);
   }

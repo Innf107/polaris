@@ -364,7 +364,7 @@ let rec eval_module_env : local_env -> module_expr -> global_env * Typed.module_
       (* TODO: Allow modules to export other modules and include them here *)
       module_var_contents = NameMap.empty;
       data_definitions = mod_exports.exported_data_definitions;
-      exception_definitions = NameMap.empty (* TODO *);
+      exception_definitions = mod_exports.exported_exceptions;
       type_aliases = mod_exports.exported_type_aliases;
       ambient_level = Typeref.initial_top_level
     }, Import ((loc, mod_exports, exprs), path)

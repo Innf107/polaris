@@ -9,5 +9,5 @@ let f() = {
 }
 
 try f() with {
-    IndexOutOfBounds(index) -> print("Trying to access something at out of bounds index " ~ toString(index))
+    IndexOutOfBounds(index) as exn -> print("Trying to access something at out of bounds index " ~ toString(index) ~ ": " ~ exceptionMessage(exn))
 }

@@ -1,0 +1,7 @@
+test/categories/exceptions/unhandled.pls:5:1-5:24: ERROR:
+Exception: PANIC! (the impossible happened): AAAAAAAA
+    Caused by 'Panic'
+
+  | 
+5 | raise Panic("AAAAAAAA")
+  | ^^^^^^^^^^^^^^^^^^^^^^^

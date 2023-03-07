@@ -141,7 +141,8 @@ module Template = struct
 
       exported_ty_constructors : (name * int * type_constructor_sort) StringMap.t;
       exported_data_definitions : (name list * ty) NameMap.t;
-
+      exported_exceptions : (ty list) NameMap.t;
+      
       exported_type_aliases : (name list * ty) NameMap.t;
     }
 

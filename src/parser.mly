@@ -275,7 +275,8 @@ expr_leaf:
     | DATA CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetDataSeq(loc $startpos $endpos, $2, $4, $7) }
     | TYPE CONSTRUCTOR "=" ty { LetTypeSeq(loc $startpos $endpos, $2, [], $4) }
     | TYPE CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetTypeSeq(loc $startpos $endpos, $2, $4, $7) }
-    | EXCEPTION CONSTRUCTOR "(" sep_trailing1(COMMA, typed_ident) ")" "=" expr { LetExceptionSeq(loc $startpos $endpos, $2, $4, $7) }
+    | EXCEPTION CONSTRUCTOR "(" sep_trailing(COMMA, typed_ident) ")" "=" expr { LetExceptionSeq(loc $startpos $endpos, $2, $4, $7) }
+    | EXCEPTION CONSTRUCTOR "=" expr { LetExceptionSeq(loc $startpos $endpos, $2, [], $4) }
     | TRY expr WITH "{" sep_trailing(SEMI+, try_branch) "}" { Try(loc $startpos $endpos, $2, $5) }
     | RAISE expr { Raise(loc $startpos $endpos, $2) }
     | REF expr { MakeRef(loc $startpos $endpos, $2) }

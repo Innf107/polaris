@@ -518,7 +518,6 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
 *)
 
 
-(* The checking judgement for patterns doesn't actually do anything interesting at the moment. *)
 and check_pattern : local_env -> bool -> pattern -> ty -> (local_env -> local_env) * Typed.pattern =
   fun env allow_polytype pattern expected_ty ->
     trace_tc (lazy (level_prefix env ^ "checking pattern '" ^ pretty_pattern pattern ^ "' : " ^ pretty_type expected_ty));
@@ -959,7 +958,24 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       ( Ty.unit
       , Assign (loc, ref_expr, expr)
       )
-    | Try _ -> todo __LOC__
+    | Try (loc, try_expr, handlers) -> 
+      let result_type, try_expr = infer env try_expr in
+
+      let check_handler (exception_name, patterns, body) = 
+        match NameMap.find_opt exception_name env.exception_definitions with
+        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound exception in type checker: " ^  Name.pretty exception_name)
+        | Some pattern_types ->
+          match Base.List.zip patterns pattern_types with
+          | Unequal_lengths -> panic __LOC__ (Loc.pretty loc ^ ": ")
+          | Ok patterns_with_types ->
+            let env_transformers, patterns = List.split (List.map (fun (pattern, ty) -> check_pattern env true pattern ty) patterns_with_types) in
+            let body = check (Util.compose env_transformers env) result_type body in
+            (exception_name, patterns, body)
+      in
+
+      let handlers = List.map check_handler handlers in
+
+      result_type, Try(loc, try_expr, handlers)
     | Raise(loc, expr) ->
       let expr = check env Exception expr in
       let result_type = fresh_unif env in
@@ -1119,7 +1135,24 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let expr = check env inner_type expr in
       Assign(loc, ref_expr, expr)
     | Assign _, _ -> defer_to_inference ()
-    | Try _, _ -> todo __LOC__
+    | Try (loc, try_expr, handlers), expected_ty ->
+      let try_expr = check env expected_ty try_expr in
+
+      let check_handler (exception_name, patterns, body) = 
+        match NameMap.find_opt exception_name env.exception_definitions with
+        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound exception in type checker: " ^  Name.pretty exception_name)
+        | Some pattern_types ->
+          match Base.List.zip patterns pattern_types with
+          | Unequal_lengths -> panic __LOC__ (Loc.pretty loc ^ ": ")
+          | Ok patterns_with_types ->
+            let env_transformers, patterns = List.split (List.map (fun (pattern, ty) -> check_pattern env true pattern ty) patterns_with_types) in
+            let body = check (Util.compose env_transformers env) expected_ty body in
+            (exception_name, patterns, body)
+      in
+
+      let handlers = List.map check_handler handlers in
+
+      Try(loc, try_expr, handlers)
     (* Raise returns something of type forall a. a, so we can safely ignore the type it is checked against *)
     | Raise (loc, expr), _ ->
       let expr = check env Exception expr in

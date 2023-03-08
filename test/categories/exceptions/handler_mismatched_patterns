@@ -1,0 +1,7 @@
+
+exception E(x : Int, y : String) = "EEEEEE"
+
+try 5 with {
+    E(x) -> print("Uh oh")
+}
+

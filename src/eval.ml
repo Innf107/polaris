@@ -242,6 +242,19 @@ let match_pat pat scrut locs =
   | None -> raise (EvalError (NonExhaustiveMatch (scrut, locs)))
   | Some trans -> trans
 
+let rec match_patterns_opt patterns scrutinees =
+  match patterns, scrutinees with
+  | [], [] -> Some (Fun.id)
+  | [], _ | _, [] -> panic __LOC__ ("match_patterns_opt: Mismatched pattern / scrutinee count at runtime")
+  | pattern :: patterns, scrutinee :: scrutinees ->
+    match match_pat_opt pattern scrutinee with
+    | None -> None
+    | Some env_trans -> match match_patterns_opt patterns scrutinees with
+      | None -> None
+      | Some remaining_env_trans ->
+        (* TODO: Order? *)
+        Some (env_trans << remaining_env_trans)
+
 let rec match_params patterns arg_vals locs = match patterns, arg_vals with
 | [], [] -> fun x -> x
 | [], _ | _ , [] -> 
@@ -609,7 +622,27 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
       unitV
     | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to assign to non-reference at runtime")
     end
-  | Try _ -> todo __LOC__
+  | Try (loc, try_expr, handlers) -> 
+    begin try
+      eval_expr env try_expr
+    with
+    | EvalError (PolarisException (exception_name, arguments, call_trace, lazy_message)) ->
+      let rec go = function
+        | (handled_name, patterns, body) :: handlers 
+          when Name.equal exception_name handled_name -> 
+            begin match match_patterns_opt patterns (List.map snd arguments) with
+            | Some env_trans ->
+              eval_expr (env_trans env) body
+            (* This handler did not match *)
+            | None -> go handlers
+            end
+        | _ :: handlers -> go handlers
+        | [] -> 
+          (* No handler matched so we rethrow the exception *)
+          raise_notrace (EvalError (PolarisException (exception_name, arguments, call_trace, lazy_message)))
+      in
+      go handlers
+    end
   | Raise (loc, expr) -> 
     begin match eval_expr env expr with
     | ExceptionV (name, arguments, (message_env, message_expr)) -> 
@@ -620,7 +653,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
         | value -> panic __LOC__ ("Exception message returned non-string: " ^ Value.pretty value)
         | exception (EvalError error) -> todo __LOC__
       end in
-      raise (EvalError (PolarisException (name, arguments, loc :: env.call_trace, message)))
+      raise_notrace (EvalError (PolarisException (name, arguments, loc :: env.call_trace, message)))
     | value -> panic __LOC__ ("Trying to raise non-exception at runtime: " ^ Value.pretty value)
     end
 

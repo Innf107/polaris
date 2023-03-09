@@ -798,7 +798,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let expr = check env Exception expr in
       let result_type = fresh_unif () in
       ( result_type
-      , expr
+      , Raise(loc, expr)
       )
 
 
@@ -815,7 +815,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
     match expr, expected_ty with
     | Var _, _ -> defer_to_inference ()
     | DataConstructor _, _ -> defer_to_inference ()
-    | ExceptionConstructor _, _ -> todo __LOC__
+    | ExceptionConstructor _, _ -> defer_to_inference ()
     (* Variant constructors would be a bit complicated to check directly
        and we wouldn't gain much, so we just defer to inference. *)
     | VariantConstructor _, _ -> defer_to_inference ()

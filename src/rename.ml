@@ -494,13 +494,20 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
     | Try(loc, try_expr, handlers) ->
         let try_expr = rename_expr exports scope try_expr in
 
-        let rename_handler (exception_name, param_patterns, expr) = 
+        let rename_handler (exception_name, param_patterns, as_name_opt, expr) = 
             match RenameScope.lookup_data scope loc exception_name with
             | (name, NewtypeConSort) -> raise (RenameError (NonExceptionInTry(name, loc)))
             | (exception_name, ExceptionSort) -> 
                 let param_patterns, scope_transformer, _type_transformer = rename_patterns scope param_patterns in
+                let as_name_opt, scope_transformer = match as_name_opt with
+                | None -> None, scope_transformer
+                | Some name ->
+                    let new_name = fresh_var name in
+                    Some new_name, insert_var name new_name << scope_transformer
+                in
+
                 let expr = rename_expr exports (scope_transformer scope) expr in
-                (exception_name, param_patterns, expr)
+                (exception_name, param_patterns, as_name_opt, expr)
         in
 
         let handlers = List.map rename_handler handlers in

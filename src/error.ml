@@ -33,6 +33,13 @@ let pretty_call_trace (locs : loc list) =
   | _ -> "Call trace:"
         ^ "\n    " ^ String.concat "\n    " (List.map Loc.pretty locs)    
 
+let pretty_reraised (locations : loc list) =
+  match locations with
+  | [] -> ""
+  | _ -> "\nReraised at:"
+        (* Reraise locations are accumulated in reverse so we need to use rev_map here *)
+        ^ "\n    " ^ String.concat "\n    " (List.rev_map Loc.pretty locations)
+
 let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a = 
   fun text_style print_fun -> function
   | Panic msg -> print_fun None ("PANIC! The 'impossible' happened (This is a bug, please report it!):\n" ^ msg)
@@ -72,10 +79,19 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       print_fun (Some loc) ("Invalid non-exception data constructor " ^ text_style.identifier (Name.pretty name) ^ " in an exception handler")  
     end
   | EvalError error -> begin match error with
-    | PolarisException (name, arguments, loc::locs, message_lazy) ->
+    | PolarisException (name, arguments, trace, message_lazy) ->
+      let (loc, locs, reraised) = match trace with
+      | NotYetRaised -> Util.panic __LOC__ "Global handler caught ostensibly unraised exception"
+      | RaisedPreviously {
+          original_trace = loc :: locs;
+          reraised
+        } -> (loc, locs, reraised)
+      | RaisedPreviously _ -> Util.panic __LOC__ "Polaris exception did not carry original trace locations"
+      in
       print_fun (Some loc) (text_style.color Red "Exception" ^ ": " ^ Lazy.force message_lazy
       ^ "\n    Caused by " ^ text_style.identifier (Name.pretty name)
       ^ "\n" ^ pretty_call_trace locs
+      ^ pretty_reraised reraised
       )
     | PrimOpArgumentError (primop_name, vals, msg, loc::locs) -> 
       print_fun (Some loc) ("Invalid arguments to builtin function '" ^ primop_name ^ "': " ^ msg ^ "\n"

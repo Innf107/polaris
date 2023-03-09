@@ -55,10 +55,17 @@ and value =
   | DataConV of name * value
   (* Data constructors can be used like functions *)
   | PartialDataConV of name
-  | PartialExceptionV of name * name list * (eval_env * expr)
-  | ExceptionV of name * (name * value) list * (eval_env * expr)
+  | PartialExceptionV of name * name list * eval_env * expr
+  | ExceptionV of name * (name * value) list * exception_trace * string Lazy.t
   | VariantConstructorV of string * value list
   | RefV of value ref
+
+and exception_trace = 
+  | NotYetRaised
+  | RaisedPreviously of {
+    original_trace : loc list;
+    reraised : loc list;
+  }
 
 let unitV = RecordV (RecordVImpl.empty)
 let isUnitV = function
@@ -66,7 +73,7 @@ let isUnitV = function
   | _ -> false
 
 type eval_error =
-  | PolarisException of name * (name * value) list * loc list * string Lazy.t
+  | PolarisException of name * (name * value) list * exception_trace * string Lazy.t
   | IndexOutOfRange of value list * int * loc list
 
   | RuntimeError of string * loc list
@@ -115,9 +122,9 @@ module Value = struct
       "<constructor: " ^ Name.pretty constructor_name ^ ">"
     | VariantConstructorV(constructor_name, args) ->
       "<" ^ constructor_name ^ "(" ^ String.concat ", " (List.map pretty args) ^ ")>"
-    | PartialExceptionV(name, parameter_names, _message_closure) -> 
+    | PartialExceptionV(name, parameter_names, _message_env, _message_expr) -> 
       "<exception constructor: " ^ Name.pretty name ^ "(" ^ String.concat ", " (List.map Name.pretty parameter_names) ^ ")>"
-    | ExceptionV(exception_name, args, _message_closure) ->
+    | ExceptionV(exception_name, args, _call_trace, _message_closure) ->
       Name.pretty exception_name ^ "(" ^ String.concat ", " (List.map (fun (name, value) -> Name.pretty name ^ " = " ^ pretty value) args) ^ ")"
     | RefV(value) -> "<ref: " ^ pretty !value ^ ">"
 
@@ -294,7 +301,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
   | ExceptionConstructor (loc, name) -> 
     begin match NameMap.find_opt name env.exceptions with
     | Some (parameter_names, env, message_expr) -> 
-      PartialExceptionV(name, parameter_names, (env, message_expr))
+      PartialExceptionV(name, parameter_names, env, message_expr)
     | None -> panic __LOC__ (Loc.pretty loc ^ ": Exception constructor not found at runtime: " ^ Name.pretty name)
     end
   | VariantConstructor (loc, name, args) ->
@@ -626,34 +633,42 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     begin try
       eval_expr env try_expr
     with
-    | EvalError (PolarisException (exception_name, arguments, call_trace, lazy_message)) ->
+    | EvalError (PolarisException (exception_name, arguments, trace, lazy_message)) ->
       let rec go = function
-        | (handled_name, patterns, body) :: handlers 
+        | (handled_name, patterns, as_name_opt, body) :: handlers 
           when Name.equal exception_name handled_name -> 
             begin match match_patterns_opt patterns (List.map snd arguments) with
+            (* This one matched! *)
             | Some env_trans ->
-              eval_expr (env_trans env) body
+              begin match as_name_opt with
+              | None -> eval_expr (env_trans env) body
+              | Some name ->
+                let exception_value = (ExceptionV(exception_name, arguments, trace, lazy_message)) in
+                eval_expr (insert_var name exception_value (env_trans env)) body
+              end
             (* This handler did not match *)
             | None -> go handlers
             end
         | _ :: handlers -> go handlers
         | [] -> 
           (* No handler matched so we rethrow the exception *)
-          raise_notrace (EvalError (PolarisException (exception_name, arguments, call_trace, lazy_message)))
+          raise_notrace (EvalError (PolarisException (exception_name, arguments, trace, lazy_message)))
       in
       go handlers
     end
   | Raise (loc, expr) -> 
     begin match eval_expr env expr with
-    | ExceptionV (name, arguments, (message_env, message_expr)) -> 
-      let message = lazy begin 
-        let message_env = List.fold_right (fun (param, value) env -> insert_var param value env) arguments message_env in
-        match eval_expr message_env message_expr with
-        | StringV message -> message
-        | value -> panic __LOC__ ("Exception message returned non-string: " ^ Value.pretty value)
-        | exception (EvalError error) -> todo __LOC__
-      end in
-      raise_notrace (EvalError (PolarisException (name, arguments, loc :: env.call_trace, message)))
+    | ExceptionV (name, arguments, trace, message) -> 
+      let trace = match trace with
+      | NotYetRaised -> RaisedPreviously {
+          original_trace = loc :: env.call_trace;
+          reraised = []
+        }
+      | RaisedPreviously previous -> RaisedPreviously { 
+          previous with reraised = loc :: previous.reraised 
+        }
+      in
+      raise_notrace (EvalError (PolarisException (name, arguments, trace, message)))
     | value -> panic __LOC__ ("Trying to raise non-exception at runtime: " ^ Value.pretty value)
     end
 
@@ -671,9 +686,16 @@ and eval_app env loc fun_v arg_vals =
     | [x] -> DataConV(constructor_name, x)
     | _ -> panic __LOC__ ("Invalid number of arguments for data constructor '" ^ Name.pretty constructor_name ^ "': [" ^ String.concat ", " (List.map Value.pretty arg_vals) ^ "]")
     end
-  | PartialExceptionV (exception_name, parameter_names, message_closure) ->
+  | PartialExceptionV (exception_name, parameter_names, message_env, message_expr) ->
     begin match Base.List.zip parameter_names arg_vals with
-    | Ok arguments -> ExceptionV (exception_name, arguments, message_closure)
+    | Ok arguments -> 
+      let message = lazy begin
+        let updated_env = List.fold_right (fun (param, value) env -> insert_var param value env) arguments message_env in
+        match eval_expr updated_env message_expr with
+        | StringV exception_message -> exception_message
+        | _ -> panic __LOC__ (Loc.pretty loc ^ ": Exception message evaluated to non-string at runtime")
+      end in
+      ExceptionV (exception_name, arguments, NotYetRaised, message)
     | Unequal_lengths -> todo __LOC__
     end
   | PrimOpV prim_name ->
@@ -967,6 +989,10 @@ and eval_primop env op args loc =
               | [NumV x; NumV y] ->
                 NumV (float_of_int (int_of_float x mod int_of_float y))
               | _ -> raise (EvalError (PrimOpArgumentError("mod", args, "Expected two integers", loc :: env.call_trace)))
+              end
+  | "exceptionMessage" -> begin match args with
+              | [ExceptionV (_, _, _, message)] -> StringV (Lazy.force message)
+              | _ -> panic __LOC__ (Loc.pretty loc ^ ": exceptionMessage: Non-exception passed at runtime")
               end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 

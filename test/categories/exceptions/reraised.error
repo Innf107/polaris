@@ -1,0 +1,12 @@
+test/categories/exceptions/reraised.pls:5:1-5:27: ERROR:
+Exception: PANIC! AAAAA
+    Caused by 'Panic'
+Call trace:
+    test/categories/exceptions/reraised.pls:9:9-9:26
+    test/categories/exceptions/reraised.pls:14:5-14:15
+Reraised at:
+    test/categories/exceptions/reraised.pls:10:28-10:37
+    test/categories/exceptions/reraised.pls:15:24-15:33
+  | 
+5 |     raise (Panic("AAAAA"))
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^

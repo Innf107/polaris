@@ -290,8 +290,11 @@ match_branch:
     pattern "->" expr { ($1, $3) } 
 
 try_branch:
-    | CONSTRUCTOR "->" expr { ($1, [], $3) }
-    | CONSTRUCTOR "(" sep_trailing(COMMA, pattern) ")" "->" expr { ($1, $3, $6) }
+    | CONSTRUCTOR as_name? "->" expr { ($1, [], $2, $4) }
+    | CONSTRUCTOR "(" sep_trailing(COMMA, pattern) ")" as_name? "->" expr { ($1, $3, $5, $7) }
+
+as_name:
+    | AS IDENT { $2 }
 
 assign:
     IDENT "=" expr SEMI* { ($1, $3) }

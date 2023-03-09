@@ -32,6 +32,7 @@ let primops = PrimOpMap.of_seq (List.to_seq [
   "ensure", [String] --> Ty.unit;
   "status", [] --> Number;
   "mod", [Number; Number] --> Number;
+  "exceptionMessage", [Exception] --> String;
 ])
 
 let is_primop name = PrimOpMap.mem name primops

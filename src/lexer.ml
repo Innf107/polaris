@@ -173,6 +173,7 @@ let ident_token = let open Parser in function
 | "false" -> FALSE
 | "async" -> ASYNC
 | "await" -> AWAIT
+| "sync"  -> SYNC
 | "match" -> MATCH
 | "usage" -> USAGE
 | "description" -> DESCRIPTION

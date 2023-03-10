@@ -60,7 +60,7 @@ type expr_or_fun_def_ext =
 %token NOT
 %token PIPE "|"
 %token IF THEN ELSE
-%token ASYNC AWAIT
+%token ASYNC AWAIT SYNC
 %token MATCH
 %token USAGE DESCRIPTION OPTIONS AS
 %token WITH EXTEND
@@ -268,6 +268,7 @@ expr_leaf:
     | IF expr SEMI* THEN SEMI* expr SEMI* ELSE SEMI* expr { If(loc $startpos $endpos, $2, $6, $10) }
     | ASYNC expr1 { Async(loc $startpos $endpos, $2) }
     | AWAIT expr1 { Await(loc $startpos $endpos, $2) }
+    | SYNC expr1  { Sync(loc $startpos $endpos, $2) }
     | MATCH expr "{" sep_trailing(SEMI+, match_branch) "}" { Match(loc $startpos $endpos, $2, $4) }
     | MODULE CONSTRUCTOR "=" mod_expr { LetModuleSeq(loc $startpos $endpos, $2, $4) }
     | DATA CONSTRUCTOR "=" ty { LetDataSeq(loc $startpos $endpos, $2, [], $4) }

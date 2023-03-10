@@ -99,3 +99,14 @@ let rec split3 = function
       (x :: xs, y :: ys, z :: zs)
 
 let compose funs = List.fold_right (fun t r x -> t (r x)) funs (fun x -> x)
+
+let with_mutex mutex cont =
+  Recursive_mutex.lock mutex;
+  Base.Exn.protectx ~f:(fun _ -> cont ()) mutex ~finally:Recursive_mutex.unlock
+
+(** Block until a given mutex is unlocked.
+    Unlike Mutex.lock, this does not lock the mutex and so does not give any
+    actual guarantees about mutual exclusion *)
+let block_until_ready mutex =
+  Recursive_mutex.lock mutex;
+  Recursive_mutex.unlock mutex

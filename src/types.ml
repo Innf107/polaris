@@ -718,6 +718,11 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       ( expr_ty
       , Await (loc, expr)
       )
+    | Sync(loc, expr) ->
+      let expr_ty, expr = infer env expr in
+      ( expr_ty
+      , Sync(loc, expr)
+      )
     | Match (loc, scrut, body) ->
       (* TODO: Do exhaustiveness checking. *)
       let scrut_ty, scrut = infer env scrut in
@@ -882,6 +887,9 @@ and check : local_env -> ty -> expr -> Typed.expr =
     | Await (loc, expr), expected_ty ->
       let expr = check env (Promise expected_ty) expr in
       Await (loc, expr)
+    | Sync(loc, expr), expected_ty ->
+      let expr = check env expected_ty expr in
+      Sync(loc, expr)
     | Match (loc, scrut, body), expected_ty ->
       (* TODO: Do exhaustiveness checking. *)
       let scrut_ty, scrut = infer env scrut in

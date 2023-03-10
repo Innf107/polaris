@@ -50,6 +50,7 @@ let pretty_token = function
 | ELSE -> "ELSE"
 | ASYNC -> "ASYNC" 
 | AWAIT -> "AWAIT"
+| SYNC -> "SYNC"
 | MATCH -> "MATCH"
 | EOF -> "EOF"
 | USAGE -> "USAGE"

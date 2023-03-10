@@ -102,7 +102,7 @@ let run_env : driver_options
   res, new_env, new_scope, new_type_env
 
 let run_eval (options : driver_options) (lexbuf : Lexing.lexbuf) : value =
-  let res, _, _, _ = run_env options lexbuf (Eval.empty_eval_env options.argv) RenameScope.empty Types.empty_env in
+  let res, _, _, _ = run_env options lexbuf (Eval.new_eval_env options.argv) RenameScope.empty Types.empty_env in
   res
 
 let run (options : driver_options) (lexbuf : Lexing.lexbuf) : unit =

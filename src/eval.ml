@@ -17,6 +17,7 @@ type eval_env = {
 ; call_trace : loc list
 ; last_status : int ref
 ; module_vars : runtime_module VarMap.t
+; mutex : Recursive_mutex.t
 }
 
 and runtime_module = {
@@ -245,7 +246,7 @@ let rec match_params patterns arg_vals locs = match patterns, arg_vals with
 let rec eval_mod_expr env = function
 | Import ((loc, _, body), _) -> 
     (* TODO This ignores the header for now. I hope this is fine? *)
-    let _, module_env = eval_seq_state (empty_eval_env env.argv) body in
+    let _, module_env = eval_seq_state (new_eval_env env.argv) body in
     { modules = module_env.module_vars; 
       mod_vars = module_env.vars;
     }
@@ -522,6 +523,9 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
 
   | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
     let progs = progs_of_exprs env exprs in
+
+    Util.block_until_ready env.mutex;
+
     let in_chan, pid = Pipe.compose_in (Some (full_env_vars env)) progs in
     let result = StringV (trim_output (In_channel.input_all in_chan)) in
     env.last_status := Pipe.wait_to_status pid;
@@ -532,6 +536,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
 
     let progs = progs_of_exprs env exprs in
 
+    Util.block_until_ready env.mutex;
     let in_chan, pid = Pipe.compose_in_out (Some (full_env_vars env)) progs (fun out_chan ->
         List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
       ) in
@@ -558,6 +563,10 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     | PromiseV p -> 
       Promise.await p
     | value -> panic __LOC__ (Loc.pretty loc ^ ": Trying to await non-promise at runtime: " ^ Value.pretty value)
+    end
+  | Sync (loc, expr) ->
+    Util.with_mutex env.mutex begin fun () -> 
+      eval_expr env expr
     end
   | Match (loc, scrut, branches) ->
     let scrut_val = eval_expr env scrut in
@@ -589,8 +598,10 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     let ref_val = eval_expr env ref_expr in
     let value = eval_expr env expr in
     begin match ref_val with
-    | RefV(reference) -> 
-      reference := value;
+    | RefV(reference) ->
+      Util.with_mutex env.mutex (fun () -> 
+        reference := value;
+      );
       unitV
     | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to assign to non-reference at runtime")
     end
@@ -648,6 +659,7 @@ and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr,
   (* Pipes without value inputs also inherit the parents stdin *)
   | Pipe (loc, ((ProgCall _ :: _) as prog_exprs)) :: exprs -> 
     let progs = progs_of_exprs env prog_exprs in
+
     let pid = Pipe.compose (Some (full_env_vars env)) progs in
     env.last_status := Pipe.wait_to_status pid;
     eval_seq_cont env exprs cont
@@ -656,6 +668,8 @@ and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr,
     
     let progs = progs_of_exprs env prog_exprs in
     
+    Util.block_until_ready env.mutex;
+
     let pid = Pipe.compose_out_with (Some (full_env_vars env)) progs (fun out_chan -> 
         List.iter (fun line -> Out_channel.output_string out_chan (line ^ "\n")) output_lines
       ) in
@@ -715,7 +729,9 @@ and eval_primop env op args loc =
     | StringV str -> str
     | x -> Value.pretty x
     in
-    print_endline (String.concat " " (List.map pretty_print args));
+    Util.with_mutex env.mutex (fun () -> 
+      print_endline (String.concat " " (List.map pretty_print args))
+    );
     unitV
   | "head" -> begin match args with
               | [ListV (head::tail)] -> head
@@ -809,7 +825,7 @@ and eval_primop env op args loc =
                 end
   | "writeFile" -> begin match args with
                 | [StringV path; StringV content] ->
-                  
+                  Util.block_until_ready env.mutex;
                   let channel = open_out path in
                   Out_channel.output_string channel content;
                   Out_channel.close channel;
@@ -837,13 +853,16 @@ and eval_primop env op args loc =
                   | [StringV prompt] -> prompt
                   | _ -> raise (EvalError (PrimOpArgumentError ("readLine", args, "Expected no arguments or a single string", loc :: env.call_trace)))
                   in
+                  Util.block_until_ready env.mutex;
                   begin match Bestline.bestline prompt with
                   | Some input -> VariantConstructorV ("Just", [StringV input])
                   | None -> VariantConstructorV ("Nothing", [])
                   end
   | "chdir" ->  begin match args with
                 | [StringV path_str] -> 
-                  Sys.chdir path_str;
+                  Util.with_mutex env.mutex (fun () -> 
+                    Sys.chdir path_str;
+                  );
                   unitV
                 | _ -> raise (EvalError (PrimOpArgumentError ("chdir", args, "Expected a strings", loc :: env.call_trace)))
                 end
@@ -907,16 +926,17 @@ and progs_of_exprs env = function
     panic __LOC__ (Loc.pretty (get_loc expr) ^ ": Non-program call in pipe")
   | [] -> []
 
-and empty_eval_env (argv: string list): eval_env = {
+and new_eval_env (argv: string list): eval_env = {
   vars = VarMap.empty;
   env_vars = EnvMap.empty;
   argv = argv;
   call_trace = [];
   last_status = ref 0;
-  module_vars = VarMap.empty
+  module_vars = VarMap.empty;
+  mutex = Recursive_mutex.create ()
 }
 
-let eval (argv : string list) (exprs : Typed.expr list) : value = eval_seq (empty_eval_env argv) exprs
+let eval (argv : string list) (exprs : Typed.expr list) : value = eval_seq (new_eval_env argv) exprs
 
 let flag_info_of_flag_def (env_ref : eval_env ref) (flag_def : Typed.flag_def): Argparse.flag_info =
   let aliases = flag_def.flags in

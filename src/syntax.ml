@@ -202,9 +202,10 @@ module Template = struct
     | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
     | EnvVar of loc * string                (* $var *)
-    (* Async / Await (colorless) *)
+    (* Async / Await *)
     | Async of loc * expr                   (* async e *)
-    | Await of loc * expr                   (* await e*)
+    | Await of loc * expr                   (* await e *)
+    | Sync of loc * expr                    (* sync e *)
     (* Pattern matching *)
     | Match of loc * expr * (pattern * expr) list
     (* Modules *)
@@ -290,6 +291,7 @@ module Template = struct
           | Pipe(_, exprs) -> fold monoid go exprs
           | Async (_, expr) -> go expr
           | Await (_, expr) -> go expr
+          | Sync (_, expr) -> go expr
           | Match(_, scrut_expr, branch_exprs) -> M.append (go scrut_expr) (fold monoid (fun (_, expr) -> go expr) branch_exprs)
           | LetModuleSeq _ -> M.empty
           | Ascription (_, expr, _) -> go expr
@@ -461,6 +463,7 @@ module Template = struct
     | EnvVar (_, x) -> "$" ^ x
     | Async (_, expr) -> "async " ^ pretty expr
     | Await (_, expr) -> "await " ^ pretty expr
+    | Sync (_, expr) -> "sync " ^ pretty expr
 
     | Match(_, expr, pats) -> 
       "match " ^ pretty expr ^ " {"
@@ -488,7 +491,7 @@ module Template = struct
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _, _) | LetEnvSeq(loc, _, _) 
     | LetDataSeq (loc, _, _, _) | LetTypeSeq(loc, _, _, _) | Let(loc, _, _, _)
     | LetRec(loc, _, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
-    | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _)
+    | Async(loc, _) | Await(loc, _) | Sync(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _)
     | MakeRef(loc, _)
     -> loc
 
@@ -691,6 +694,9 @@ module Template = struct
           | Await(loc, expr) -> 
             let expr, state = self#traverse_expr state expr in
             Await(loc, expr), state
+          | Sync(loc, expr) ->
+            let expr, state = self#traverse_expr state expr in
+            Sync(loc, expr), state
           | Match (loc, scrutinee_expr, branch_exprs) ->
             let scrutinee_expr, state = self#traverse_expr state scrutinee_expr in
             let branch_exprs, state = traverse_list 

@@ -430,6 +430,8 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
         Async (loc, rename_expr exports scope expr)
     | Await (loc, expr) ->
         Await (loc, rename_expr exports scope expr)
+    | Sync (loc, expr) ->
+        Sync (loc, rename_expr exports scope expr)
     | Match (loc, expr, branches) ->
         let expr' = rename_expr exports scope expr in
         let branches' = List.map (

@@ -404,7 +404,7 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
 
     | Seq (loc, es) -> Seq (loc, rename_seq exports scope es)
 
-    | LetSeq (loc, _, _) | LetRecSeq (loc, _, _, _, _) | LetEnvSeq (loc, _, _) 
+    | LetSeq (loc, _, _) | LetRecSeq ({ main = loc; _ }, _, _, _, _) | LetEnvSeq (loc, _, _) 
     (* TODO: Improve this error message *)
     | LetModuleSeq (loc, _, _) | LetDataSeq(loc, _, _, _) | LetTypeSeq(loc, _, _, _) -> raise (RenameError (LetSeqInNonSeq (expr, loc)))
 
@@ -424,7 +424,7 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
         let mty', type_trans = match mty with
         | None -> None, Fun.id
         | Some ty ->
-            let ty', ty_trans = rename_type loc scope ty in
+            let ty', ty_trans = rename_type loc.main scope ty in
             Some ty', ty_trans
         in
 
@@ -487,7 +487,7 @@ and rename_seq_state (exports : (module_exports * Typed.expr list) FilePathMap.t
         let mty', type_trans = match mty with
         | None -> None, Fun.id
         | Some ty ->
-            let ty', ty_trans = rename_type loc scope ty in
+            let ty', ty_trans = rename_type loc.main scope ty in
             Some ty', ty_trans
         in
         let inner_scope = type_trans (scope_trans scope') in

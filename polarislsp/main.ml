@@ -86,16 +86,20 @@ let on_hover model_ref (hover_params : Lsp.hover_params) =
     let file_uri = hover_params.textDocument.uri in
     let file = filename_of_uri file_uri in
 
-    match Model.find_hover_entry_at ~file hover_params.position model with
-    | Some (loc, (Model.Var (var_name, ty) | Model.VarPattern (var_name, ty) | Model.ModSubscript(var_name, ty))) ->
-      `Assoc [
-        "range", Diagnostic.loc_to_json loc;
-        "contents", `Assoc [
-          "language", `String "polaris";
-          "value", `String (
-            Polaris.Syntax.Name.pretty var_name ^ " : " ^ Polaris.Syntax.Typed.pretty_type ty)
-        ]
+    let build_diagnostic loc message = `Assoc [
+      "range", Diagnostic.loc_to_json loc;
+      "contents", `Assoc [
+        "language", `String "polaris";
+        "value", `String message
       ]
+    ] in
+
+
+    match Model.find_hover_entry_at ~file hover_params.position model with
+    | Some (loc, (Model.VarLike (var_name, ty))) ->
+      build_diagnostic loc (Polaris.Syntax.Name.pretty var_name ^ " : " ^ Polaris.Syntax.Typed.pretty_type ty)
+    | Some (loc, Model.Subscript (key, ty)) ->
+      build_diagnostic loc ("." ^ key ^ " : " ^ Polaris.Syntax.Typed.pretty_type ty)
     | None -> no_response ()
 
 let () =

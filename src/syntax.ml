@@ -120,7 +120,7 @@ module Template = struct
   end
 
   type pattern =
-    | VarPat of var_pat_ext * name
+    | VarPat of VarPatExt.t * name
     | AsPat of loc * pattern * name
     | ConsPat of loc * pattern * pattern
     | ListPat of loc * pattern list
@@ -153,8 +153,8 @@ module Template = struct
 
   and expr =
     (* Lambda calculus *)
-    | Var of var_ext * name                     (* x *)
-    | DataConstructor of loc * name         (* X *)
+    | Var of VarExt.t * name                     (* x *)
+    | DataConstructor of DataConExt.t * name         (* X *)
     (* The renamer replaces these by the data constructor with the (unique)
        name from the module where it is defined. This sets mod_subscript_tycon_ext to void *)
     | ModSubscriptDataCon of mod_subscript_tycon_ext * loc * name * name (* M.X *)
@@ -172,8 +172,8 @@ module Template = struct
     | TupleLit of loc * expr list           (* (e, .., e) *)
     (* Records *)
     | RecordLit of loc * (string * expr) list  (* #{x₁: e₁, .., xₙ: eₙ}*)
-    | Subscript of loc * expr * string      (* e.x *)
-    | ModSubscript of mod_subscript_ext * name * name     (* M.x *)
+    | Subscript of SubscriptExt.t * expr * string      (* e.x *)
+    | ModSubscript of ModSubscriptExt.t * name * name     (* M.x *)
     | RecordUpdate of loc * expr * (string * expr) list (* #{r with x₁: e₁, .., xₙ: eₙ} *)
     | RecordExtension of loc * expr * (string * expr) list (* #{r extend x₁: e₁, .., xₙ: eₙ} *)
 
@@ -190,13 +190,13 @@ module Template = struct
     (* Sequencing *)
     | Seq of loc * expr list                      (* { e₁ ; .. ; eₙ } *)
     | LetSeq of loc * pattern * expr              (* let p = e (Only valid inside `Seq` expressions) *)
-    | LetRecSeq of loc * ty option * name * pattern list * expr  (* [let f : ty]; let f(x, .., x) = e*)
+    | LetRecSeq of LetRecExt.t * ty option * name * pattern list * expr  (* [let f : ty]; let f(x, .., x) = e*)
     | LetEnvSeq of loc * string * expr            (* let $x = e *)
     | LetDataSeq of loc * name * name list * ty   (* data X(x, .., x) = t *)
     | LetTypeSeq of loc * name * name list * ty   (* type X(x, .., x) = t *)
     (* local definitions *)
     | Let of loc * pattern * expr * expr              (* let p = e1 in e2 (valid everywhere) *)
-    | LetRec of loc * ty option * name * pattern list * expr * expr  (* [let f : ty]; let f(x, .., x) = e*)
+    | LetRec of LetRecExt.t * ty option * name * pattern list * expr * expr  (* [let f : ty]; let f(x, .., x) = e*)
     | LetEnv of loc * string * expr * expr            (* let $x = e in e *)
     (* Scripting capabilities *)
     | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
@@ -478,22 +478,26 @@ module Template = struct
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
 
   let get_loc = function
-    | Var (ext, _) -> var_ext_loc ext
-    | ModSubscript (ext, _, _) -> mod_subscript_ext_loc ext
-    | DataConstructor(loc, _) | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
+    | Var (ext, _) -> VarExt.loc ext
+    | DataConstructor(ext, _) -> ModSubscriptExt.loc ext 
+    | Subscript(ext, _, _) -> SubscriptExt.loc ext
+    | ModSubscript (ext, _, _) -> ModSubscriptExt.loc ext
+    | LetRec(ext, _, _, _, _, _)
+    | LetRecSeq(ext, _, _, _, _) -> LetRecExt.loc ext
+    | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
-    | Subscript(loc, _, _) | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
+    | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
     | BinOp(loc, _, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)
-    | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetRecSeq(loc, _, _, _, _) | LetEnvSeq(loc, _, _) 
+    | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetEnvSeq(loc, _, _) 
     | LetDataSeq (loc, _, _, _) | LetTypeSeq(loc, _, _, _) | Let(loc, _, _, _)
-    | LetRec(loc, _, _, _, _, _) | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
+    | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _)
     | MakeRef(loc, _)
     -> loc
 
   let get_pattern_loc = function
-    | VarPat (ext, _) -> var_pat_ext_loc ext
+    | VarPat (ext, _) -> VarPatExt.loc ext
     | AsPat(loc, _, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
     | NumPat (loc, _) | StringPat(loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _) | DataPat (loc, _, _)
     | VariantPat(loc, _, _)
@@ -546,7 +550,7 @@ module Template = struct
             expression, state
           (* Recursive boilerplate *)
           | Var (ext, name) ->
-            let ext, state = traverse_var_ext_ty state self#traverse_type ext in
+            let ext, state = VarExt.traverse_ty state self#traverse_type ext in
             let name, state = self#traverse_name state name in
             Var (ext, name), state
           | DataConstructor (loc, name) ->
@@ -966,6 +970,38 @@ module FullTypeDefinition = MakeTy(struct
   type mod_subscript_tycon_ext = void
 end)
 
+module LocOnly = struct 
+  type t = loc
+  let loc loc = loc
+  let traverse_ty state _ loc = loc, state
+end
+
+module SubLocation = struct
+  type t = { main : loc; subloc : loc }
+  let loc loc = loc.main
+
+  let traverse_ty state _ loc = loc, state
+end
+
+module WithType = struct 
+  type t = loc * FullTypeDefinition.ty
+
+  let loc (loc, _) = loc
+  let traverse_ty state f (loc, ty) = 
+    let ty, state = f state ty in
+    (loc, ty), state
+end
+
+module SubLocationWithType = struct
+  type t = SubLocation.t * FullTypeDefinition.ty
+  let loc (({ main; _ } : SubLocation.t), _) = main
+
+  let traverse_ty state f (loc, ty) =
+    let ty, state = f state ty in
+    (loc, ty), state
+end
+
+
 module Parsed = Template (struct
   module TypeDefinition = ParsedTypeDefinition
 
@@ -978,17 +1014,19 @@ module Parsed = Template (struct
 
   type mod_subscript_tycon_ext = unit
 
-  type var_ext = loc
-  let var_ext_loc x = x
-  let traverse_var_ext_ty state _ loc = loc, state
 
-  type var_pat_ext = loc
-  let var_pat_ext_loc loc = loc
-  let traverse_var_pat_ext_ty state _ loc = loc, state
+  module VarExt = LocOnly
 
-  type mod_subscript_ext = loc
-  let mod_subscript_ext_loc loc = loc
-  let traverse_mod_subscript_ext_ty state _ loc = loc, state
+  module VarPatExt = LocOnly
+
+  module DataConExt = LocOnly
+
+  module SubscriptExt = SubLocation
+
+  module ModSubscriptExt = LocOnly
+
+  module LetRecExt = SubLocation
+
 end) [@@ttg_pass]
 
 
@@ -1004,23 +1042,18 @@ module Typed = Template (struct
 
   type mod_subscript_tycon_ext = void
 
-  type var_ext = loc * ty
-  let var_ext_loc (loc, _) = loc
-  let traverse_var_ext_ty state f (loc, ty) =
-    let ty, state = f state ty in
-    (loc, ty), state
+  module VarExt = WithType
 
-  type var_pat_ext = loc * ty
-  let var_pat_ext_loc (loc, _) = loc
-  let traverse_var_pat_ext_ty state f (loc, ty) =
-    let ty, state = f state ty in
-    (loc, ty), state
+  module VarPatExt = WithType
 
-  type mod_subscript_ext = loc * ty
-  let mod_subscript_ext_loc (loc, _) = loc
-  let traverse_mod_subscript_ext_ty state f (loc, ty) =
-    let ty, state = f state ty in
-    (loc, ty), state  
+  module DataConExt = WithType
+
+  module SubscriptExt = SubLocationWithType
+
+  module ModSubscriptExt = WithType
+
+  module LetRecExt = SubLocationWithType
+
 end) [@@ttg_pass]
 
 type module_exports = Typed.module_exports
@@ -1039,18 +1072,18 @@ module Renamed = Template (struct
 
   type mod_subscript_tycon_ext = void
 
-  type var_ext = loc
 
-  let var_ext_loc loc = loc
-  let traverse_var_ext_ty state _ loc = loc, state
+  module VarExt = LocOnly
 
-  type var_pat_ext = loc
-  let var_pat_ext_loc loc = loc
-  let traverse_var_pat_ext_ty state _ loc = loc, state
+  module VarPatExt = LocOnly
 
-  type mod_subscript_ext = loc
-  let mod_subscript_ext_loc loc = loc
-  let traverse_mod_subscript_ext_ty state _ loc = loc, state
+  module DataConExt = LocOnly
+
+  module SubscriptExt = SubLocation
+
+  module ModSubscriptExt = LocOnly
+
+  module LetRecExt = SubLocation
 end) [@@ttg_pass]
 
 

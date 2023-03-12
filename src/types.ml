@@ -468,7 +468,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
             (Fun([ty], TyConstructor(data_name, List.map (fun x -> TyVar(x)) params)))
         in
         ( instantiate data_constructor_type
-        , DataConstructor(loc, data_name)
+        , DataConstructor((loc, data_constructor_type), data_name)
         )
       | None -> panic __LOC__ ("Unbound data constructor in type checker: '" ^ Name.pretty data_name ^ "'")
     end
@@ -534,7 +534,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let (u, u_name) = fresh_unif_raw () in
       let expr = check env (RecordUnif ([|name, val_ty|], (u, u_name))) expr in
       ( val_ty
-      , Subscript (loc, expr, name)
+      , Subscript ((loc, val_ty), expr, name)
       )
     | ModSubscript (loc, mod_name, key_name) ->
       begin match NameMap.find_opt mod_name env.module_var_contents with
@@ -658,7 +658,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let env_trans, typed_seq_expr = check_seq_expr env `Check (LetRecSeq(loc, mty, fun_name, pats, body)) in
       let (loc, mty, fun_name, pats, body) = match typed_seq_expr with
       | LetRecSeq(loc, mty, fun_name, pats, body) -> loc, mty, fun_name, pats, body
-      | _ -> panic __LOC__ (Loc.pretty loc ^ ": check_seq_expr returned non-LetRecSeq expression when passed one")
+      | _ -> panic __LOC__ (Loc.pretty loc.main ^ ": check_seq_expr returned non-LetRecSeq expression when passed one")
       in 
       
       let result_type, rest = infer (env_trans env) rest in
@@ -814,7 +814,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let ext_field = fresh_unif_raw () in
       let record_ty = RecordUnif ([|field, expected_ty|], ext_field) in
       let expr = check env record_ty expr in
-      Subscript (loc, expr, field)
+      Subscript ((loc, expected_ty), expr, field)
     | ModSubscript _, _ -> defer_to_inference ()
     (* TODO: I'm not sure if we can do this more intelligently / efficiently in check mode *)
     | RecordUpdate _, _ -> defer_to_inference ()
@@ -863,7 +863,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let env_trans, expr = check_seq_expr env `Check (LetRecSeq(loc, mty, fun_name, pats, body)) in
       let loc, mty, fun_name, pats, body = match expr with
       | LetRecSeq (loc, mty, fun_name, pats, body) -> loc, mty, fun_name, pats, body
-      | _ -> panic __LOC__ (Loc.pretty loc ^ ": check_seq_expr returned non-LetRec expression when passed one")
+      | _ -> panic __LOC__ (Loc.pretty loc.main ^ ": check_seq_expr returned non-LetRec expression when passed one")
       in
       
       let rest = check (env_trans env) expected_ty rest in
@@ -952,10 +952,10 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
         | Some (Fun(arg_tys, result_ty), ty_skolemizer) ->            
           let transformers, patterns = match Base.List.map2 patterns arg_tys ~f:(check_pattern env) with
           | Ok transformers_and_patterns -> List.split transformers_and_patterns
-          | Unequal_lengths -> raise (TypeError (loc, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length patterns)))
+          | Unequal_lengths -> raise (TypeError (loc.main, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length patterns)))
           in
           arg_tys, transformers, patterns, result_ty, ty_skolemizer
-        | Some (ty, _) -> raise (TypeError (loc, NonFunTypeInLetRec(fun_name, ty)))
+        | Some (ty, _) -> raise (TypeError (loc.main, NonFunTypeInLetRec(fun_name, ty)))
       in
 
 
@@ -985,7 +985,7 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
           since we need to know the functions type in its own (possibly recursive) definition*)
       let body = check inner_env result_ty body in
       ( env_trans, 
-        LetRecSeq (loc, mty, fun_name, patterns, body)
+        LetRecSeq ((loc, fun_ty), mty, fun_name, patterns, body)
       )
     | LetEnvSeq(loc, envvar, expr) ->
       (* TODO: Once typeclasses are implemented, the expr should really just have to implement

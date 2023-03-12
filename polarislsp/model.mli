@@ -12,9 +12,8 @@ type model
 
 type t = model
 
-type hover_entry = Var of name * ty
-                 | VarPattern of name * ty
-                 | ModSubscript of name * ty
+type hover_entry = VarLike of name * ty
+                 | Subscript of string * ty
 
 val build : expr list -> model
 

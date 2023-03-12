@@ -297,7 +297,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     let kv_vals = List.map (fun (k, e) -> (k, eval_expr env e)) kvs in
     RecordV (RecordVImpl.of_list kv_vals)
 
-  | Subscript (loc, map_expr, key) ->
+  | Subscript (({main=loc;_}, _), map_expr, key) ->
     begin match eval_expr env map_expr with
     | RecordV map -> 
       begin match RecordVImpl.find key map with

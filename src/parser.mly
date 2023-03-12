@@ -101,6 +101,9 @@ sep_trailing1(sep, p):
 semis(p):
     p SEMI* { $1 }
 
+ident_with_loc:
+    | IDENT { (loc $startpos $endpos, $1) }
+
 export_item:
     | IDENT { ExportVal (loc $startpos $endpos, $1) }
     | CONSTRUCTOR { ExportType (loc $startpos $endpos, $1) }
@@ -201,7 +204,7 @@ expr6:
     | expr7 { $1 }
 
 expr7:
-    | expr7 "." IDENT { Subscript(loc $startpos $endpos, $1, $3) }
+    | expr7 "." ident_with_loc { let (field_loc, field) = $3 in Subscript({main = loc $startpos $endpos; subloc=field_loc}, $1, field) }
     | CONSTRUCTOR "." IDENT { ModSubscript(loc $startpos $endpos, $1, $3) }
     | CONSTRUCTOR "." CONSTRUCTOR { ModSubscriptDataCon((), loc $startpos $endpos, $1, $3) }
     | expr7 "[" expr "]" { DynLookup(loc $startpos $endpos, $1, $3) }
@@ -236,30 +239,35 @@ expr_leaf:
     | LET pattern "=" expr { LetSeq(loc $startpos $endpos, $2, $4) }
     | LET ENVVAR "=" expr IN expr { LetEnv(loc $startpos $endpos, $2, $4, $6) }
     | LET ENVVAR "=" expr { LetEnvSeq(loc $startpos $endpos, $2, $4) }
-    | LET IDENT "(" sep_trailing(COMMA, pattern) ")" "=" expr IN expr { LetRec(loc $startpos $endpos, None, $2, $4, $7, $9) }    
+    | LET ident_with_loc "(" sep_trailing(COMMA, pattern) ")" "=" expr IN expr { let var_loc, var = $2 in LetRec({ main = loc $startpos $endpos; subloc = var_loc }, None, var, $4, $7, $9) }    
     (* Workaround to get both `let x : ty = e in e` and `let f : ty; f(x) = e in e` working *)
-    | LET IDENT ":" ty expr_or_fun_def_ext IN expr
-        {   match $5 with
+    | LET ident_with_loc ":" ty expr_or_fun_def_ext IN expr
+        {   
+            let var_loc, var = $2 in
+            match $5 with
             (* TODO: The location in the type pattern is a bit off *)
-            | ExprExt expr -> Let(loc $startpos $endpos, TypePat (loc $startpos $endpos, VarPat(loc $startpos $endpos, $2), $4), expr, $7) 
+            | ExprExt expr -> Let(loc $startpos $endpos, TypePat (loc $startpos $endpos, VarPat(var_loc, var), $4), expr, $7) 
             | FunExt(name, params, body) ->
-                if $2 <> name then
-                    raise (SpecificParseError (MismatchedLetName(loc $startpos $endpos, $2, name)))
+                if var <> name then
+                    raise (SpecificParseError (MismatchedLetName(loc $startpos $endpos,var, name)))
                 else
-                    LetRec(loc $startpos $endpos, Some $4, name, params, body, $7)    
+                    LetRec({ main = loc $startpos $endpos; subloc = var_loc }, Some $4, name, params, body, $7)    
         }
-    | LET IDENT "(" sep_trailing(COMMA, pattern) ")" "=" expr         { LetRecSeq(loc $startpos $endpos, None, $2, $4, $7) }
+    | LET ident_with_loc "(" sep_trailing(COMMA, pattern) ")" "=" expr         { let var_loc, var = $2 in LetRecSeq({main = loc $startpos $endpos; subloc = var_loc }, None, var, $4, $7) }
     
     (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)
-    | LET IDENT ":" ty expr_or_fun_def_ext
+    | LET ident_with_loc ":" ty expr_or_fun_def_ext
         {   match $5 with
             (* TODO: The location in the type pattern is a bit off *)
-            | ExprExt expr -> LetSeq(loc $startpos $endpos, TypePat (loc $startpos $endpos, VarPat(loc $startpos $endpos, $2), $4), expr) 
+            | ExprExt expr -> 
+                let var_loc, var = $2 in
+                LetSeq(loc $startpos $endpos, TypePat (loc $startpos $endpos, VarPat(var_loc, var), $4), expr) 
             | FunExt(name, params, body) ->
-                if $2 <> name then
-                    raise (SpecificParseError (MismatchedLetName(loc $startpos $endpos, $2, name)))
+                let (var_loc, var) = $2 in
+                if var <> name then
+                    raise (SpecificParseError (MismatchedLetName(loc $startpos $endpos, var, name)))
                 else
-                    LetRecSeq(loc $startpos $endpos, Some $4, name, params, body)    
+                    LetRecSeq({ main = loc $startpos $endpos; subloc = var_loc }, Some $4, name, params, body)
         }
 
     | PROGCALL expr_leaf* { ProgCall(loc $startpos $endpos, $1, $2) }

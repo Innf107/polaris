@@ -19,9 +19,8 @@ end
 module LocOverlapMap = Map.Make(LocByOverlap)
 
 
-type hover_entry = Var of name * ty
-                 | VarPattern of name * ty
-                 | ModSubscript of name * ty
+type hover_entry = VarLike of name * ty
+                 | Subscript of string * ty
 
 type model = {
   (* Since matching in the map is a little fuzzy, we need to store the exact
@@ -38,16 +37,21 @@ let build exprs =
 
     method! expr hover_entries expr =
       match expr with
-      | Typed.Var ((loc, ty), name) -> 
-        expr, Difflist.snoc hover_entries (loc, (loc, Var (name, ty)))
-      | Typed.ModSubscript ((loc, ty), _module_name, name) ->
-        expr, Difflist.snoc hover_entries (loc, (loc, ModSubscript (name, ty)))
+      | Typed.Var ((loc, ty), name) 
+      | Typed.DataConstructor ((loc, ty), name)
+      | Typed.ModSubscript ((loc, ty), _, name) ->
+        expr, Difflist.snoc hover_entries (loc, (loc, VarLike (name, ty)))
+        (* Subscripts use the location of the field, not the entire expression *)
+      | Typed.Subscript ((loc, ty), _, key) -> 
+        expr, Difflist.snoc hover_entries (loc.subloc, (loc.subloc, Subscript (key, ty)))
+      | Typed.LetRecSeq ((loc, ty), _, name, _, _) | Typed.LetRec ((loc, ty), _, name, _, _, _) ->
+        expr, Difflist.snoc hover_entries (loc.subloc, (loc.subloc, VarLike (name, ty)))
       | _ -> expr, hover_entries
 
     method! pattern hover_entries pattern =
       match pattern with
       | Typed.VarPat ((loc, ty), name) ->
-        pattern, Difflist.append hover_entries (Difflist.of_list [(loc, (loc, VarPattern (name, ty)))])
+        pattern, Difflist.append hover_entries (Difflist.of_list [(loc, (loc, VarLike (name, ty)))])
       | _ -> pattern, hover_entries
   end
   in

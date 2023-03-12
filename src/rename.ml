@@ -164,35 +164,42 @@ let rename_type loc (scope : RenameScope.t) original_type =
     let y : a = ...
     ```
  *)
-let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in function
+let rec rename_pattern (or_bound_variables : name RenameMap.t) (scope : RenameScope.t) = 
+    let open RenameScope in
+    function
     | Parsed.VarPat (loc, var) ->
-        let var' = fresh_var var in
+        (* If a variable has been bound in a previous branch of an or-pattern, we resolve it to that one
+           so that variables in different branches match up correctly *)
+        let var' = match RenameMap.find_opt var or_bound_variables with
+        | Some bound_var -> bound_var
+        | None -> fresh_var var
+        in
         ( Renamed.VarPat (loc, var')
         , insert_var var var'
         , Fun.id
         )
     | AsPat(loc, pattern, string_name) ->
-        let pattern, env_trans, ty_trans = rename_pattern scope pattern in
+        let pattern, env_trans, ty_trans = rename_pattern or_bound_variables scope pattern in
         let name = fresh_var string_name in
         ( AsPat(loc, pattern, name)
         , insert_var string_name name << env_trans
         , ty_trans
         )
     | ConsPat (loc, x, xs) ->
-        let x', x_trans, x_ty_trans = rename_pattern scope x in
-        let xs', xs_trans, xs_ty_trans = rename_pattern scope xs in
+        let x', x_trans, x_ty_trans = rename_pattern or_bound_variables scope x in
+        let xs', xs_trans, xs_ty_trans = rename_pattern or_bound_variables scope xs in
         ( ConsPat (loc, x', xs')
         , (fun scope -> xs_trans (x_trans scope))
         , (fun scope -> xs_ty_trans (x_ty_trans scope))
         )
     | ListPat (loc, pats) ->
-        let pats', pats_trans, pats_ty_trans = Util.split3 (List.map (rename_pattern scope) pats) in
+        let pats', pats_trans, pats_ty_trans = Util.split3 (List.map (rename_pattern or_bound_variables scope) pats) in
         ( ListPat (loc, pats')
         , Util.compose pats_trans
         , Util.compose pats_ty_trans
         )
     | TuplePat (loc, pats) ->
-        let pats', pats_trans, pats_ty_trans = Util.split3 (List.map (rename_pattern scope) pats) in
+        let pats', pats_trans, pats_ty_trans = Util.split3 (List.map (rename_pattern or_bound_variables scope) pats) in
         ( TuplePat (loc, pats')
         , Util.compose pats_trans
         , Util.compose pats_ty_trans
@@ -208,21 +215,28 @@ let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in functio
         , Fun.id
         )
     | OrPat(loc, p1, p2) ->
-        let p1', p1_trans, p1_ty_trans = rename_pattern scope p1 in
-        let p2', p2_trans, p2_ty_trans = rename_pattern scope p2 in
+        let p1', p1_trans, p1_ty_trans = rename_pattern or_bound_variables scope p1 in
+
+        (* Hacky way to add the variables bound in p1 to the ones bound in the surrounding scope.
+           We need this since any variable bound in the first branch should be resolved to exactly the same name
+           in the second branch. *)
+        let or_bound_variables = (p1_trans (RenameScope.{ empty with variables = or_bound_variables})).variables in
+
+        let p2', p2_trans, p2_ty_trans = rename_pattern or_bound_variables scope p2 in
+
         ( OrPat(loc, p1', p2')
         , (fun scope -> p2_trans (p1_trans scope))
         , (fun scope -> p2_ty_trans (p1_ty_trans scope))
         )
     | TypePat (loc, p, ty) ->
-        let p', p_trans, p_ty_trans = rename_pattern scope p in
+        let p', p_trans, p_ty_trans = rename_pattern or_bound_variables scope p in
         let ty', ty_trans = rename_type loc scope ty in
         ( TypePat (loc, p', ty')
         , p_trans
         , (fun scope -> ty_trans (p_ty_trans scope))
         )
     | DataPat(loc, constructor_name, pattern) ->
-        let pattern, scope_transformer, type_transformer = rename_pattern scope pattern in
+        let pattern, scope_transformer, type_transformer = rename_pattern or_bound_variables scope pattern in
         begin match RenameMap.find_opt constructor_name scope.data_constructors with
         | Some constructor_name -> 
             ( DataPat(loc, constructor_name, pattern)
@@ -236,12 +250,13 @@ let rec rename_pattern (scope : RenameScope.t) = let open RenameScope in functio
             )
         end
     | VariantPat(loc, constructor_name, patterns) ->
-        let patterns, scope_transformers, type_transformers = Util.split3 (List.map (rename_pattern scope) patterns) in
+        let patterns, scope_transformers, type_transformers = Util.split3 (List.map (rename_pattern or_bound_variables scope) patterns) in
         ( VariantPat(loc, constructor_name, patterns)
         , Util.compose scope_transformers
         , Util.compose type_transformers
         )
         
+let rename_pattern = rename_pattern RenameMap.empty
 
 let rename_patterns scope pats =
     List. fold_right (fun pat (pats', trans, ty_trans) -> begin

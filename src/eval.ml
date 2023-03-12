@@ -202,7 +202,7 @@ let rec match_pat_opt (pat : Typed.pattern) (scrut : value) : (eval_env -> eval_
       None
     else
       let* transformations = Util.sequence_options (List.map2 match_pat_opt ps vs) in
-      Some(List.fold_right (fun t r env -> t (r env)) transformations (fun x -> x))
+      Some(Util.compose transformations)
   | TuplePat(_, ps), TupleV vs ->
     let pats = Array.of_list ps in
     (* This check is technically redundant once the type checker is implemented *)

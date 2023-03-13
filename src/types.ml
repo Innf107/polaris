@@ -152,34 +152,38 @@ let instantiate_type_alias : local_env -> name -> ty list -> ty =
     replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args))) underlying_type
     
 
-let rec instantiate_with_function : ty -> (ty * (ty -> ty)) =
-  fun ty -> 
+let rec instantiate_with_function : local_env -> ty -> (ty * (ty -> ty)) =
+  fun env ty -> 
   match normalize_unif ty with
   | Forall (tv, ty) ->
     let unif = Unif (Typeref.make (), tv) in
     (* TODO: Collect all tyvars first to avoid multiple traversals *)
     let replacement_fun = replace_tvar tv unif in
-    let instantiated, inner_replacement_fun = instantiate_with_function (replacement_fun ty) in
+    let instantiated, inner_replacement_fun = instantiate_with_function env (replacement_fun ty) in
     instantiated, (fun ty -> inner_replacement_fun (replacement_fun ty))
+  | TypeAlias (name, args) ->
+    instantiate_with_function env (instantiate_type_alias env name args)
   | ty -> ty, Fun.id
 
-let instantiate : ty -> ty =
-  fun ty ->
-    let (instaniated, _) = instantiate_with_function ty in
+let instantiate : local_env -> ty -> ty =
+  fun env ty ->
+    let (instaniated, _) = instantiate_with_function env ty in
     instaniated
 
-let rec skolemize_with_function : ty -> ty * (ty -> ty) =
-  fun ty -> match normalize_unif ty with
+let rec skolemize_with_function : local_env -> ty -> ty * (ty -> ty) =
+  fun env ty -> match normalize_unif ty with
   | Forall (tv, ty) ->
     let skol = Skol (Unique.fresh (), tv) in
     let replacement_fun = replace_tvar tv skol in
-    let skolemized, inner_replacement_fun = skolemize_with_function (replacement_fun ty) in
+    let skolemized, inner_replacement_fun = skolemize_with_function env (replacement_fun ty) in
     skolemized, (fun ty -> inner_replacement_fun (replacement_fun ty))
+  | TypeAlias (name, args) ->
+    skolemize_with_function env (instantiate_type_alias env name args)
   | ty -> ty, Fun.id
 
-let skolemize : ty -> ty =
-  fun ty ->
-    let (skolemized, _) = skolemize_with_function ty in
+let skolemize : local_env -> ty -> ty =
+  fun env ty ->
+    let (skolemized, _) = skolemize_with_function env ty in
     skolemized
   
 
@@ -454,7 +458,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
     | Var (loc, x) -> 
       begin match NameMap.find_opt x env.local_types with
       | Some ty -> 
-        let instantiated_type = instantiate ty in
+        let instantiated_type = instantiate env ty in
         ( instantiated_type
         , Var((loc, ty), x)
         )
@@ -467,7 +471,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
           List.fold_right (fun param ty -> Forall (param, ty)) params
             (Fun([ty], TyConstructor(data_name, List.map (fun x -> TyVar(x)) params)))
         in
-        ( instantiate data_constructor_type
+        ( instantiate env data_constructor_type
         , DataConstructor((loc, data_constructor_type), data_name)
         )
       | None -> panic __LOC__ ("Unbound data constructor in type checker: '" ^ Name.pretty data_name ^ "'")
@@ -542,7 +546,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       | Some mod_env -> begin match NameMap.find_opt key_name mod_env.var_types with
         | None -> panic __LOC__ ("Module does not contain variable: '" ^ Name.pretty key_name ^ "'. This should have been caught earlier!")
         | Some ty -> 
-          ( instantiate ty
+          ( instantiate env ty
           , ModSubscript ((loc, ty), mod_name, key_name)
           )
         end
@@ -763,7 +767,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
 and check : local_env -> ty -> expr -> Typed.expr =
   fun env expected_ty expr ->
     trace_tc (lazy ("checking expression '" ^ pretty expr ^ "' : " ^ pretty_type expected_ty));
-    let expected_ty = skolemize expected_ty in
+    let expected_ty = skolemize env expected_ty in
 
     let defer_to_inference () =
       let ty, expr = infer env expr in
@@ -926,7 +930,7 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
     fun env check_or_infer expr -> match expr with
     | LetSeq (loc, pat, body) ->
       let ty, env_trans, pat = infer_pattern env pat in
-      let ty, skolemizer = skolemize_with_function ty in
+      let ty, skolemizer = skolemize_with_function env ty in
 
       let traversal = object(self)
         inherit [unit] Traversal.traversal
@@ -945,7 +949,7 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
       env_trans, LetSeq(loc, pat, body)
     | LetRecSeq(loc, mty, fun_name, patterns, body) ->
       let arg_tys, transformers, patterns, result_ty, ty_skolemizer = 
-        match Option.map skolemize_with_function mty with
+        match Option.map (skolemize_with_function env) mty with
         | None -> 
           let arg_tys, transformers, patterns = Util.split3 (List.map (infer_pattern env) patterns) in
           arg_tys, transformers, patterns, fresh_unif (), Fun.id

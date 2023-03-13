@@ -160,7 +160,8 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
                        "The function " ^ text_style.identifier (Name.pretty fun_name) ^ " is declared with " ^ text_style.number count ^ " parameters\n"
                      ^ "    but it's type suggests that it should have " ^ text_style.number (List.length types)
     | NonFunTypeInLetRec(fun_name, ty) ->
-      "The function definition for " ^ text_style.identifier (Name.pretty fun_name) ^ " is declared as a function but has a non-function type."
+      "The function definition for " ^ text_style.identifier (Name.pretty fun_name) ^ " is declared as a function\n" 
+      ^"    but has a non-function type: " ^ text_style.ty (Typed.pretty_type ty)
     | CannotUnwrapNonData ty ->
       "Trying to unwrap invalid type " ^ text_style.ty (Renamed.pretty_type ty) ^ "\n    Unwrapping is only possible for types defined in a data declaration"
   end

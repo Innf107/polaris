@@ -6,19 +6,21 @@ let _tc_category,    trace_tc    = Trace.make ~flag:"types" ~prefix:"Types"
 let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
 let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix:"Subst"
 
-type type_error = UnableToUnify of (ty * ty) * (ty * ty)
-                                 (* ^           ^ full original types *)
-                                 (* | specific mismatch               *)
-                | DifferentVariantConstrArgs of string * ty list * ty list * ty * ty
-                | MismatchedTyCon of name * name * ty * ty
-                | Impredicative of (ty * ty) * (ty * ty)
-                | OccursCheck of ty Typeref.t * name * ty * ty * ty
-                | FunctionsWithDifferentArgCounts of ty list * ty list * ty * ty
+type unify_context = (ty * ty)
+
+type type_error = UnableToUnify of (ty * ty) * unify_context option
+                                 (* ^           ^ full original types (None if there is no difference) *)
+                                 (* | specific mismatch                                                *)
+                | DifferentVariantConstrArgs of string * ty list * ty list * unify_context
+                | MismatchedTyCon of name * name * unify_context option
+                | Impredicative of (ty * ty) * unify_context option
+                | OccursCheck of ty Typeref.t * name * ty * unify_context option
+                | FunctionsWithDifferentArgCounts of ty list * ty list * unify_context
                 | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
                 | IncorrectNumberOfArgsInLambda of int * ty list * ty
                 | NonProgCallInPipe of expr
-                | MissingRecordFields of (string * ty) list * (string * ty) list * ty * ty
-                | MissingVariantConstructors of (string * ty list) list * (string * ty list) list * ty * ty
+                | MissingRecordFields of (string * ty) list * (string * ty) list * unify_context
+                | MissingVariantConstructors of (string * ty list) list * (string * ty list) list * unify_context
                 | ArgCountMismatchInDefinition of name * ty list * int
                 | NonFunTypeInLetRec of name * ty
                 | CannotUnwrapNonData of ty
@@ -1103,29 +1105,45 @@ let bind_unchecked : ty Typeref.t -> name -> ty -> unit
 
 (** Bind a typeref to a new type.
     This panics if the typeref has already been bound *)
-let bind_directly : loc -> ty Typeref.t -> name -> ty -> ty -> ty -> unit 
-  = fun loc typeref name ty original_ty1 original_ty2 ->
+let bind_directly : loc -> ty Typeref.t -> name -> ty -> unify_context option -> unit 
+  = fun loc typeref name ty unify_context ->
     if occurs typeref ty then
-      raise (TypeError (loc, OccursCheck (typeref, name, ty, original_ty1, original_ty2)))
+      raise (TypeError (loc, OccursCheck (typeref, name, ty, unify_context)))
     else
       bind_unchecked typeref name ty
 
 
 
 let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
-  fun loc env state original_ty1 original_ty2 ->
-    trace_unify (lazy (pretty_type original_ty1 ^ " ~ " ^ pretty_type original_ty2));
+  fun loc env state original_type1 original_type2 ->
+    trace_unify (lazy (pretty_type original_type1 ^ " ~ " ^ pretty_type original_type2));
 
-    let rec bind typeref name ty =
-      match Typeref.get typeref with
-      | None -> bind_directly loc typeref name ty original_ty1 original_ty2
-      (* TODO: Preserve the order somehow for the sake of error messages *)
-      | Some previous_ty -> 
-        trace_unify (lazy 
-        ("bind: " ^ pretty_type (Unif(typeref, name)) ^ " ~ " ^ pretty_type ty));
-        go previous_ty ty 
+    let unify_context = (original_type1, original_type2) in
 
-    and go ty1 ty2 = 
+    let rec go_with_original optional_unify_context ty1 ty2 = 
+      
+      (* We define go this way so that unify_context is None on the initial call and
+         Some (original_ty1, original_ty2) on every recursive call.
+         This is used in error messages to only display the full unification context if it is
+         actually relevant *)
+      let go = go_with_original (Some unify_context) in
+
+      
+      let bind_with_context typeref name ty context =
+        match Typeref.get typeref with
+        | None -> bind_directly loc typeref name ty context
+        (* TODO: Preserve the order somehow for the sake of error messages *)
+        | Some previous_ty -> 
+          trace_unify (lazy 
+          ("bind: " ^ pretty_type (Unif(typeref, name)) ^ " ~ " ^ pretty_type ty));
+          go previous_ty ty 
+      in
+      (* bind assumes that an occurs check violation is only possible if the unify_context
+         is relevant. If this is not the case (only when solving constraints between unification variables directly),
+         bind_with_context should be used with optional_unify_context *)
+      let bind typeref name ty = bind_with_context typeref name ty (Some unify_context) in
+
+
       (* `remaining_cont` is called with the remaining fields from both rows,
         that is the fields that are not part of the other row. 
         Closed rows will generally error on this, but unif rows might continue.
@@ -1157,7 +1175,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       in
       let go_variant constructor_name params1 params2 =
         if List.compare_lengths params1 params2 <> 0 then
-          raise (TypeError (loc, DifferentVariantConstrArgs(constructor_name, params1, params2, original_ty1, original_ty2)))
+          raise (TypeError (loc, DifferentVariantConstrArgs(constructor_name, params1, params2, unify_context)))
         else
           List.iter2 go params1 params2
       in
@@ -1170,14 +1188,11 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
         *)
         | Unif (typeref2, _) when Typeref.equal typeref typeref2 -> ()
         | ty -> 
-          if occurs typeref ty then
-            raise (TypeError (loc, OccursCheck(typeref, name, ty, original_ty1, original_ty2)))
-          else 
-            bind typeref name ty
+            bind_with_context typeref name ty optional_unify_context
       end
       | TyConstructor(name1, args1), TyConstructor(name2, args2) ->
         if Name.compare name1 name2 <> 0 then
-          raise (TypeError (loc, MismatchedTyCon(name1, name2, original_ty1, original_ty2)))
+          raise (TypeError (loc, MismatchedTyCon(name1, name2, optional_unify_context)))
         else
           if List.compare_lengths args1 args2 <> 0 then
             panic __LOC__ (Loc.pretty loc ^ ": Trying to unify applications of type constructor '" ^ Name.pretty name1 ^ "' to different numbers of arguments.\n    ty1: " ^ pretty_type ty1 ^ "\n    ty2: " ^ pretty_type ty2)
@@ -1186,7 +1201,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | Fun (dom1, cod1), Fun (dom2, cod2) ->
         if List.compare_lengths dom1 dom2 != 0 then
           raise (TypeError (loc, 
-            FunctionsWithDifferentArgCounts(dom1, dom2, original_ty1, original_ty2)))
+            FunctionsWithDifferentArgCounts(dom1, dom2, unify_context)))
         else begin
           List.iter2 go dom1 dom2;
           go cod1 cod2
@@ -1196,42 +1211,42 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | List ty1, List ty2 -> go ty1 ty2
       | Promise ty1, Promise ty2 -> go ty1 ty2
       | Ref ty1, Ref ty2 -> go ty1 ty2
-      | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), (original_ty1, original_ty2))))
+      | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), optional_unify_context)))
       | (Number, Number) | (Bool, Bool) | (String, String) -> ()
       | Skol (u1, _), Skol (u2, _) when Unique.equal u1 u2 -> ()
       (* closed, closed *)
       | RecordClosed fields1, RecordClosed fields2 ->
         unify_rows (fun _ -> go) fields1 fields2 (fun remaining1 remaining2 -> 
-          raise (TypeError (loc, MissingRecordFields (remaining1, remaining2, original_ty1, original_ty2))))
+          raise (TypeError (loc, MissingRecordFields (remaining1, remaining2, unify_context))))
       | VariantClosed fields1, VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
-          raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2))))
+          raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, unify_context))))
       (* unif, closed *)
       | RecordUnif (fields1, (u, name)), RecordClosed fields2 ->
         unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining1 with
           | [] -> bind u name (RecordClosed (Array.of_list remaining2))
-          | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], original_ty1, original_ty2)))
+          | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], unify_context)))
         end
       | VariantUnif (fields1, (typeref, name)), VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining1 with
           | [] -> 
             bind typeref name (VariantClosed (Array.of_list remaining2))
-          | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
+          | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], unify_context)))
         end
       (* closed, unif *)
       | RecordClosed fields1, RecordUnif (fields2, (u, name)) ->
         unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining2 with
           | [] -> bind u name (RecordClosed (Array.of_list remaining1))
-          | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, original_ty1, original_ty2)))
+          | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, unify_context)))
         end
       | VariantClosed fields1, VariantUnif (fields2, (u, name)) ->
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining2 with
           | [] -> bind u name (VariantClosed (Array.of_list remaining1))
-          | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, original_ty1, original_ty2)))
+          | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, unify_context)))
         end
       (* unif, unif *)
       | RecordUnif (fields1, (u1, name1)), RecordUnif (fields2, (u2, name2)) ->
@@ -1254,13 +1269,13 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
         unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining1 with
           | [] -> bind unif_unique unif_name (RecordSkol (Array.of_list remaining2, (skol_unique, skol_name)))
-          | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], original_ty1, original_ty2)))
+          | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], unify_context)))
         end
       | VariantUnif (fields1, (unif_unique, unif_name)), VariantSkol (fields2, (skol_unique, skol_name)) ->
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining1 with
           | [] -> bind unif_unique unif_name (VariantSkol (Array.of_list remaining2, (skol_unique, skol_name)))
-          | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], original_ty1, original_ty2)))
+          | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], unify_context)))
         end
       (* skolem, unif *)
       (* This is almost exactly like the (closed, unif) case, except that we need to carry the
@@ -1269,13 +1284,13 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
         unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining2 with
           | [] -> bind unif_unique unif_name (RecordSkol (Array.of_list remaining1, (skolem_unique, skolem_name)))
-          | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, original_ty1, original_ty2)))
+          | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, unify_context)))
         end
       | VariantSkol (fields1, (skolem_unique, skolem_name)), VariantUnif (fields2, (unif_unique, unif_name)) -> 
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining2 with
           | [] -> bind unif_unique unif_name (VariantSkol (Array.of_list remaining1, (skolem_unique, skolem_name)))
-          | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, original_ty1, original_ty2)))
+          | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, unify_context)))
         end
       (* skolem, skolem *)
       (* Skolem rows only unify if the skolem fields match and
@@ -1285,13 +1300,13 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
            TODO: Maybe a custom error message is clearer? *)
         go (Skol (skolem1_unique, skolem1_name)) (Skol (skolem2_unique, skolem2_name));
         unify_rows (fun _ -> go) fields1 fields2 (fun remaining1 remaining2 -> 
-          raise (TypeError (loc, MissingRecordFields (remaining1, remaining2, original_ty1, original_ty2))))
+          raise (TypeError (loc, MissingRecordFields (remaining1, remaining2, unify_context))))
       | VariantSkol (fields1, (skolem1_unique, skolem1_name)), VariantSkol (fields2, (skolem2_unique, skolem2_name)) ->
         (* We unify the skolems to generate a more readable error message.
            TODO: Maybe a custom error message is clearer? *)
         go (Skol (skolem1_unique, skolem1_name)) (Skol (skolem2_unique, skolem2_name));
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 -> 
-          raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2)))) 
+          raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, unify_context)))) 
       (* closed, skolem *)
       (* skolem, closed *)
       (* Unifying a skolem and closed record is always impossible so we don't need a dedicated case here. *)
@@ -1305,9 +1320,9 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | other_type, TypeAlias (name, args) ->
         let real_type = instantiate_type_alias env name args in
         go other_type real_type  
-      | _ -> raise (TypeError (loc, UnableToUnify ((ty1, ty2), (original_ty1, original_ty2))))
+      | _ -> raise (TypeError (loc, UnableToUnify ((ty1, ty2), optional_unify_context)))
     in
-    go original_ty1 original_ty2
+    go_with_original None original_type1 original_type2
 
 let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
   fun loc env state ty1 ty2 ->

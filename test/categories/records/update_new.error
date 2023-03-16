@@ -3,6 +3,8 @@ Mismatched record fields.
 Missing mutual record fields '{ y : Number }'
                          and '()'
                          respectively.
+    While trying to unify '{ x : Number }'
+                      and '{ y : Number | α$10 }'
   | 
 4 | print({ r with y = 3 })
   |         ^

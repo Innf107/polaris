@@ -33,8 +33,19 @@ let pretty_call_trace (locs : loc list) =
   | _ -> "Call trace:"
         ^ "\n    " ^ String.concat "\n    " (List.map Loc.pretty locs)    
 
+
+
 let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a = 
-  fun text_style print_fun -> function
+  fun text_style print_fun -> 
+  let pretty_unify_context (original_type1, original_type2) =
+      "\n    While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_type1) ^ "\n"
+    ^ "                      and " ^ text_style.ty_secondary (Renamed.pretty_type original_type2)
+  in
+  let pretty_optional_unify_context = function
+    | None -> ""
+    | Some context -> pretty_unify_context context
+  in
+  function
   | Panic msg -> print_fun None ("PANIC! The 'impossible' happened (This is a bug, please report it!):\n" ^ msg)
   | TODO loc -> print_fun None ("PANIC! Unresolved compiler TODO at '" ^ loc ^ "'.\nIf you see this, please report it and tell the author to finish their things before releasing them!")
   | ParseError (loc, msg) -> print_fun (Some loc) ("Parse Error: " ^ msg)
@@ -99,43 +110,37 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       print_fun (Some loc) ("Unexpected character " ^ text_style.identifier (Base.String.of_char char))
   end
   | TypeError (loc, err) -> print_fun (Some loc) begin match err with
-    | UnableToUnify ((ty1, ty2), (original_ty1, original_ty2)) -> 
+    | UnableToUnify ((ty1, ty2), unify_context) -> 
                        "Unable to unify types " ^ text_style.ty (Renamed.pretty_type ty1) ^ "\n"
-                     ^ "                  and " ^ text_style.ty (Renamed.pretty_type ty2) ^ "\n"
-                     ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
-                     ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2)
-    | DifferentVariantConstrArgs (constructor_name, types1, types2, original_type1, original_type2) ->
+                     ^ "                  and " ^ text_style.ty (Renamed.pretty_type ty2)
+                     ^ pretty_optional_unify_context unify_context
+    | DifferentVariantConstrArgs (constructor_name, types1, types2, unify_context) ->
                        "Unable to unify an instance of the variant constructor " ^ text_style.identifier constructor_name ^ "\n"
                      ^ "                                             with " ^ text_style.number (List.length types1) ^ " fields\n"
                      ^ "    with an instance of the same constructor with " ^ text_style.number (List.length types2) ^ " fields\n"
                      ^ "    Specifically: Unable to match\n"
                      ^ "        argument types (" ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) types1) ^ ")\n"
-                     ^ "                  with (" ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) types2) ^ ")\n"
-                     ^ "    While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_type1) ^ "\n"
-                     ^ "                      and " ^ text_style.ty_secondary (Renamed.pretty_type original_type2)
-    | MismatchedTyCon (constr_name1, constr_name2, original_ty1, original_ty2) ->
-                       "Unable to match data constructors " ^ text_style.ty (Name.pretty constr_name1) ^ " and " ^ text_style.ty (Name.pretty constr_name2) ^ "\n"
-                     ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
-                     ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2)
+                     ^ "                  with (" ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) types2) ^ ")"
+                     ^ pretty_unify_context unify_context
+    | MismatchedTyCon (constr_name1, constr_name2, unify_context) ->
+                       "Unable to match data constructors " ^ text_style.ty (Name.pretty constr_name1) ^ " and " ^ text_style.ty (Name.pretty constr_name2)
+                     ^ pretty_optional_unify_context unify_context
 
-    | Impredicative ((ty1, ty2), (original_ty1, original_ty2)) ->
+    | Impredicative ((ty1, ty2), unify_context) ->
         "Impredicative instantiation attempted\n"
       ^ "    when matching types " ^ text_style.ty (Renamed.pretty_type ty1) ^ "\n"
-      ^ "                    and " ^ text_style.ty (Renamed.pretty_type ty2) ^ "\n"
-      ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
-      ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2) ^ "\n"
-      ^ "Unification involving forall-types is not supported (and most likely a bug)"
-    | OccursCheck (typeref, name, ty, original_ty1, original_ty2) -> 
+      ^ "                    and " ^ text_style.ty (Renamed.pretty_type ty2)
+      ^ pretty_optional_unify_context unify_context
+      ^ "\nUnification involving forall-types is not supported (and most likely a bug)"
+    | OccursCheck (typeref, name, ty, unify_context) -> 
                         "Unable to construct the infinite type " ^ text_style.ty (Renamed.pretty_type (Unif (typeref, name))) ^ "\n"
-                      ^ "                                    ~ " ^ text_style.ty (Renamed.pretty_type ty) ^ "\n"
-                     ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
-                     ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2)
-    | FunctionsWithDifferentArgCounts (tys1, tys2, original_ty1, original_ty2) ->
+                      ^ "                                    ~ " ^ text_style.ty (Renamed.pretty_type ty)
+                     ^ pretty_optional_unify_context unify_context
+    | FunctionsWithDifferentArgCounts (tys1, tys2, unify_context) ->
                         "Unable to match a function type with " ^ text_style.number (List.length tys1) ^ " arguments with one that takes " ^ text_style.number (List.length tys2) ^ " arguments.\n"
                       ^ "Unable to unify argument types " ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) tys1) ^ "\n"
-                      ^ "                           and " ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) tys2) ^ "\n"
-                      ^ "While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_ty1) ^ "\n"
-                      ^ "                  and " ^ text_style.ty_secondary (Renamed.pretty_type original_ty2)
+                      ^ "                           and " ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) tys2)
+                      ^ pretty_unify_context unify_context
     | PassedIncorrectNumberOfArgsToFun (actual_count, expected_types, result_ty) ->
         "Trying to pass " ^ text_style.number actual_count ^ " arguments to a function that expects " ^ text_style.number (List.length expected_types) ^ ".\n"
       ^ "Incorrect number of arguments passed to a function of type " ^ text_style.ty (Renamed.pretty_type (Fun(expected_types, result_ty)))
@@ -146,16 +151,18 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
     | NonProgCallInPipe expr ->
       (* TODO: Is this even possible? *)
       "Non program call expression in a pipe."
-    | MissingRecordFields (remaining1, remaining2, original_ty1, original_ty2) ->
+    | MissingRecordFields (remaining1, remaining2, unify_context) ->
                        "Mismatched record fields.\n"
                      ^ "Missing mutual record fields " ^ text_style.ty (Renamed.pretty_type (RecordClosed (Array.of_list remaining2))) ^ "\n"
                      ^ "                         and " ^ text_style.ty (Renamed.pretty_type (RecordClosed (Array.of_list remaining1))) ^ "\n"
                      ^ "                         respectively."
-    | MissingVariantConstructors (remaining1, remaining2, original_ty1, original_ty2) ->
+                     ^ pretty_unify_context unify_context
+    | MissingVariantConstructors (remaining1, remaining2, unify_context) ->
                       "Mismatched variant constructors.\n"
                     ^ "Missing mutual variant constructors " ^ text_style.ty (Renamed.pretty_type (VariantClosed (Array.of_list remaining2))) ^ "\n"
                     ^ "                                and " ^ text_style.ty (Renamed.pretty_type (VariantClosed (Array.of_list remaining1))) ^ "\n"
-                    ^ "                                respectively."                
+                    ^ "                                respectively."
+                    ^ pretty_unify_context unify_context
     | ArgCountMismatchInDefinition (fun_name, types, count) ->
                        "The function " ^ text_style.identifier (Name.pretty fun_name) ^ " is declared with " ^ text_style.number count ^ " parameters\n"
                      ^ "    but it's type suggests that it should have " ^ text_style.number (List.length types)

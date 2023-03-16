@@ -3,6 +3,8 @@ Mismatched variant constructors.
 Missing mutual variant constructors '<  >'
                                 and '< C() >'
                                 respectively.
+    While trying to unify '< C() | α$14 >'
+                      and '< A(), B() >'
   | 
 7 | print(f(x))
   |         ^

@@ -1,19 +1,21 @@
 open Syntax
 open Syntax.Renamed
 
-type type_error = UnableToUnify of (ty * ty) * (ty * ty)
-                                 (* ^           ^ full original types *)
-                                 (* | specific mismatch               *)
-                | DifferentVariantConstrArgs of string * ty list * ty list * ty * ty
-                | MismatchedTyCon of name * name * ty * ty
-                | Impredicative of (ty * ty) * (ty * ty)
-                | OccursCheck of ty Typeref.t * name * ty * ty * ty
-                | FunctionsWithDifferentArgCounts of ty list * ty list * ty * ty
+type unify_context = (ty * ty)
+
+type type_error = UnableToUnify of (ty * ty) * unify_context option
+                                 (* ^           ^ full original types (None if there is no difference) *)
+                                 (* | specific mismatch                                                *)
+                | DifferentVariantConstrArgs of string * ty list * ty list * unify_context
+                | MismatchedTyCon of name * name * unify_context option
+                | Impredicative of (ty * ty) * unify_context option
+                | OccursCheck of ty Typeref.t * name * ty * unify_context option
+                | FunctionsWithDifferentArgCounts of ty list * ty list * unify_context
                 | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
                 | IncorrectNumberOfArgsInLambda of int * ty list * ty
                 | NonProgCallInPipe of expr
-                | MissingRecordFields of (string * ty) list * (string * ty) list * ty * ty
-                | MissingVariantConstructors of (string * ty list) list * (string * ty list) list * ty * ty
+                | MissingRecordFields of (string * ty) list * (string * ty) list * unify_context
+                | MissingVariantConstructors of (string * ty list) list * (string * ty list) list * unify_context
                 | ArgCountMismatchInDefinition of name * ty list * int
                 | NonFunTypeInLetRec of name * ty
                 | CannotUnwrapNonData of ty

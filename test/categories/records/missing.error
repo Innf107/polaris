@@ -3,6 +3,8 @@ Mismatched record fields.
 Missing mutual record fields '{ y : Number }'
                          and '()'
                          respectively.
+    While trying to unify '{ x : Number, z : Number }'
+                      and '{ x : Number, y : Number | µ$15 }'
   | 
 3 | f({ x = 5, z = 6 })
   |   ^^^^^^^^^^^^^^^^

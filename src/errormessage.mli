@@ -12,6 +12,8 @@ type text_style = {
     number : int -> string;
     ty : string -> string;
     ty_secondary : string -> string;
+
+    emphasis : string -> string;
   }
 
 val make_text_style : enable_color:bool -> text_style

@@ -21,6 +21,8 @@ type text_style = {
     number : int -> string;
     ty : string -> string;
     ty_secondary : string -> string;
+
+    emphasis : string -> string;
   }
    
 let make_text_style ~enable_color =
@@ -33,6 +35,8 @@ let make_text_style ~enable_color =
 
     ty = (fun message -> "\x1b[1m\x1b[96m" ^ message ^ "\x1b[0m");
     ty_secondary = (fun message -> "\x1b[1m\x1b[94m" ^ message ^ "\x1b[0m");
+
+    emphasis = fun message -> "\x1b[1m" ^ message ^ "\x1b[0m";
   } else {
     color = make_coloring ~enable_color;
     bold = Fun.id;
@@ -42,6 +46,8 @@ let make_text_style ~enable_color =
 
     ty = (fun message -> "'" ^ message ^ "'");
     ty_secondary = (fun message -> "'" ^ message ^ "'");
+
+    emphasis = Fun.id;
   }
    
 

@@ -24,6 +24,7 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                 | ArgCountMismatchInDefinition of name * ty list * int
                 | NonFunTypeInLetRec of name * ty
                 | CannotUnwrapNonData of ty
+                | ValueRestriction of ty
 
 exception TypeError of loc * type_error
 
@@ -189,6 +190,69 @@ let skolemize : local_env -> ty -> ty =
     skolemized
   
 
+(* Check that an expression is syntactically a value and can be generalized.
+   We might be able to extend this in the future, similar to OCaml's relaxed value restriction *)
+   let rec is_value : expr -> bool =
+    function
+    | Var _ -> true
+    | DataConstructor _ -> true
+    | ModSubscriptDataCon (void, _, _, _) -> absurd void
+    | VariantConstructor (_, _, args) -> List.for_all is_value args
+    (* Applications of data constructors to values are safe *)
+    | App (_, DataConstructor _, args) -> List.for_all is_value args
+    | App _ -> false
+    | Lambda _ -> true
+    | StringLit _ | NumLit _ | BoolLit _ | UnitLit _ -> true
+    | ListLit (_, args) | TupleLit (_, args) -> List.for_all is_value args
+    | RecordLit (_, args) -> List.for_all (fun (_, expr) -> is_value expr) args
+    | Subscript (_, expr, _) -> is_value expr
+    | ModSubscript _ -> true
+    | RecordUpdate (_, base_expr, updates) 
+    | RecordExtension (_, base_expr, updates) -> 
+      is_value base_expr && List.for_all (fun (_, expr) -> is_value expr) updates
+    | DynLookup (_, list_expr, index_expr) ->
+      is_value list_expr && is_value index_expr
+    | BinOp (_, left, _, right) ->
+      is_value left && is_value right
+    | Not (_, expr) -> is_value expr
+    | Range (_, first, last) -> is_value first && is_value last
+    | ListComp (_, list_expr, clauses) ->
+      let clause_is_value = function 
+      | DrawClause (_, expr) -> is_value expr
+      | FilterClause expr -> is_value expr
+      in
+      is_value list_expr && List.for_all clause_is_value clauses
+    | If (_, condition, then_branch, else_branch) ->
+      is_value condition && is_value then_branch && is_value else_branch
+    | Seq (_, exprs) -> List.for_all is_value exprs
+    | LetSeq (_, _, expr) | LetEnvSeq (_, _, expr) -> is_value expr
+    | LetRecSeq _ | LetTypeSeq _ | LetDataSeq _ -> true
+    | Let (_, _, expr, rest) | LetEnv (_, _, expr, rest) -> is_value expr && is_value rest
+    | LetRec (_, _, _, _, _, rest) -> is_value rest
+    (* TODO: This might be a bit too restrictive. Program calls cannot return polymorphic values anyway 
+       so we should be able to generalize e.g. the type of ([], !ls) to forall a. (List(a), String) *)
+    | ProgCall _ | Pipe _ -> false
+    | EnvVar _ -> true
+    | Async (_, expr) -> is_value expr
+    | Await (_, expr) -> is_value expr
+    | Match (_, scrutinee, cases) -> 
+      is_value scrutinee && List.for_all (fun (_, expr) -> is_value expr) cases
+    | LetModuleSeq _ -> true
+    (* TODO: As long as the ascribed type is monomorphic, this should be fine, right? *)
+    | Ascription (_, expr, ty) -> is_value expr
+    | Unwrap (_, expr) -> is_value expr
+    (* TODO: Again, expressions containing assignments can safely be generalized right? ...right? Am I loosing my mind here? *)
+    | Assign _ -> false
+    (* This one right here, officer! *)
+    | MakeRef _ -> false
+
+let rec is_polytype : local_env -> ty -> bool =
+  fun env -> function
+  | TypeAlias (name, params) -> is_polytype env (instantiate_type_alias env name params)
+  | Forall _ -> true
+  | _ -> false
+
+
 let rec eval_module_env : local_env -> module_expr -> global_env * Typed.module_expr =
   fun env -> function
   | ModVar (loc, var) -> 
@@ -210,8 +274,8 @@ let rec eval_module_env : local_env -> module_expr -> global_env * Typed.module_
     | Some contents -> contents, SubModule (loc, mod_expr, name)
 
 
-let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * Typed.pattern =
-  fun env pat -> 
+let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local_env) * Typed.pattern =
+  fun env allow_polytype pat -> 
     trace_tc (lazy ("inferring pattern '" ^ pretty_pattern pat ^ "'"));
     match pat with
     | VarPat (loc, varname) ->
@@ -221,28 +285,28 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * 
       , VarPat((loc, var_ty), varname)
       )
     | AsPat (loc, pattern, name) ->
-      let pattern_ty, env_trans, pattern = infer_pattern env pattern in
+      let pattern_ty, env_trans, pattern = infer_pattern env allow_polytype pattern in
       ( pattern_ty
       , insert_var name pattern_ty << env_trans
       , AsPat(loc, pattern, name)
       )
     | ConsPat (loc, head_pattern, tail_pattern) ->
       let elem_ty = fresh_unif () in
-      let head_trans, head_pattern = check_pattern env head_pattern elem_ty in
-      let tail_trans, tail_pattern = check_pattern (head_trans env) tail_pattern (List elem_ty) in
+      let head_trans, head_pattern = check_pattern env allow_polytype head_pattern elem_ty in
+      let tail_trans, tail_pattern = check_pattern (head_trans env) allow_polytype tail_pattern (List elem_ty) in
       ( List elem_ty
       , head_trans << tail_trans
       , ConsPat(loc, head_pattern, tail_pattern)
       )
     | ListPat (loc, patterns) ->
       let elem_ty = fresh_unif () in
-      let transformers, patterns = List.split (List.map (fun p -> check_pattern env p elem_ty) patterns) in
+      let transformers, patterns = List.split (List.map (fun p -> check_pattern env allow_polytype p elem_ty) patterns) in
       ( List elem_ty
       , Util.compose transformers
       , ListPat (loc, patterns)
       )
     | TuplePat (loc, patterns) ->
-      let pattern_types, transformers, patterns = Util.split3 (List.map (infer_pattern env) patterns) in
+      let pattern_types, transformers, patterns = Util.split3 (List.map (infer_pattern env allow_polytype) patterns) in
       ( Tuple (Array.of_list pattern_types)
       , Util.compose transformers
       , TuplePat(loc, patterns)
@@ -258,15 +322,15 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * 
       , StringPat(loc, literal)
       )
     | OrPat (loc, left, right) ->
-      let left_ty, left_trans, left = infer_pattern env left in 
+      let left_ty, left_trans, left = infer_pattern env allow_polytype left in 
       (* TODO: Make sure both sides bind the same set of variables with the same types *)
-      let right_trans, right = check_pattern env right left_ty in
+      let right_trans, right = check_pattern env allow_polytype right left_ty in
       ( left_ty
       , left_trans << right_trans
       , OrPat(loc, left, right)
       )
     | TypePat(loc, pattern, ty) ->
-      let env_trans, pattern = check_pattern env pattern ty in
+      let env_trans, pattern = check_pattern env allow_polytype pattern ty in
       ( ty
       , env_trans
       , TypePat(loc, pattern, ty)
@@ -282,7 +346,7 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * 
 
       let underlying_type = replace_tvars (NameMap.of_seq (List.to_seq vars_with_unifs)) underlying_type_raw in
 
-      let env_trans, pattern = check_pattern env pattern underlying_type in
+      let env_trans, pattern = check_pattern env allow_polytype pattern underlying_type in
 
       ( data_type
       , env_trans
@@ -290,7 +354,7 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * 
       ) 
     | VariantPat(loc, constructor_name, patterns) ->
       (* See Note [Inferring Variant Patterns] *)
-      let pattern_types, env_transformers, patterns = Util.split3 (List.map (infer_pattern env) patterns) in
+      let pattern_types, env_transformers, patterns = Util.split3 (List.map (infer_pattern env allow_polytype) patterns) in
 
       let extension_unif = fresh_unif_raw () in
 
@@ -345,12 +409,16 @@ let rec infer_pattern : local_env -> pattern -> ty * (local_env -> local_env) * 
 
 
 (* The checking judgement for patterns doesn't actually do anything interesting at the moment. *)
-and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) * Typed.pattern =
-  fun env pattern expected_ty ->
+and check_pattern : local_env -> bool -> pattern -> ty -> (local_env -> local_env) * Typed.pattern =
+  fun env allow_polytype pattern expected_ty ->
     trace_tc (lazy ("checking pattern '" ^ pretty_pattern pattern ^ "' : " ^ pretty_type expected_ty));
 
+    if not allow_polytype && is_polytype env expected_ty then begin
+      raise (TypeError (get_pattern_loc pattern, ValueRestriction expected_ty))
+    end;
+
     let defer_to_inference () =
-      let ty, trans, pattern = infer_pattern env pattern in
+      let ty, trans, pattern = infer_pattern env allow_polytype pattern in
       subsumes env (Typed.get_pattern_loc pattern) ty expected_ty;
       trans, pattern
     in
@@ -362,25 +430,25 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) * Typ
       , VarPat((loc, expected_ty), var)
       )
     | AsPat (loc, pattern, name), expected_ty ->
-      let env_trans, pattern = check_pattern env pattern expected_ty in
+      let env_trans, pattern = check_pattern env allow_polytype pattern expected_ty in
       ( insert_var name expected_ty << env_trans
       , AsPat (loc, pattern, name)
       )
     | ConsPat (loc, head, tail), List(elem_ty) ->
-      let head_trans, head = check_pattern env head elem_ty in
-      let tail_trans, tail = check_pattern env tail (List(elem_ty)) in
+      let head_trans, head = check_pattern env allow_polytype head elem_ty in
+      let tail_trans, tail = check_pattern env allow_polytype tail (List(elem_ty)) in
       ( tail_trans << head_trans
       , ConsPat(loc, head, tail)
       )
     | ConsPat (loc, _, _), _ -> defer_to_inference ()
     | ListPat (loc, patterns), List(elem_ty) ->
-      let transformers, patterns = List.split (List.map (fun pat -> check_pattern env pat elem_ty) patterns) in
+      let transformers, patterns = List.split (List.map (fun pat -> check_pattern env allow_polytype pat elem_ty) patterns) in
       ( Util.compose transformers
       , ListPat(loc, patterns)
       )
     | ListPat _, _ -> defer_to_inference ()
     | TuplePat (loc, patterns), Tuple arg_tys ->
-      let transformers, patterns = match Base.List.map2 patterns (Array.to_list arg_tys) ~f:(check_pattern env) with
+      let transformers, patterns = match Base.List.map2 patterns (Array.to_list arg_tys) ~f:(check_pattern env allow_polytype) with
       | Ok transformers_and_patterns -> List.split transformers_and_patterns
       | Unequal_lengths -> todo __LOC__
       in
@@ -393,20 +461,24 @@ and check_pattern : local_env -> pattern -> ty -> (local_env -> local_env) * Typ
     | StringPat(loc, literal), String -> Fun.id, StringPat(loc, literal)
     | StringPat _, _ -> defer_to_inference ()
     | OrPat(loc, left, right), _ ->
-      let left_trans, left = check_pattern env left expected_ty in
-      let right_trans, right = check_pattern env right expected_ty in
+      let left_trans, left = check_pattern env allow_polytype left expected_ty in
+      let right_trans, right = check_pattern env allow_polytype right expected_ty in
       ( right_trans << left_trans
       , OrPat(loc, left, right)
       )
-    | TypePat(loc, pattern, ty), _ ->
+    | TypePat(loc, pattern, ty), expected_ty ->
+      if not allow_polytype && is_polytype env ty then begin 
+        raise (TypeError (loc, ValueRestriction ty))
+      end;
+
       subsumes env loc ty expected_ty;
-      check_pattern env pattern ty
+      check_pattern env allow_polytype pattern ty
     | DataPat(loc, data_name, underlying_pattern), TyConstructor(constr_name, args) when Name.equal data_name constr_name ->
       begin match NameMap.find_opt data_name env.data_definitions with
       | None -> panic __LOC__ "Unbound data constructor in type checker"
       | Some (type_params, underlying_type_raw) -> 
         let underlying_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq type_params) (List.to_seq args))) underlying_type_raw in
-        let env_trans, underlying_pattern = check_pattern env underlying_pattern underlying_type in
+        let env_trans, underlying_pattern = check_pattern env allow_polytype underlying_pattern underlying_type in
         ( env_trans
         , DataPat(loc, data_name, underlying_pattern)
         )
@@ -506,7 +578,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       in
       result_ty, App(loc, fun_expr, args)
     | Lambda (loc, args, body) -> 
-      let arg_tys, transformers, args = Util.split3 (List.map (fun p -> infer_pattern env p) args) in
+      let arg_tys, transformers, args = Util.split3 (List.map (fun p -> infer_pattern env true p) args) in
       let env = Util.compose transformers env in 
       let result_ty, body = infer env body in
       ( Fun (arg_tys, result_ty)
@@ -652,7 +724,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       )
     | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
     | Let (loc, pattern, body, rest) ->
-      let ty, env_trans, pattern = infer_pattern env pattern in
+      let ty, env_trans, pattern = infer_pattern env (is_value body) pattern in
       (* Lets are non-recursive, so we use the *unaltered* environment *)
       let body = check env ty body in
       let result_type, rest = infer (env_trans env) rest in
@@ -729,7 +801,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let scrut_ty, scrut = infer env scrut in
       let result_ty = fresh_unif () in
       let body = body |> List.map begin fun (pat, expr) -> 
-        let env_trans, pattern = check_pattern env pat scrut_ty in
+        let env_trans, pattern = check_pattern env true pat scrut_ty in
         let expr = check (env_trans env) result_ty expr in
         (pattern, expr)
       end in
@@ -767,9 +839,9 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
 
 
 and check : local_env -> ty -> expr -> Typed.expr =
-  fun env expected_ty expr ->
-    trace_tc (lazy ("checking expression '" ^ pretty expr ^ "' : " ^ pretty_type expected_ty));
-    let expected_ty = skolemize env expected_ty in
+  fun env polymorphic_expected_ty expr ->
+    trace_tc (lazy ("checking expression '" ^ pretty expr ^ "' : " ^ pretty_type polymorphic_expected_ty));
+    let expected_ty = skolemize env polymorphic_expected_ty in
 
     let defer_to_inference () =
       let ty, expr = infer env expr in
@@ -787,7 +859,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
     | Lambda(loc, param_patterns, body), expected_ty ->
       let (param_tys, result_ty) = split_fun_ty env loc (List.length param_patterns) expected_ty in
     
-      let transformers, param_patterns = match Base.List.map2 param_patterns param_tys ~f:(check_pattern env) with
+      let transformers, param_patterns = match Base.List.map2 param_patterns param_tys ~f:(check_pattern env true) with
       | Ok typed_pats -> List.split typed_pats
       | Unequal_lengths -> raise (TypeError (loc, IncorrectNumberOfArgsInLambda(List.length param_patterns, param_tys, result_ty)))
       in
@@ -859,7 +931,8 @@ and check : local_env -> ty -> expr -> Typed.expr =
       Seq (loc, exprs)
     | (LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _), _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
     | Let (loc, pattern, body, rest), expected_ty ->
-      let ty, env_trans, pattern = infer_pattern env pattern in
+      let ty, env_trans, pattern = infer_pattern env (is_value body) pattern in
+
       (* Lets are non-recursive, so we use the *unaltered* environment *)
       let body = check env ty body in
       let rest = check (env_trans env) expected_ty rest in
@@ -892,7 +965,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
       (* TODO: Do exhaustiveness checking. *)
       let scrut_ty, scrut = infer env scrut in
       let body = body |> List.map begin fun (pat, expr) -> 
-        let env_trans, pat = check_pattern env pat scrut_ty in
+        let env_trans, pat = check_pattern env true pat scrut_ty in
         pat, check (env_trans env) expected_ty expr  
       end in
       Match(loc, scrut, body)
@@ -922,7 +995,7 @@ and check_list_comp : local_env -> list_comp_clause list -> local_env * Typed.li
       let env, clauses = check_list_comp env clauses in
       env, FilterClause expr :: clauses
     | (DrawClause(pattern, expr) :: clauses) ->
-      let ty, env_trans, pattern = infer_pattern env pattern in
+      let ty, env_trans, pattern = infer_pattern env true pattern in
       (* We use the *unaltered* environment, since
          draw clauses are non-recursive *)
       let expr = check env (List ty) expr in
@@ -932,7 +1005,7 @@ and check_list_comp : local_env -> list_comp_clause list -> local_env * Typed.li
 and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> local_env) * Typed.expr =
     fun env check_or_infer expr -> match expr with
     | LetSeq (loc, pat, body) ->
-      let ty, env_trans, pat = infer_pattern env pat in
+      let ty, env_trans, pat = infer_pattern env (is_value body) pat in
       let ty, skolemizer = skolemize_with_function env ty in
 
       let traversal = object(self)
@@ -954,10 +1027,10 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
       let arg_tys, transformers, patterns, result_ty, ty_skolemizer = 
         match Option.map (skolemize_with_function env) mty with
         | None -> 
-          let arg_tys, transformers, patterns = Util.split3 (List.map (infer_pattern env) patterns) in
+          let arg_tys, transformers, patterns = Util.split3 (List.map (infer_pattern env true) patterns) in
           arg_tys, transformers, patterns, fresh_unif (), Fun.id
         | Some (Fun(arg_tys, result_ty), ty_skolemizer) ->            
-          let transformers, patterns = match Base.List.map2 patterns arg_tys ~f:(check_pattern env) with
+          let transformers, patterns = match Base.List.map2 patterns arg_tys ~f:(check_pattern env true) with
           | Ok transformers_and_patterns -> List.split transformers_and_patterns
           | Unequal_lengths -> raise (TypeError (loc.main, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length patterns)))
           in

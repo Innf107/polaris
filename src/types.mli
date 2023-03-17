@@ -19,6 +19,7 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                 | ArgCountMismatchInDefinition of name * ty list * int
                 | NonFunTypeInLetRec of name * ty
                 | CannotUnwrapNonData of ty
+                | ValueRestriction of ty
 
 exception TypeError of loc * type_error
 

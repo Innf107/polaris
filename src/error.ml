@@ -171,5 +171,10 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       ^"    but has a non-function type: " ^ text_style.ty (Typed.pretty_type ty)
     | CannotUnwrapNonData ty ->
       "Trying to unwrap invalid type " ^ text_style.ty (Renamed.pretty_type ty) ^ "\n    Unwrapping is only possible for types defined in a data declaration"
+    | ValueRestriction ty ->
+      "Value restriction violation\n"
+    ^ "Trying to bind " ^ text_style.emphasis "non-value" ^ " to a variable\n"
+    ^ "with a polymorphic type: " ^ text_style.ty (Typed.pretty_type ty)
   end
+
 

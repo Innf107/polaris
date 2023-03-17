@@ -905,7 +905,8 @@ and check : local_env -> ty -> expr -> Typed.expr =
       unwrap_constraint env loc ty expected_ty;
       Unwrap(loc, expr)
     | MakeRef(loc, expr), Ref(inner_type) ->
-      check env inner_type expr
+      let expr = check env inner_type expr in
+      MakeRef(loc, expr)
     | MakeRef _, _ -> defer_to_inference ()
     | Assign (loc, ref_expr, expr), Ref(inner_type) ->
       let ref_expr = check env (Ref inner_type) ref_expr in

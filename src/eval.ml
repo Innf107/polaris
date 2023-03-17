@@ -592,7 +592,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     | RefV(reference) -> 
       reference := value;
       unitV
-    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to assign to non-reference at runtime")
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Trying to assign to non-reference at runtime: " ^ Value.pretty value)
     end
 
 and eval_app env loc fun_v arg_vals = 

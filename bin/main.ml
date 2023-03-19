@@ -28,21 +28,8 @@ let use_colors () = Unix.isatty Unix.stdout
   
 
 let fatal_error maybe_loc (message : string) =
-  let open Errormessage in
-  let style = Style.plain
-           |> Style.with_underline '^' Red
-           |> Style.with_color Red
-           |> Style.with_bold 
-  in
-
   (* We might need to disable colors if we are outputting to something other than a tty *)
-  let style = 
-    if use_colors () then
-      style
-    else
-      style |> Style.disable_color
-  in
-  let text_style = Errormessage.make_text_style ~enable_color:(Style.is_color_enabled style) in
+  let text_style = Errormessage.make_text_style ~enable_color:(use_colors ()) in
 
   let prefix = match maybe_loc with
   | Some loc -> text_style.bold (Loc.pretty_start loc ^ ": ")
@@ -53,20 +40,20 @@ let fatal_error maybe_loc (message : string) =
   | Some loc ->
     let input_file = In_channel.open_text loc.file in
 
-    let previous_line, line, next_line = Errormessage.extract_source_fragment loc input_file style
+    let previous_line, line, next_line = Errormessage.extract_source_fragment loc input_file text_style `Error
     in
     let line_text = string_of_int loc.start_line in
     let padding = String.make (String.length line_text) ' ' in
     
-    let line_color = Custom "\x1b[34m" in
+    let line_color = text_style.custom ~color:"\x1b[34m" in
 
     "\n"
-    ^ text_style.bold (text_style.color line_color (padding   ^ " | ")) ^ previous_line ^ "\n"
-    ^ text_style.bold (text_style.color line_color (line_text ^ " | ")) ^ line       ^ "\n"
-    ^ text_style.bold (text_style.color line_color (padding   ^ " | ")) ^ next_line
+    ^ text_style.bold (line_color (padding   ^ " | ")) ^ previous_line ^ "\n"
+    ^ text_style.bold (line_color (line_text ^ " | ")) ^ line       ^ "\n"
+    ^ text_style.bold (line_color (padding   ^ " | ")) ^ next_line
   in
 
-  print_endline (prefix ^ text_style.color Red "ERROR" ^ ":\n" ^ message ^ suffix);
+  print_endline (prefix ^ text_style.error "ERROR" ^ ":\n" ^ message ^ suffix);
   exit 1
 
 let repl_error maybe_loc (message : string) =
@@ -77,7 +64,7 @@ let repl_error maybe_loc (message : string) =
   | Some loc -> text_style.bold (Loc.pretty_start loc ^ ": ")
   | None -> ""
   in
-  print_endline (prefix ^ text_style.color Red "ERROR" ^ ":\n" ^ message);
+  print_endline (prefix ^ text_style.error "ERROR" ^ ":\n" ^ message);
 
 type run_options = {
   interactive   : bool;
@@ -124,8 +111,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.globa
     let open Errormessage in
     let text_style = make_text_style ~enable_color:(use_colors ()) in
 
-    let prompt_color = Custom "\x1b[31m\x1b[38;5;160m" in
-    let prompt = text_style.color prompt_color "λ> " in
+    let prompt = text_style.custom ~color:"\x1b[31m\x1b[38;5;160m" "λ> " in
     let rec go env scope type_env =
       try
         handle_errors text_style (fun mloc msg -> repl_error mloc msg; go env scope type_env)

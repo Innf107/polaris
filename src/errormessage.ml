@@ -1,44 +1,42 @@
 open Loc
 
-type color = Red | Purple | Custom of string
-
-let make_coloring ~enable_color color message =
-  if not enable_color then
-    message
-  else
-    match color with
-    (* Not all terminals support 24-bit colors, so we first print the regular 8-bit escape
-       sequence for red and then override that with our fancy 24-bit full red, if available. *)
-    | Red -> "\x1b[20m\x1b[31m\x1b[38;2;255;0;0m" ^ message ^ "\x1b[0m"
-    | Purple -> "\x1b[35m\x1b[38;2;192;0;192m" ^ message ^ "\x1b[0m"
-    | Custom prefix -> prefix ^ message ^ "\x1b[0m"
-
 type text_style = {
-    color : color -> string -> string;
-    bold : string -> string;
+  custom : color:string -> string -> string;
 
-    identifier : string -> string;
-    number : int -> string;
-    ty : string -> string;
-    ty_secondary : string -> string;
+  bold : string -> string;
 
-    emphasis : string -> string;
-  }
+  identifier : string -> string;
+  number : int -> string;
+  ty : string -> string;
+  ty_secondary : string -> string;
+
+  emphasis : string -> string;
+
+  error : string -> string;
+  warning : string -> string;
+}
    
 let make_text_style ~enable_color =
   if enable_color then {
-    color = make_coloring ~enable_color;
+    custom = (fun ~color message -> color ^ message ^ "\x1b[0m");
+
     bold = (fun message -> "\x1b[1m" ^ message ^ "\x1b[0m");
-    
+
     identifier = (fun message -> "\x1b[1m" ^ message ^ "\x1b[0m");
     number = (fun number -> "\x1b[1m\x1b[93m" ^ string_of_int number ^ "\x1b[0m");
 
     ty = (fun message -> "\x1b[1m\x1b[96m" ^ message ^ "\x1b[0m");
     ty_secondary = (fun message -> "\x1b[1m\x1b[94m" ^ message ^ "\x1b[0m");
 
-    emphasis = fun message -> "\x1b[1m" ^ message ^ "\x1b[0m";
+    emphasis = (fun message -> "\x1b[1m" ^ message ^ "\x1b[0m");
+
+    (* Not all terminals support 24-bit colors, so we first print the regular 8-bit escape
+       sequence for red and then override that with our fancy 24-bit full red, if available. *)
+    error = (fun message -> "\x1b[20m\x1b[31m\x1b[38;2;255;0;0m" ^ message ^ "\x1b[0m");
+
+    warning = (fun message -> "\x1b[35m\x1b[38;2;192;0;192m" ^ message ^ "\x1b[0m")
   } else {
-    color = make_coloring ~enable_color;
+    custom = (fun ~color message -> message);
     bold = Fun.id;
 
     identifier = (fun message -> "'" ^ message ^ "'");
@@ -48,50 +46,11 @@ let make_text_style ~enable_color =
     ty_secondary = (fun message -> "'" ^ message ^ "'");
 
     emphasis = Fun.id;
+
+    error = Fun.id;
+    warning = Fun.id
   }
    
-
-module Style = struct
-  type t = {
-    apply : bool -> string -> string;
-    underline_style : (char * color) option;
-    enable_color : bool
-  }
-
-  let plain = {
-    apply = (fun _ message -> message);
-    underline_style = None;
-    enable_color = true;
-  }
-
-  let with_color color style = 
-    { style with apply = fun enable_color message ->
-      make_coloring ~enable_color color (style.apply enable_color message)
-    }
-
-  let with_bold style =
-    { style with apply = fun enable_color message ->
-        if enable_color then
-          "\x1b[1m" ^ (style.apply enable_color message) ^ "\x1b[0m"
-        else
-          style.apply enable_color message
-    }
-
-  let with_underline underline_char underline_color style =
-    { style with underline_style = Some (underline_char, underline_color) }
-
-  let with_raw_transform transformation style =
-    { style with apply = fun enable_color message ->
-      transformation (style.apply enable_color message)
-    }
-
-  let disable_color style =
-    { style with enable_color = false }
-
-  let is_color_enabled style = style.enable_color
-
-
-end
 
 
 (* Extract the line at the (1-based!) index, as well as the ones immediately preceeding and succeeding it *)
@@ -104,11 +63,13 @@ let extract_line =
     done;
     Option.value ~default:"" (In_channel.input_line in_channel)
 
-let extract_source_fragment loc in_channel (style : Style.t) =
-  let apply_color = make_coloring ~enable_color:(Style.is_color_enabled style) in
-
+let extract_source_fragment loc in_channel text_style error_or_warning =
   let line = extract_line loc.start_line in_channel in
 
+  let color = match error_or_warning with
+  | `Error -> text_style.error
+  | `Warning -> text_style.warning
+  in
   let line_before = String.sub line 0 (loc.start_col - 1) in
   let line_at_error, line_after = 
     if loc.end_line > loc.start_line then
@@ -121,15 +82,11 @@ let extract_source_fragment loc in_channel (style : Style.t) =
       , String.sub line (loc.end_col - 1) (String.length line - (loc.end_col - 1))
       )
   in
-  let underline = match style.underline_style with
-    | None -> ""
-    | Some (char, color) ->
-      let underline_string = String.make (String.length line_at_error) char in
-        String.make (String.length line_before) ' ' 
-      ^ if style.enable_color then apply_color color underline_string else underline_string
+  let underline_string = color (String.make (String.length line_at_error) '^') in
+  let underline = String.make (String.length line_before) ' ' ^ text_style.error underline_string
   in
   ( ""
-  , line_before ^ style.apply style.enable_color line_at_error ^ line_after
+  , line_before ^ color line_at_error ^ line_after
   , underline
   )
 

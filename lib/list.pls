@@ -8,6 +8,7 @@ export {
     map,
     concatMap,
     filter,
+    filterMap,
 
     zip,
     zipWith,
@@ -68,6 +69,16 @@ let filter(f, xs) = match xs {
             x :: filter(f, xs)
         else
             filter(f, xs)
+}
+
+# O(n)
+let filterMap : forall a b. (a -> < Just(b), Nothing > , List(a)) -> List(b)
+let filterMap(f, xs) = match xs {
+    [] -> []
+    (x :: xs) -> match f(x) {
+            Nothing -> filterMap(f, xs)
+            Just(y) -> y :: filterMap(f, xs)
+        }
 }
 
 # O(min(n, m))

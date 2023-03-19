@@ -45,7 +45,7 @@ let fatal_error maybe_loc (message : string) =
   let text_style = Errormessage.make_text_style ~enable_color:(Style.is_color_enabled style) in
 
   let prefix = match maybe_loc with
-  | Some loc -> text_style.bold (Loc.pretty loc ^ ": ")
+  | Some loc -> text_style.bold (Loc.pretty_start loc ^ ": ")
   | None -> ""
   in
   let suffix = match maybe_loc with
@@ -74,7 +74,7 @@ let repl_error maybe_loc (message : string) =
   let text_style = make_text_style ~enable_color:(use_colors ()) in
 
   let prefix = match maybe_loc with
-  | Some loc -> text_style.bold (Loc.pretty loc ^ ": ")
+  | Some loc -> text_style.bold (Loc.pretty_start loc ^ ": ")
   | None -> ""
   in
   print_endline (prefix ^ text_style.color Red "ERROR" ^ ":\n" ^ message);

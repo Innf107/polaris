@@ -8,6 +8,10 @@ type t = {
 
 val pretty : t -> string
 
+(* Like pretty but only displays the starting position, which ensures that
+   locs are clickable in editors like Visual Studio Code *)
+val pretty_start : t -> string
+
 val from_pos : Lexing.position -> Lexing.position -> t
 
 val internal : t

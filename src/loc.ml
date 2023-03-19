@@ -9,6 +9,9 @@ type t = {
 let pretty (loc : t) =
   Printf.sprintf "%s:%d:%d-%d:%d" loc.file loc.start_line loc.start_col loc.end_line loc.end_col
 
+let pretty_start (loc : t) =
+  Printf.sprintf "%s:%d:%d" loc.file loc.start_line loc.start_col
+
 let from_pos (start_pos : Lexing.position) (end_pos : Lexing.position) : t = {
     file=start_pos.pos_fname
   ; start_line = start_pos.pos_lnum

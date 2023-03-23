@@ -1,4 +1,4 @@
-test/categories/types/ascription.pls:4:3-4:6: ERROR:
+test/categories/types/ascription.pls:4:3: ERROR:
 Unable to unify types 'String'
                   and 'Number'
   | 

@@ -1,4 +1,4 @@
-test/categories/regression/recursive_record.pls:2:59-2:62: ERROR:
+test/categories/regression/recursive_record.pls:2:59: ERROR:
 Unable to construct the infinite type 'α$15'
                                     ~ '{ tail : { head : α$13 | α$15 } | µ$17 }'
     While trying to unify '{ head : α$13 | α$15 }'

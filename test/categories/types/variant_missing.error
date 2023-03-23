@@ -1,4 +1,4 @@
-test/categories/types/variant_missing.pls:7:9-7:10: ERROR:
+test/categories/types/variant_missing.pls:7:9: ERROR:
 Mismatched variant constructors.
 Missing mutual variant constructors '<  >'
                                 and '< C() >'

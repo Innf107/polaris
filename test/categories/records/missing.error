@@ -1,4 +1,4 @@
-test/categories/records/missing.pls:3:3-3:19: ERROR:
+test/categories/records/missing.pls:3:3: ERROR:
 Mismatched record fields.
 Missing mutual record fields '{ y : Number }'
                          and '()'

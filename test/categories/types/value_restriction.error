@@ -1,4 +1,4 @@
-test/categories/types/value_restriction.pls:4:9-4:18: ERROR:
+test/categories/types/value_restriction.pls:4:9: ERROR:
 Value restriction violation
 Trying to bind non-value to a variable
 with a polymorphic type: '∀a. Ref(List(a))'

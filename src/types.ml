@@ -246,6 +246,12 @@ let skolemize : local_env -> ty -> ty =
     (* This one right here, officer! *)
     | MakeRef _ -> false
 
+let binds_value : expr -> bool =
+  function
+  | Let (_, _, expr, _) | LetSeq (_, _, expr) -> is_value expr
+  | LetRec _ | LetRecSeq _ -> true
+  | _ -> false
+
 let rec is_polytype : local_env -> ty -> bool =
   fun env -> function
   | TypeAlias (name, params) -> is_polytype env (instantiate_type_alias env name params)
@@ -1498,7 +1504,7 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
         type_aliases = global_env.type_aliases;
       } in
     
-    let local_env_trans, expr = check_seq_expr local_env check_or_infer expr in
+    let local_env_trans, typed_expr = check_seq_expr local_env check_or_infer expr in
     
     (* This is *extremely hacky* right now.
         We temporarily construct a fake local environment to figure out the top-level local type bindings.
@@ -1515,11 +1521,16 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
 
     solve_constraints local_env (Difflist.to_list !(local_env.constraints));
 
+    let local_types = if binds_value expr 
+      then NameMap.map generalize temp_local_env.local_types 
+      else temp_local_env.local_types
+    in
+
     let global_env = { 
         var_types = 
           NameMap.union (fun _ _ x -> Some x) 
-            (global_env.var_types) 
-            (NameMap.map generalize temp_local_env.local_types);
+            (global_env.var_types)
+            local_types;
         module_var_contents =
           NameMap.union (fun _ _ x -> Some x)
             (global_env.module_var_contents)
@@ -1533,7 +1544,7 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
             (global_env.type_aliases)
             temp_local_env.type_aliases
       } in
-    global_env, expr
+    global_env, typed_expr
 
 let typecheck_exports : Renamed.export_item list -> Typed.export_item list = 
   Obj.magic

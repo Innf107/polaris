@@ -1147,6 +1147,8 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
        so it is not passed to `check`
       *)
     let _, expr = check_seq_expr env `Check expr in
+    (* In tail position, these should return unit *)
+    subsumes env (Typed.get_loc expr) expected_ty Ty.unit;
     [expr]
   | [ expr ] -> 
     [ check env expected_ty expr ]

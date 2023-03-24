@@ -427,6 +427,7 @@ let token (state : lex_state) (lexbuf : lexbuf): Parser.token =
     | LeadingWhitespace -> begin match peek_char lexbuf with
       | Some(' ' | '\n') ->
         let _ = next_char lexbuf in
+        skip_location lexbuf;
         continue ()
       | Some('#') ->
         let indentation = ((get_loc lexbuf).start_col - 1) in

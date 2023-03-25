@@ -346,8 +346,8 @@ module Template = struct
     | TyVar var -> pretty_name var
     | Unif (typeref, name) -> 
       begin match Typeref.get typeref with
-      | None -> pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref)
-      | Some ty ->
+      | Unbound _level -> pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref)
+      | Bound ty ->
         if Config.print_subst_unif_vars () then
           pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ "[= " ^ pretty_type ty ^ "]"
         else
@@ -799,11 +799,11 @@ module Template = struct
           ModSubscriptTyCon(ext, mod_name, name, arg_types), state
         | Unif(typeref, name) ->
           begin match Typeref.get typeref with
-          | None -> 
+          | Unbound level -> 
             let name, state = self#traverse_name state name in
             Unif(typeref, name), state
           (* If this unif var has been substituted, we completely ignore it. *)
-          | Some ty -> self#traverse_type state ty
+          | Bound ty -> self#traverse_type state ty
           end
         | Skol(unique, name) ->
           let name, state = self#traverse_name state name in

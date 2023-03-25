@@ -1,11 +1,28 @@
 
-type 'a t = Unique.t * 'a option ref
+type level = int
 
-let make () = (Unique.fresh (), ref None)
+let initial_top_level = 0
+
+let next_level lvl = lvl + 1
+
+let generalizable_level ~ambient level = level >= ambient
+
+type 'a state =
+  | Unbound of level
+  | Bound of 'a
+
+type 'a t = Unique.t * 'a state ref
+
+let make level = (Unique.fresh (), ref (Unbound level))
 
 let get (_, ref) = !ref
 
-let set (_, ref) value = ref := Some value
+let set (_, ref) value = ref := Bound value
+
+let adjust_level max_level = function
+  | (_, { contents = Bound _ }) -> ()
+  | (unique, ({ contents = Unbound level } as ref)) -> 
+    ref := Unbound (min max_level level)
 
 let get_unique (unique, _) = unique
 

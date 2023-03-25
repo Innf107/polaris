@@ -25,10 +25,11 @@ exception TypeError of loc * type_error
 
 
 type global_env = {
-  var_types : ty NameMap.t;
+  var_types : Typed.ty NameMap.t;
   module_var_contents : global_env NameMap.t;
-  data_definitions : (name list * ty) NameMap.t;
-  type_aliases : (name list * ty) NameMap.t;
+  data_definitions : (name list * Typed.ty) NameMap.t;
+  type_aliases : (name list * Typed.ty) NameMap.t;
+  ambient_level : Typeref.level;
 }
 
 

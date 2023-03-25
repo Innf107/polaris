@@ -42,6 +42,7 @@ type global_env = {
   module_var_contents : global_env NameMap.t;
   data_definitions : (name list * Typed.ty) NameMap.t;
   type_aliases : (name list * Typed.ty) NameMap.t;
+  ambient_level : Typeref.level;
 }
 
 type local_env = {
@@ -50,24 +51,25 @@ type local_env = {
   module_var_contents : global_env NameMap.t;
   data_definitions : (name list * ty) NameMap.t;
   type_aliases : (name list * ty) NameMap.t;
+  level : Typeref.level;
 }
 
 let rec normalize_unif : ty -> ty =
   function
   | Unif (typeref, name) as ty -> 
     begin match Typeref.get typeref with
-    | None -> ty
-    | Some inner_ty -> normalize_unif inner_ty
+    | Unbound _ -> ty
+    | Bound inner_ty -> normalize_unif inner_ty
     end
   | RecordUnif (fields, (typeref, name)) as ty ->
     begin match Typeref.get typeref with
-    | None -> ty
-    | Some inner_ty -> Ty.replace_record_extension fields inner_ty
+    | Unbound _ -> ty
+    | Bound inner_ty -> Ty.replace_record_extension fields inner_ty
     end
   | VariantUnif (fields, (typeref, name)) as ty ->
     begin match Typeref.get typeref with
-    | None -> ty
-    | Some inner_ty -> Ty.replace_variant_extension fields inner_ty
+    | Unbound _ -> ty
+    | Bound inner_ty -> Ty.replace_variant_extension fields inner_ty
     end  
   | ty -> ty     
 
@@ -99,20 +101,67 @@ let prog_arg_constraint : local_env -> loc -> ty -> unit =
   fun env loc ty ->
     env.constraints := Difflist.snoc !(env.constraints) (ProgramArg (loc, ty))
 
-let fresh_unif_raw_with raw_name =
-  let typeref = Typeref.make () in
+let fresh_unif_raw_with env raw_name =
+  let typeref = Typeref.make env.level in
   typeref, Name.{ name = raw_name; index = Typeref.get_unique typeref }
     
-let fresh_unif_raw () =
-  fresh_unif_raw_with "α"
+let fresh_unif_raw env =
+  fresh_unif_raw_with env "α"
 
-let fresh_unif () = 
-  let typeref, name = fresh_unif_raw () in
+let fresh_unif env = 
+  let typeref, name = fresh_unif_raw env in
   Unif (typeref, name)
 
-let fresh_unif_with name =
-  let typeref, name = fresh_unif_raw_with name in
+let fresh_unif_with env name =
+  let typeref, name = fresh_unif_raw_with env name in
   Unif (typeref, name)
+
+let increase_ambient_level env =
+  { env with level = Typeref.next_level env.level }
+
+(* Process the continuation in a higher level *)
+let enter_level env cont =
+  cont (increase_ambient_level env)
+
+
+(* Note [Levels] 
+
+In HM-style type inference, unification variables can only ever be generalized
+if they do not occur free in the environment. 
+Generalization is only sound because the generalized unification variable is never bound and hence
+any possible instantiation is safe.
+If the variable comes from an outer scope, it might still be bound by unification later on, 
+violating this assumption and dismantling type safety in the process.
+
+One might assume that this cannot happen in Polaris, since we never implicitly generalize local bindings, 
+but it is unfortunately not that simple.
+
+1) Because polaris supports mutable references, we need a value restriction that blocks generalization
+  of non-value expressions. The residual unification variables from this are enough to implement unsafeCoerce.
+  (See test/categories/types/outer_gen.pls for an example)
+
+2) Skolems follow the same rules about not escaping the scope of their binder, though unlike unification variables,
+  these can be introduced explicitly in inner let bindings with explicit type signatures.
+  (See test/categories/types/skolem_escape.pls for an example)
+
+The naive solution here is to follow Algorithm W to a tee and (linearly!) search the entire environment every
+time a binding is generalized.
+While simple, this crushes any hopes of efficient inference, since it increases the running complexity of the
+type checker to O(n^2), which is simply unacceptable.
+
+Levels provide a saner way to check for escaping variables. 
+Levels, defined in `typeref.ml` start at `Typeref.top_level` and the ambient level carried in a `local_env` is 
+increased in the body of every let binding using `enter_level`.
+
+Now, unification variables can only ever be generalized at the level where they are bound and skolems
+are invalid (because they would escape) if they occur at a lower level than the one where they were bound.
+
+Additionally, unification needs to update levels when unifying unification variables. 
+It needs to traverse0the full type to perform an occurs check anyway, so we can merge the two 
+traversals inside `bind_directly`. 
+
+The approach taken here mostly follows sound_eager from https://okmij.org/ftp/ML/generalization.html.
+*)
 
 let insert_var : name -> ty -> local_env -> local_env =
   fun x ty env -> { env with local_types = NameMap.add x ty env.local_types }
@@ -159,7 +208,7 @@ let rec instantiate_with_function : local_env -> ty -> (ty * (ty -> ty)) =
   fun env ty -> 
   match normalize_unif ty with
   | Forall (tv, ty) ->
-    let unif = Unif (Typeref.make (), tv) in
+    let unif = Unif (Typeref.make env.level, tv) in
     (* TODO: Collect all tyvars first to avoid multiple traversals *)
     let replacement_fun = replace_tvar tv unif in
     let instantiated, inner_replacement_fun = instantiate_with_function env (replacement_fun ty) in
@@ -272,6 +321,7 @@ let rec eval_module_env : local_env -> module_expr -> global_env * Typed.module_
       module_var_contents = NameMap.empty;
       data_definitions = mod_exports.exported_data_definitions;
       type_aliases = mod_exports.exported_type_aliases;
+      ambient_level = Typeref.initial_top_level
     }, Import ((loc, mod_exports, exprs), path)
   | SubModule (loc, mod_expr, name) ->
     let parent_env, mod_expr = eval_module_env env mod_expr in
@@ -285,7 +335,7 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
     trace_tc (lazy ("inferring pattern '" ^ pretty_pattern pat ^ "'"));
     match pat with
     | VarPat (loc, varname) ->
-      let var_ty = fresh_unif () in
+      let var_ty = fresh_unif env in
       ( var_ty
       , insert_var varname var_ty
       , VarPat((loc, var_ty), varname)
@@ -297,7 +347,7 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
       , AsPat(loc, pattern, name)
       )
     | ConsPat (loc, head_pattern, tail_pattern) ->
-      let elem_ty = fresh_unif () in
+      let elem_ty = fresh_unif env in
       let head_trans, head_pattern = check_pattern env allow_polytype head_pattern elem_ty in
       let tail_trans, tail_pattern = check_pattern (head_trans env) allow_polytype tail_pattern (List elem_ty) in
       ( List elem_ty
@@ -305,7 +355,7 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
       , ConsPat(loc, head_pattern, tail_pattern)
       )
     | ListPat (loc, patterns) ->
-      let elem_ty = fresh_unif () in
+      let elem_ty = fresh_unif env in
       let transformers, patterns = List.split (List.map (fun p -> check_pattern env allow_polytype p elem_ty) patterns) in
       ( List elem_ty
       , Util.compose transformers
@@ -346,7 +396,7 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
       | Some (vars, ty) -> vars, ty
       | None -> panic __LOC__ (Loc.pretty loc ^ ": Data constructor not found in typechecker: '" ^ Name.pretty constructor_name ^ "'. This should have been caught earlier!")
       in
-      let vars_with_unifs = List.map (fun var -> (var, fresh_unif_with var.name)) type_variables in
+      let vars_with_unifs = List.map (fun var -> (var, fresh_unif_with env var.name)) type_variables in
       
       let data_type = TyConstructor(constructor_name, List.map snd vars_with_unifs) in
 
@@ -362,7 +412,7 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
       (* See Note [Inferring Variant Patterns] *)
       let pattern_types, env_transformers, patterns = Util.split3 (List.map (infer_pattern env allow_polytype) patterns) in
 
-      let extension_unif = fresh_unif_raw () in
+      let extension_unif = fresh_unif_raw env in
 
       ( VariantUnif([|(constructor_name, pattern_types)|], extension_unif)
       , Util.compose env_transformers
@@ -509,8 +559,8 @@ let rec split_fun_ty : local_env -> loc -> int -> ty -> (ty list * ty) =
        (if rank N types are ever implemented) *)
     split_fun_ty env loc arg_count real_type
   | ty ->
-    let argument_types = List.init arg_count (fun _ -> fresh_unif ()) in
-    let result_type = fresh_unif () in
+    let argument_types = List.init arg_count (fun _ -> fresh_unif env) in
+    let result_type = fresh_unif env in
     (* TODO: Is the order correct here? Does it even matter? 
        If this is known to be a function (or function alias), we handle it separately
        anyways, so this case should only be triggered (and not fail no matter what we do)
@@ -527,7 +577,7 @@ let rec split_ref_ty : local_env -> loc -> ty -> ty =
     let real_type = instantiate_type_alias env alias_name args in
     split_ref_ty env loc real_type
   | ty -> 
-    let inner_type = fresh_unif () in
+    let inner_type = fresh_unif env in
     subsumes env loc ty (Ref(inner_type));
     inner_type
 
@@ -562,7 +612,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
         any set of constructors as long as that set contains A(..), so its type should be
         < A(..) | r0 > *)
       let arg_types, args = List.split (List.map (infer env) args) in
-      let ext_field = fresh_unif_raw () in
+      let ext_field = fresh_unif_raw env in
       ( VariantUnif ([|(constructor_name, arg_types)|], ext_field) 
       , VariantConstructor(loc, constructor_name, args)
       )
@@ -595,7 +645,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
     | BoolLit (loc, literal) -> Bool, BoolLit (loc, literal)
     | UnitLit loc -> Ty.unit, UnitLit loc
     | ListLit (loc, []) ->
-      let elem_ty = fresh_unif () in
+      let elem_ty = fresh_unif env in
       List elem_ty, ListLit(loc, [])
     | ListLit (loc, (expr :: exprs)) ->
       let elem_ty, expr = infer env expr in
@@ -614,8 +664,8 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       , RecordLit (loc, Array.to_list (Array.map (fun (x, (_, expr)) -> (x, expr)) typed_fields))
       )
     | Subscript (loc, expr, name) -> 
-      let val_ty = fresh_unif () in
-      let (u, u_name) = fresh_unif_raw () in
+      let val_ty = fresh_unif env in
+      let (u, u_name) = fresh_unif_raw env in
       let expr = check env (RecordUnif ([|name, val_ty|], (u, u_name))) expr in
       ( val_ty
       , Subscript ((loc, val_ty), expr, name)
@@ -633,7 +683,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       end
     | RecordUpdate (loc, expr, field_updates) ->
       let update_typed_fields = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_updates) in
-      let unif_raw = fresh_unif_raw () in
+      let unif_raw = fresh_unif_raw env in
 
       let record_ty = RecordUnif (Array.map (fun (x, (ty, _)) -> (x, ty)) update_typed_fields, unif_raw) in
       let expr = check env record_ty expr in
@@ -646,14 +696,14 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
          as its extension field. It might be more efficient to infer the underlying type properly and
          then merging directly *)
       let field_tys = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_exts) in
-      let (u, u_name) = fresh_unif_raw () in
+      let (u, u_name) = fresh_unif_raw env in
       let expr = check env (Unif (u, u_name)) expr in
       ( RecordUnif (Array.map (fun (x, (ty, _)) -> (x, ty)) field_tys, (u, u_name))
       , RecordExtension (loc, expr, Array.to_list (Array.map (fun (x, (_, expr)) -> (x, expr)) field_tys))
       )
     | DynLookup(loc, list_expr, index_expr) ->
       let list_type, list_expr = infer env list_expr in
-      let element_type = fresh_unif () in
+      let element_type = fresh_unif env in
       subsumes env loc list_type (List element_type);
       let index_expr = check env Number index_expr in
       ( element_type 
@@ -732,7 +782,10 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
     | Let (loc, pattern, body, rest) ->
       let ty, env_trans, pattern = infer_pattern env (is_value body) pattern in
       (* Lets are non-recursive, so we use the *unaltered* environment *)
-      let body = check env ty body in
+      (* See Note [Levels] *)
+      let body = enter_level env begin fun env -> 
+        check env ty body 
+      end in
       let result_type, rest = infer (env_trans env) rest in
       ( result_type
       , Let (loc, pattern, body, rest)
@@ -797,7 +850,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       , Async (loc, expr)
       )
     | Await (loc, expr) ->
-      let expr_ty = fresh_unif () in
+      let expr_ty = fresh_unif env in
       let expr = check env (Promise expr_ty) expr in
       ( expr_ty
       , Await (loc, expr)
@@ -805,7 +858,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
     | Match (loc, scrut, body) ->
       (* TODO: Do exhaustiveness checking. *)
       let scrut_ty, scrut = infer env scrut in
-      let result_ty = fresh_unif () in
+      let result_ty = fresh_unif env in
       let body = body |> List.map begin fun (pat, expr) -> 
         let env_trans, pattern = check_pattern env true pat scrut_ty in
         let expr = check (env_trans env) result_ty expr in
@@ -821,7 +874,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       )
     | Unwrap (loc, expr) ->
       let ty, expr = infer env expr in
-      let result_ty = fresh_unif () in
+      let result_ty = fresh_unif env in
       unwrap_constraint env loc ty result_ty;
       ( result_ty
       , Unwrap (loc, expr)
@@ -895,7 +948,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
        cases with parameters *)
     | (StringLit _ | NumLit _ | BoolLit _ | UnitLit _ | ListLit _ | TupleLit _), _ -> defer_to_inference ()
     | Subscript(loc, expr, field), expected_ty -> 
-      let ext_field = fresh_unif_raw () in
+      let ext_field = fresh_unif_raw env in
       let record_ty = RecordUnif ([|field, expected_ty|], ext_field) in
       let expr = check env record_ty expr in
       Subscript ((loc, expected_ty), expr, field)
@@ -940,7 +993,9 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let ty, env_trans, pattern = infer_pattern env (is_value body) pattern in
 
       (* Lets are non-recursive, so we use the *unaltered* environment *)
-      let body = check env ty body in
+      let body = enter_level env begin fun env -> 
+        check env ty body 
+      end in
       let rest = check (env_trans env) expected_ty rest in
       Let (loc, pattern, body, rest)
     | LetRec (loc, mty, fun_name, pats, body, rest), expected_ty ->
@@ -1011,7 +1066,8 @@ and check_list_comp : local_env -> list_comp_clause list -> local_env * Typed.li
 and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> local_env) * Typed.expr =
     fun env check_or_infer expr -> match expr with
     | LetSeq (loc, pat, body) ->
-      let ty, env_trans, pat = infer_pattern env (is_value body) pat in
+      let generalizable = is_value body in
+      let ty, env_trans, pat = infer_pattern env generalizable pat in
       let ty, skolemizer = skolemize_with_function env ty in
 
       let traversal = object(self)
@@ -1026,15 +1082,22 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
 
       let body, () = traversal#traverse_expr () body in 
 
-      let body = check env ty body in
+      let body = enter_level env begin fun env ->
+        check env ty body 
+      end in
 
+      let env_trans = if generalizable then
+        env_trans
+      else
+        increase_ambient_level << env_trans
+      in
       env_trans, LetSeq(loc, pat, body)
     | LetRecSeq(loc, mty, fun_name, patterns, body) ->
       let arg_tys, transformers, patterns, result_ty, ty_skolemizer = 
         match Option.map (skolemize_with_function env) mty with
         | None -> 
           let arg_tys, transformers, patterns = Util.split3 (List.map (infer_pattern env true) patterns) in
-          arg_tys, transformers, patterns, fresh_unif (), Fun.id
+          arg_tys, transformers, patterns, fresh_unif env, Fun.id
         | Some (Fun(arg_tys, result_ty), ty_skolemizer) ->            
           let transformers, patterns = match Base.List.map2 patterns arg_tys ~f:(check_pattern env true) with
           | Ok transformers_and_patterns -> List.split transformers_and_patterns
@@ -1069,7 +1132,9 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
       let body, () = skolemizer_traversal#traverse_expr () body in
       (* Without a type annotation, we have to check the body against a unification variable instead of inferring,
           since we need to know the functions type in its own (possibly recursive) definition*)
-      let body = check inner_env result_ty body in
+      let body = enter_level env begin fun env ->
+        check inner_env result_ty body 
+      end in
       ( env_trans, 
         LetRecSeq ((loc, fun_ty), mty, fun_name, patterns, body)
       )
@@ -1157,13 +1222,21 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
     let exprs = check_seq (env_trans env) loc expected_ty exprs in
     expr :: exprs
 
-let occurs needle ty =
+(* Perform an occurs check and adjust levels (See Note [Levels]) *)
+let occurs_and_adjust needle ty =
   let traversal = object
     inherit [bool] Traversal.traversal
 
     method! ty state ty =
       match normalize_unif ty with
       | Unif (typeref, _) as ty when Typeref.equal needle typeref -> (ty, true)
+      | Unif (typeref, name) as ty -> 
+        begin match Typeref.get needle with
+        | Bound _ -> panic __LOC__ ("Trying to perform an occurs check on a bound unification variable: " ^ pretty_type (Unif (needle, Name.fresh "unknown")))
+        | Unbound needle_level -> 
+          Typeref.adjust_level needle_level typeref;
+          (ty, state)
+        end
       | ty -> (ty, state)
   end in
   snd (traversal#traverse_type false ty)
@@ -1173,23 +1246,27 @@ type unify_state = {
 }
 
 (** Bind a typeref to a new type
-    This is like bind_directly but skips the occurs check *)
+    This is like bind_directly but skips the occurs check
+    and does not adjust any levels (See Note [Levels]).
+
+    This is only safe if the substituted type does not
+    contain any unification variables from an outer scope. *)
 let bind_unchecked : ty Typeref.t -> name -> ty -> unit 
   = fun typeref name ty ->
     trace_subst (lazy (pretty_type (Unif (typeref, name)) ^ " := " ^ pretty_type ty));
     match Typeref.get typeref with
-    | Some previous_ty -> 
+    | Bound previous_ty -> 
         panic __LOC__ ("Trying to directly bind already bound type variable " ^ pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ ".\n"
                      ^ "    previous type: " ^ pretty_type previous_ty ^ "\n"
                      ^ "         new type: " ^ pretty_type ty ^ "\n"
-                     ^ "    Occurs check violation: " ^ string_of_bool (occurs typeref previous_ty))
-    | None -> Typeref.set typeref ty
+                     ^ "    Occurs check violation: " ^ string_of_bool (occurs_and_adjust typeref previous_ty))
+    | Unbound _ -> Typeref.set typeref ty
 
 (** Bind a typeref to a new type.
     This panics if the typeref has already been bound *)
 let bind_directly : loc -> ty Typeref.t -> name -> ty -> unify_context option -> unit 
   = fun loc typeref name ty unify_context ->
-    if occurs typeref ty then
+    if occurs_and_adjust typeref ty then
       raise (TypeError (loc, OccursCheck (typeref, name, ty, unify_context)))
     else
       bind_unchecked typeref name ty
@@ -1213,9 +1290,9 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       
       let bind_with_context typeref name ty context =
         match Typeref.get typeref with
-        | None -> bind_directly loc typeref name ty context
+        | Unbound _ -> bind_directly loc typeref name ty context
         (* TODO: Preserve the order somehow for the sake of error messages *)
-        | Some previous_ty -> 
+        | Bound previous_ty -> 
           trace_unify (lazy 
           ("bind: " ^ pretty_type (Unif(typeref, name)) ^ " ~ " ^ pretty_type ty));
           go previous_ty ty 
@@ -1333,13 +1410,13 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       (* unif, unif *)
       | RecordUnif (fields1, (u1, name1)), RecordUnif (fields2, (u2, name2)) ->
         unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
-          let new_u, new_name = fresh_unif_raw_with "µ" in
+          let new_u, new_name = fresh_unif_raw_with env "µ" in
           bind u1 name1 (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
           bind u2 name2 (RecordUnif (Array.of_list remaining1, (new_u, new_name)))
         end
       | VariantUnif (fields1, (u1, name1)), VariantUnif (fields2, (u2, name2)) ->
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
-          let new_u, new_name = fresh_unif_raw_with "µ" in
+          let new_u, new_name = fresh_unif_raw_with env "µ" in
 
           bind u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
           bind u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
@@ -1479,17 +1556,19 @@ let free_unifs : ty -> TyperefSet.t =
 
 (** Generalizes a given type by turning residual unification variables into
     forall-bound type variables. 
-    This does not currently take the environment into account since only 
-    top-level definitions are generalized and these cannot mention free 
-    unification variables. 
-    This is going to change once we introduce a value restriction!  *)
-let generalize : ty -> ty =
-  fun ty -> 
+    Generalize takes an environment since it is not allowed to generalize
+    type variables at a lower level  *)
+let generalize : local_env -> ty -> ty =
+  fun env ty -> 
     let ty' = TyperefSet.fold 
       (fun (typeref, name) r -> 
-        let new_name = Name.refresh name in
-        bind_unchecked typeref name (TyVar new_name);
-        Forall(new_name, r)) 
+        match Typeref.get typeref with
+        | Bound _ -> panic __LOC__ ("Trying to generalize bound type variable: " ^ pretty_type (Unif (typeref, name)))
+        | Unbound level when Typeref.generalizable_level ~ambient:env.level level ->
+          let new_name = Name.refresh name in
+          bind_unchecked typeref name (TyVar new_name);
+          Forall(new_name, r)
+        | Unbound _ -> r)
       (free_unifs ty)
       ty
     in
@@ -1504,6 +1583,7 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
         constraints = ref Difflist.empty;
         data_definitions = global_env.data_definitions;
         type_aliases = global_env.type_aliases;
+        level = global_env.ambient_level;
       } in
     
     let local_env_trans, typed_expr = check_seq_expr local_env check_or_infer expr in
@@ -1519,12 +1599,13 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
       constraints = local_env.constraints; 
       data_definitions = NameMap.empty;
       type_aliases = NameMap.empty;
+      level = global_env.ambient_level;
     } in
 
     solve_constraints local_env (Difflist.to_list !(local_env.constraints));
 
     let local_types = if binds_value expr 
-      then NameMap.map generalize temp_local_env.local_types 
+      then NameMap.map (generalize temp_local_env) temp_local_env.local_types 
       else temp_local_env.local_types
     in
 
@@ -1544,7 +1625,8 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
         type_aliases =
           NameMap.union (fun _ _ x -> Some x)
             (global_env.type_aliases)
-            temp_local_env.type_aliases
+            temp_local_env.type_aliases;
+        ambient_level = temp_local_env.level
       } in
     global_env, typed_expr
 
@@ -1604,4 +1686,5 @@ let empty_env = {
   module_var_contents = NameMap.empty; 
   data_definitions = NameMap.empty;
   type_aliases = NameMap.empty;
+  ambient_level = Typeref.initial_top_level;
 }

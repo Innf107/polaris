@@ -1,1 +1,7 @@
-aaaa
+test/categories/types/skolem_escape.pls:4:18: ERROR:
+Unable to match type 'α$12' with a type involving the rigid type variable 'a@14'.
+    The rigid type variable would escape its scope.
+    Unable to unify 'α$12' and 'a@14'
+  | 
+4 |     let g(h) = h(x)
+  |                  ^

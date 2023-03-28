@@ -25,6 +25,10 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                 | NonFunTypeInLetRec of name * ty
                 | CannotUnwrapNonData of ty
                 | ValueRestriction of ty
+                | SkolemUnifyEscape of ty * ty * ty * unify_context option
+                                    (* ^    ^    ^ unified type
+                                       |    | skolem
+                                       | unif *)
 
 exception TypeError of loc * type_error
 
@@ -81,7 +85,10 @@ let unify : local_env -> loc -> ty -> ty -> unit =
     | (Number, Number) | (Bool, Bool)| (String, String) | (RecordClosed [||], RecordClosed [||]) -> ()
     | (TyVar name1, TyVar name2) when Name.equal name1 name2 -> ()
     | (Unif(typeref1, _), Unif(typeref2, _)) when Typeref.equal typeref1 typeref2 -> ()
-    | (Skol(u1, _), Skol(u2, _)) when Unique.equal u1 u2 -> ()
+
+    | (Skol(u1, level1, _), Skol(u2, level2, _)) when Unique.equal u1 u2 -> 
+      assert (level1 = level2);
+      ()
     | ty1, ty2 -> env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
 
 (* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2.
@@ -225,7 +232,7 @@ let instantiate : local_env -> ty -> ty =
 let rec skolemize_with_function : local_env -> ty -> ty * (ty -> ty) =
   fun env ty -> match normalize_unif ty with
   | Forall (tv, ty) ->
-    let skol = Skol (Unique.fresh (), tv) in
+    let skol = Skol (Unique.fresh (), env.level, tv) in
     let replacement_fun = replace_tvar tv skol in
     let skolemized, inner_replacement_fun = skolemize_with_function env (replacement_fun ty) in
     skolemized, (fun ty -> inner_replacement_fun (replacement_fun ty))
@@ -329,10 +336,16 @@ let rec eval_module_env : local_env -> module_expr -> global_env * Typed.module_
     | None -> panic __LOC__ (Loc.pretty loc ^ ": Submodule not found in typechecker: '" ^ Name.pretty name ^ "'. This should have been caught earlier!")
     | Some contents -> contents, SubModule (loc, mod_expr, name)
 
+(* Used in traces if --print-type-levels is enabled *)
+let level_prefix env = 
+  if Config.print_levels () then 
+    "[" ^ Typeref.pretty_level (env.level) ^ "]: "
+  else
+    ""    
 
 let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local_env) * Typed.pattern =
   fun env allow_polytype pat -> 
-    trace_tc (lazy ("inferring pattern '" ^ pretty_pattern pat ^ "'"));
+    trace_tc (lazy (level_prefix env ^ "inferring pattern '" ^ pretty_pattern pat ^ "'"));
     match pat with
     | VarPat (loc, varname) ->
       let var_ty = fresh_unif env in
@@ -467,7 +480,7 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
 (* The checking judgement for patterns doesn't actually do anything interesting at the moment. *)
 and check_pattern : local_env -> bool -> pattern -> ty -> (local_env -> local_env) * Typed.pattern =
   fun env allow_polytype pattern expected_ty ->
-    trace_tc (lazy ("checking pattern '" ^ pretty_pattern pattern ^ "' : " ^ pretty_type expected_ty));
+    trace_tc (lazy (level_prefix env ^ "checking pattern '" ^ pretty_pattern pattern ^ "' : " ^ pretty_type expected_ty));
 
     if not allow_polytype && is_polytype env expected_ty then begin
       raise (TypeError (get_pattern_loc pattern, ValueRestriction expected_ty))
@@ -583,7 +596,7 @@ let rec split_ref_ty : local_env -> loc -> ty -> ty =
 
 let rec infer : local_env -> expr -> ty * Typed.expr =
   fun env expr -> 
-    trace_tc (lazy ("inferring expression '" ^ pretty expr ^ "'"));
+    trace_tc (lazy (level_prefix env ^ "inferring expression '" ^ pretty expr ^ "'"));
     match expr with
     | Var (loc, x) -> 
       begin match NameMap.find_opt x env.local_types with
@@ -899,7 +912,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
 
 and check : local_env -> ty -> expr -> Typed.expr =
   fun env polymorphic_expected_ty expr ->
-    trace_tc (lazy ("checking expression '" ^ pretty expr ^ "' : " ^ pretty_type polymorphic_expected_ty));
+    trace_tc (lazy (level_prefix env ^ "checking expression '" ^ pretty expr ^ "' : " ^ pretty_type polymorphic_expected_ty));
     let expected_ty = skolemize env polymorphic_expected_ty in
 
     let defer_to_inference () =
@@ -1132,7 +1145,7 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
       let body, () = skolemizer_traversal#traverse_expr () body in
       (* Without a type annotation, we have to check the body against a unification variable instead of inferring,
           since we need to know the functions type in its own (possibly recursive) definition*)
-      let body = enter_level env begin fun env ->
+      let body = enter_level inner_env begin fun inner_env ->
         check inner_env result_ty body 
       end in
       ( env_trans, 
@@ -1223,7 +1236,7 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
     expr :: exprs
 
 (* Perform an occurs check and adjust levels (See Note [Levels]) *)
-let occurs_and_adjust needle ty =
+let occurs_and_adjust needle name full_ty loc optional_unify_context =
   let traversal = object
     inherit [bool] Traversal.traversal
 
@@ -1237,9 +1250,18 @@ let occurs_and_adjust needle ty =
           Typeref.adjust_level needle_level typeref;
           (ty, state)
         end
+      | Skol (_, skol_level, _) as skol ->
+        begin match Typeref.get needle with
+        | Bound _ -> panic __LOC__ ("Trying to perform an occurs check on a bound unification variable: " ^ pretty_type (Unif (needle, Name.fresh "unknown")))
+        | Unbound needle_level ->
+          if Typeref.unifiable_level ~type_level:skol_level ~unif_level:needle_level then
+            (ty, state)
+          else
+            raise (TypeError (loc, SkolemUnifyEscape(Unif (needle, name), skol, full_ty, optional_unify_context)))
+        end
       | ty -> (ty, state)
   end in
-  snd (traversal#traverse_type false ty)
+  snd (traversal#traverse_type false full_ty)
 
 type unify_state = {
   deferred_constraints : ty_constraint Difflist.t ref option
@@ -1258,15 +1280,14 @@ let bind_unchecked : ty Typeref.t -> name -> ty -> unit
     | Bound previous_ty -> 
         panic __LOC__ ("Trying to directly bind already bound type variable " ^ pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ ".\n"
                      ^ "    previous type: " ^ pretty_type previous_ty ^ "\n"
-                     ^ "         new type: " ^ pretty_type ty ^ "\n"
-                     ^ "    Occurs check violation: " ^ string_of_bool (occurs_and_adjust typeref previous_ty))
+                     ^ "         new type: " ^ pretty_type ty ^ "\n")
     | Unbound _ -> Typeref.set typeref ty
 
 (** Bind a typeref to a new type.
     This panics if the typeref has already been bound *)
 let bind_directly : loc -> ty Typeref.t -> name -> ty -> unify_context option -> unit 
   = fun loc typeref name ty unify_context ->
-    if occurs_and_adjust typeref ty then
+    if occurs_and_adjust typeref name ty loc unify_context then
       raise (TypeError (loc, OccursCheck (typeref, name, ty, unify_context)))
     else
       bind_unchecked typeref name ty
@@ -1341,7 +1362,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       match normalize_unif ty1, normalize_unif ty2 with
       | Unif (typeref, name), ty | ty, Unif (typeref, name) -> 
         (* Thanks to normalize_unif, we know that these have to be unbound unification variables *)
-        begin match normalize_unif ty with
+        begin match ty with
         (* Ignore 'a ~ a' constraints. These are mostly harmless,
           but might hang the type checker if they become part of the substitution 
         *)
@@ -1372,7 +1393,8 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | Ref ty1, Ref ty2 -> go ty1 ty2
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), optional_unify_context)))
       | (Number, Number) | (Bool, Bool) | (String, String) -> ()
-      | Skol (u1, _), Skol (u2, _) when Unique.equal u1 u2 -> ()
+      | Skol (u1, level1, _), Skol (u2, level2, _) when Unique.equal u1 u2 -> 
+        assert (level1 = level2)
       (* closed, closed *)
       | RecordClosed fields1, RecordClosed fields2 ->
         unify_rows (fun _ -> go) fields1 fields2 (fun remaining1 remaining2 -> 
@@ -1424,46 +1446,52 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       (* unif, skolem *)
       (* This is almost exactly like the (unif, closed) case, except that we need to carry the
          skolem extension field over *)
-      | RecordUnif (fields1, (unif_unique, unif_name)), RecordSkol (fields2, (skol_unique, skol_name)) ->
+      | RecordUnif (fields1, (unif_unique, unif_name)), RecordSkol (fields2, (skol_unique, skol_level, skol_name)) ->
+        (* TODO: Only unify if levels are correct *)
         unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining1 with
-          | [] -> bind unif_unique unif_name (RecordSkol (Array.of_list remaining2, (skol_unique, skol_name)))
+          | [] -> bind unif_unique unif_name (RecordSkol (Array.of_list remaining2, (skol_unique, skol_level, skol_name)))
           | _ -> raise (TypeError (loc, MissingRecordFields (remaining1, [], unify_context)))
         end
-      | VariantUnif (fields1, (unif_unique, unif_name)), VariantSkol (fields2, (skol_unique, skol_name)) ->
+      | VariantUnif (fields1, (unif_unique, unif_name)), VariantSkol (fields2, (skol_unique, skol_level, skol_name)) ->
+        (* TODO: Only unify if levels are correct *)
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining1 with
-          | [] -> bind unif_unique unif_name (VariantSkol (Array.of_list remaining2, (skol_unique, skol_name)))
+          | [] -> bind unif_unique unif_name (VariantSkol (Array.of_list remaining2, (skol_unique, skol_level, skol_name)))
           | _ -> raise (TypeError (loc, MissingVariantConstructors (remaining1, [], unify_context)))
         end
       (* skolem, unif *)
       (* This is almost exactly like the (closed, unif) case, except that we need to carry the
          skolem extension field over *)
-      | RecordSkol (fields1, (skolem_unique, skolem_name)), RecordUnif (fields2, (unif_unique, unif_name)) -> 
+      | RecordSkol (fields1, (skolem_unique, skol_level, skolem_name)), RecordUnif (fields2, (unif_unique, unif_name)) -> 
+        (* TODO: Only unify if levels are correct *)
         unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining2 with
-          | [] -> bind unif_unique unif_name (RecordSkol (Array.of_list remaining1, (skolem_unique, skolem_name)))
+          | [] -> bind unif_unique unif_name (RecordSkol (Array.of_list remaining1, (skolem_unique, skol_level, skolem_name)))
           | _ -> raise (TypeError (loc, MissingRecordFields ([], remaining2, unify_context)))
         end
-      | VariantSkol (fields1, (skolem_unique, skolem_name)), VariantUnif (fields2, (unif_unique, unif_name)) -> 
+      | VariantSkol (fields1, (skolem_unique, skolem_level, skolem_name)), VariantUnif (fields2, (unif_unique, unif_name)) -> 
+        (* TODO: Only unify if levels are correct *)
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
           match remaining2 with
-          | [] -> bind unif_unique unif_name (VariantSkol (Array.of_list remaining1, (skolem_unique, skolem_name)))
+          | [] -> bind unif_unique unif_name (VariantSkol (Array.of_list remaining1, (skolem_unique, skolem_level, skolem_name)))
           | _ -> raise (TypeError (loc, MissingVariantConstructors ([], remaining2, unify_context)))
         end
       (* skolem, skolem *)
       (* Skolem rows only unify if the skolem fields match and
           all fields unify (similar to closed rows) *)
-      | RecordSkol (fields1, (skolem1_unique, skolem1_name)), RecordSkol (fields2, (skolem2_unique, skolem2_name)) ->
+      | RecordSkol (fields1, (skolem1_unique, skolem1_level, skolem1_name)), RecordSkol (fields2, (skolem2_unique, skolem2_level, skolem2_name)) ->
+        (* TODO: Only unify if levels are correct *)
         (* We unify the skolems to generate a more readable error message.
            TODO: Maybe a custom error message is clearer? *)
-        go (Skol (skolem1_unique, skolem1_name)) (Skol (skolem2_unique, skolem2_name));
+        go (Skol (skolem1_unique, skolem1_level, skolem1_name)) (Skol (skolem2_unique, skolem2_level, skolem2_name));
         unify_rows (fun _ -> go) fields1 fields2 (fun remaining1 remaining2 -> 
           raise (TypeError (loc, MissingRecordFields (remaining1, remaining2, unify_context))))
-      | VariantSkol (fields1, (skolem1_unique, skolem1_name)), VariantSkol (fields2, (skolem2_unique, skolem2_name)) ->
+      | VariantSkol (fields1, (skolem1_unique, skolem1_level, skolem1_name)), VariantSkol (fields2, (skolem2_unique, skolem2_level, skolem2_name)) ->
+        (* TODO: Only unify if levels are correct *)
         (* We unify the skolems to generate a more readable error message.
            TODO: Maybe a custom error message is clearer? *)
-        go (Skol (skolem1_unique, skolem1_name)) (Skol (skolem2_unique, skolem2_name));
+        go (Skol (skolem1_unique, skolem1_level, skolem1_name)) (Skol (skolem2_unique, skolem2_level, skolem2_name));
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 -> 
           raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, unify_context)))) 
       (* closed, skolem *)

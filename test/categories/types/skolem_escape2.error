@@ -1,0 +1,7 @@
+test/categories/types/skolem_escape2.pls:6:18: ERROR:
+Unable to match type 'α$17' with a type involving the rigid type variable 'a@18'.
+    The rigid type variable would escape its scope.
+    Unable to unify 'α$17' and 'List(a@18)'
+  | 
+6 |     let g(h) = h(i(x))
+  |                  ^^^^

@@ -173,8 +173,13 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       "Trying to unwrap invalid type " ^ text_style.ty (Renamed.pretty_type ty) ^ "\n    Unwrapping is only possible for types defined in a data declaration"
     | ValueRestriction ty ->
       "Value restriction violation\n"
-    ^ "Trying to bind " ^ text_style.emphasis "non-value" ^ " to a variable\n"
-    ^ "with a polymorphic type: " ^ text_style.ty (Typed.pretty_type ty)
-  end
+    ^ "    Trying to bind " ^ text_style.emphasis "non-value" ^ " to a variable\n"
+    ^ "    with a polymorphic type: " ^ text_style.ty (Typed.pretty_type ty)
+    | SkolemUnifyEscape (unif, skol, ty, unify_context) ->
+      "Unable to match type " ^ text_style.ty (Typed.pretty_type unif) ^ " with a type involving the rigid type variable " ^ text_style.ty (Typed.pretty_type skol) ^ ".\n"
+    ^ "    The rigid type variable would escape its scope.\n"
+    ^ "    Unable to unify " ^ text_style.ty (Typed.pretty_type unif) ^ " and " ^ text_style.ty (Typed.pretty_type ty)
+    ^ pretty_optional_unify_context unify_context
+end
 
 

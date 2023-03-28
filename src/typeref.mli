@@ -4,7 +4,11 @@ val initial_top_level : level
 
 val next_level : level -> level
 
+val pretty_level : level -> string
+
 val generalizable_level : ambient:level -> level -> bool
+
+val unifiable_level : type_level:level -> unif_level:level -> bool
 
 type 'a state =
     | Unbound of level

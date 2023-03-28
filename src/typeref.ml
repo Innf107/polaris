@@ -5,7 +5,11 @@ let initial_top_level = 0
 
 let next_level lvl = lvl + 1
 
+let pretty_level = string_of_int
+
 let generalizable_level ~ambient level = level >= ambient
+
+let unifiable_level ~type_level ~unif_level = unif_level >= type_level
 
 type 'a state =
   | Unbound of level

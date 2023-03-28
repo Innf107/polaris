@@ -2,7 +2,6 @@ open Syntax
 open Syntax.Renamed
 
 type unify_context = (ty * ty)
-
 type type_error = UnableToUnify of (ty * ty) * unify_context option
                                  (* ^           ^ full original types (None if there is no difference) *)
                                  (* | specific mismatch                                                *)
@@ -20,6 +19,10 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                 | NonFunTypeInLetRec of name * ty
                 | CannotUnwrapNonData of ty
                 | ValueRestriction of ty
+                | SkolemUnifyEscape of ty * ty * ty * unify_context option
+                                    (* ^    ^    ^ unified type
+                                       |    | skolem
+                                       | unif *)
 
 exception TypeError of loc * type_error
 

@@ -1,7 +1,7 @@
 test/categories/types/value_restriction_closure.pls:13:9: ERROR:
 Value restriction violation
-Trying to bind non-value to a variable
-with a polymorphic type: '∀a. ClosureRef(List(a))'
+    Trying to bind non-value to a variable
+    with a polymorphic type: '∀a. ClosureRef(List(a))'
    | 
 13 |     let reference : forall a. ClosureRef(List(a)) = makeRef([])
    |         ^^^^^^^^^

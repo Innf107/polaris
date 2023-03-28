@@ -57,7 +57,7 @@ module MakeTy(Ext : sig
     | TypeAlias of Ext.name * ty list
     (* The 'name' is just kept around for error messages but *completely ignored* when typechecking *)
     | Unif of ty Typeref.t * Ext.name
-    | Skol of Unique.t * Ext.name
+    | Skol of Unique.t * Typeref.level * Ext.name
     | Number
     | Bool
     | String
@@ -67,11 +67,11 @@ module MakeTy(Ext : sig
     | Promise of ty
     | RecordClosed of (string * ty) array
     | RecordUnif of (string * ty) array * (ty Typeref.t * Ext.name)
-    | RecordSkol of (string * ty) array * (Unique.t * Ext.name)
+    | RecordSkol of (string * ty) array * (Unique.t * Typeref.level * Ext.name)
     | RecordVar of (string * ty) array * Ext.name
     | VariantClosed of (string * ty list) array
     | VariantUnif of (string * ty list) array * (ty Typeref.t * Ext.name)
-    | VariantSkol of (string * ty list) array * (Unique.t * Ext.name)
+    | VariantSkol of (string * ty list) array * (Unique.t * Typeref.level * Ext.name)
     | VariantVar of (string * ty list) array * Ext.name
     (* We keep subscript type constructors before renaming, but just replace them
        by their (unique!) type constructor in the original module afterwards,
@@ -92,7 +92,7 @@ module Template = struct
     let replace_record_extension fields = function
     | Unif (typeref, name) -> RecordUnif (fields, (typeref, name))
     | TyVar var -> RecordVar (fields, var)
-    | Skol (u, name) -> RecordSkol (fields, (u, name))
+    | Skol (u, level, name) -> RecordSkol (fields, (u, level, name))
     | RecordClosed fields2 ->
       RecordClosed (Array.append fields fields2)
     | RecordUnif (fields2, unif) ->
@@ -106,7 +106,7 @@ module Template = struct
     let replace_variant_extension fields = function
     | Unif (typeref, name) -> VariantUnif (fields, (typeref, name))
     | TyVar var -> VariantVar (fields, var)
-    | Skol (u, name) -> VariantSkol (fields, (u, name))
+    | Skol (u, _level, name) -> VariantSkol (fields, (u, _level, name))
     | VariantClosed fields2 ->
       VariantClosed (Array.append fields fields2)
     | VariantUnif (fields2, unif) ->
@@ -346,14 +346,22 @@ module Template = struct
     | TyVar var -> pretty_name var
     | Unif (typeref, name) -> 
       begin match Typeref.get typeref with
-      | Unbound _level -> pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref)
+      | Unbound level -> 
+        if Config.print_levels () then
+          pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ "[" ^ Typeref.pretty_level level ^ "]"
+        else
+          pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref)
       | Bound ty ->
         if Config.print_subst_unif_vars () then
           pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ "[= " ^ pretty_type ty ^ "]"
         else
           pretty_type ty
       end 
-    | Skol (u, name) -> pretty_name name ^ "@" ^ Unique.display u
+    | Skol (u, level, name) -> 
+      if Config.print_levels () then
+        pretty_name name ^ "@" ^ Unique.display u ^ "[" ^ Typeref.pretty_level level ^ "]"
+      else
+        pretty_name name ^ "@" ^ Unique.display u
     | Number -> "Number"
     | Bool -> "Bool"
     | String -> "String"
@@ -366,11 +374,11 @@ module Template = struct
     | RecordClosed [||] -> "()"
     | RecordClosed fields -> "{ " ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " }"
     | RecordUnif (fields, (typeref, name)) -> "{ " ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Unif (typeref, name)) ^ " }"
-    | RecordSkol (fields, (u, name)) -> "{ " ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Skol (u, name)) ^ " }"
+    | RecordSkol (fields, (u, level, name)) -> "{ " ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_type (Skol (u, level, name)) ^ " }"
     | RecordVar (fields, name) -> "{ " ^ String.concat ", " (Array.to_list (Array.map (fun (x, ty) -> x ^ " : " ^ pretty_type ty) fields)) ^ " | " ^ pretty_name name ^ " }"
     | VariantClosed fields -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " >"
     | VariantUnif (fields, (typeref, name)) -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " | " ^ pretty_type (Unif (typeref, name)) ^ " >"
-    | VariantSkol (fields, (u, name)) -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " | " ^ pretty_type (Skol (u, name)) ^ " >"
+    | VariantSkol (fields, (u, level, name)) -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " | " ^ pretty_type (Skol (u, level, name)) ^ " >"
     | VariantVar (fields, name) -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " | " ^ pretty_name name ^ " >"
 
   let rec pretty_pattern = function
@@ -805,9 +813,9 @@ module Template = struct
           (* If this unif var has been substituted, we completely ignore it. *)
           | Bound ty -> self#traverse_type state ty
           end
-        | Skol(unique, name) ->
+        | Skol(unique, level, name) ->
           let name, state = self#traverse_name state name in
-          Skol(unique, name), state
+          Skol(unique, level, name), state
         | Tuple(tys) ->
           let tys, state = traverse_list self#traverse_type state (Array.to_list tys) in
           Tuple(Array.of_list tys), state
@@ -891,7 +899,7 @@ module Template = struct
           in
           let var, state = self#traverse_type state (Unif (typeref, var)) in
           Ty.replace_variant_extension (Array.of_list fields) var, state  
-        | RecordSkol (fields, (unique, var)) ->
+        | RecordSkol (fields, (unique, level, var)) ->
           let fields, state = traverse_list 
             (fun state (field, ty) ->
               let ty, state = self#traverse_type state ty in
@@ -900,9 +908,9 @@ module Template = struct
             state 
             (Array.to_list fields) 
           in
-          let var, state = self#traverse_type state (Skol (unique, var)) in
+          let var, state = self#traverse_type state (Skol (unique, level, var)) in
           Ty.replace_record_extension (Array.of_list fields) var, state
-        | VariantSkol (fields, (unique, var)) ->
+        | VariantSkol (fields, (unique, level, var)) ->
           let fields, state = traverse_list 
             (fun state (field, tys) ->
               let tys, state = traverse_list self#traverse_type state tys in
@@ -911,7 +919,7 @@ module Template = struct
             state 
             (Array.to_list fields) 
           in
-          let var, state = self#traverse_type state (Skol (unique, var)) in
+          let var, state = self#traverse_type state (Skol (unique, level, var)) in
           Ty.replace_variant_extension (Array.of_list fields) var, state    
         in
         self#ty state transformed

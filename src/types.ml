@@ -1198,7 +1198,7 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
 and infer_seq : local_env -> expr list -> ty * Typed.expr list =
   fun env exprs -> match exprs with
     | [] -> Ty.unit, []
-    | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ as expr] ->
+    | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ as expr] ->
       (* If the last expression in an expression block is a
          LetSeq* expresion, we don't need to carry the environment transformations,
          but we do have to make sure to check the expression with `check_seq_expr`, 
@@ -1218,7 +1218,7 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
   | [] -> 
     subsumes env loc expected_ty Ty.unit;
     []
-  | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ as expr] ->
+  | [ LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ as expr] ->
     (* If the last expression in an expression block is a
        LetSeq* expresion, we don't need to carry the environment transformations,
        but we do have to make sure to check the expression with `check_seq_expr`, 

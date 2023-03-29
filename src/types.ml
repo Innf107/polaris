@@ -38,10 +38,14 @@ module TyperefSet = Set.Make(struct
 end)
 
 type ty_constraint = Unify of loc * ty * ty
-                   | Unwrap of loc * ty * ty
+                    (* Unwrap constraints need to carry their environment in order
+                       to unwrap the type correctly.
+                       TODO: Alternatively, we could store the definition of types in the  
+                       TyConstructor constructor so that we don't need to consult the environment *)
+                   | Unwrap of loc * ty * ty * local_env
                    | ProgramArg of loc * ty
 
-type global_env = {
+and global_env = {
   var_types : Typed.ty NameMap.t;
   module_var_contents : global_env NameMap.t;
   data_definitions : (name list * Typed.ty) NameMap.t;
@@ -49,7 +53,7 @@ type global_env = {
   ambient_level : Typeref.level;
 }
 
-type local_env = {
+and local_env = {
   local_types : ty NameMap.t;
   constraints : ty_constraint Difflist.t ref;
   module_var_contents : global_env NameMap.t;
@@ -102,7 +106,7 @@ let subsumes : local_env -> loc -> ty -> ty -> unit =
 
 let unwrap_constraint : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
-    env.constraints := Difflist.snoc !(env.constraints) (Unwrap (loc, ty1, ty2))
+    env.constraints := Difflist.snoc !(env.constraints) (Unwrap (loc, ty1, ty2, env))
 
 let prog_arg_constraint : local_env -> loc -> ty -> unit =
   fun env loc ty ->
@@ -1511,11 +1515,11 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
     in
     go_with_original None original_type1 original_type2
 
-let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
-  fun loc env state ty1 ty2 ->
+let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> local_env -> unit =
+  fun loc env state ty1 ty2 definition_env ->
     match normalize_unif ty1 with
     | TyConstructor(name, args) ->
-      let var_names, underlying_type_raw = begin match NameMap.find_opt name env.data_definitions with
+      let var_names, underlying_type_raw = begin match NameMap.find_opt name definition_env.data_definitions with
       | None -> panic __LOC__ (Loc.pretty loc ^ ": Data constructor '" ^ Name.pretty name ^ "' not found in unwrap expression. This should have been caught earlier!")
       | Some (var_names, underlying_type_raw) -> var_names, underlying_type_raw 
       end in
@@ -1528,7 +1532,7 @@ let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> unit =
       match state.deferred_constraints with
       | None -> raise (TypeError(loc, CannotUnwrapNonData ty))
       | Some deferred_constraint_ref ->
-        deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (Unwrap(loc, ty, ty2))
+        deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (Unwrap(loc, ty, ty2, definition_env))
 
 let rec solve_program_arg : loc -> local_env -> unify_state -> ty -> unit =
   fun loc env state ty -> match normalize_unif ty with
@@ -1549,8 +1553,8 @@ let solve_constraints : local_env -> ty_constraint list -> unit =
       List.iter begin function
         | Unify (loc, ty1, ty2) -> 
           solve_unify loc env unify_state ty1 ty2
-        | Unwrap (loc, ty1, ty2) ->
-          solve_unwrap loc env unify_state ty1 ty2
+        | Unwrap (loc, ty1, ty2, definition_env) ->
+          solve_unwrap loc env unify_state ty1 ty2 definition_env
         | ProgramArg (loc, ty) ->
           solve_program_arg loc env unify_state ty
         end constraints;

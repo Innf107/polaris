@@ -29,6 +29,7 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                                     (* ^    ^    ^ unified type
                                        |    | skolem
                                        | unif *)
+                | DataConUnifyEscape of ty * name * ty * unify_context option
 
 exception TypeError of loc * type_error
 
@@ -37,13 +38,30 @@ module TyperefSet = Set.Make(struct
   let compare (ref1, _) (ref2, _) = Unique.compare (Typeref.get_unique ref1) (Typeref.get_unique ref2)
 end)
 
-type ty_constraint = Unify of loc * ty * ty
-                    (* Unwrap constraints need to carry their environment in order
-                       to unwrap the type correctly.
-                       TODO: Alternatively, we could store the definition of types in the  
-                       TyConstructor constructor so that we don't need to consult the environment *)
-                   | Unwrap of loc * ty * ty * local_env
-                   | ProgramArg of loc * ty
+(* Note [Env in Constraints] 
+During unification, we need to check for escaping type constructors.
+Unfortunately, unlike skolems, type constructors do *not* carry the level at which they were defined!
+We only resolve levels in the type checker, so if we were to carry the environment, we
+would need to separate the definitions of Renamed.ty and Typed.ty, which is painful to say the least.
+
+Instead, we keep constructor levels in the typing environment and make unification constraints
+carry around the environment at which they were emitted.
+This environment is only used to look up type constructors -- other lookups are covered by the (top-level) environment
+at the point of constraint solving already, since this one might contain additional definitions that creep into 
+the constraint solving processs through other unification variables
+
+Other constraints also need to carry the environment since these are solved in terms of
+unification constraints
+*)
+
+
+type ty_constraint = 
+    (* See Note [Env in Constraints] *)
+  | Unify of loc * ty * ty * local_env
+    (* See Note [Env in Constraints] *)
+  | Unwrap of loc * ty * ty * local_env
+    (* See Note [Env in Constraints] *)
+  | ProgramArg of loc * ty * local_env
 
 and global_env = {
   var_types : Typed.ty NameMap.t;
@@ -57,7 +75,7 @@ and local_env = {
   local_types : ty NameMap.t;
   constraints : ty_constraint Difflist.t ref;
   module_var_contents : global_env NameMap.t;
-  data_definitions : (name list * ty) NameMap.t;
+  data_definitions : (Typeref.level * name list * ty) NameMap.t;
   type_aliases : (name list * ty) NameMap.t;
   level : Typeref.level;
 }
@@ -93,7 +111,7 @@ let unify : local_env -> loc -> ty -> ty -> unit =
     | (Skol(u1, level1, _), Skol(u2, level2, _)) when Unique.equal u1 u2 -> 
       assert (level1 = level2);
       ()
-    | ty1, ty2 -> env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2))
+    | ty1, ty2 -> env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2, env))
 
 (* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2.
    
@@ -110,7 +128,7 @@ let unwrap_constraint : local_env -> loc -> ty -> ty -> unit =
 
 let prog_arg_constraint : local_env -> loc -> ty -> unit =
   fun env loc ty ->
-    env.constraints := Difflist.snoc !(env.constraints) (ProgramArg (loc, ty))
+    env.constraints := Difflist.snoc !(env.constraints) (ProgramArg (loc, ty, env))
 
 let fresh_unif_raw_with env raw_name =
   let typeref = Typeref.make env.level in
@@ -177,9 +195,9 @@ The approach taken here mostly follows sound_eager from https://okmij.org/ftp/ML
 let insert_var : name -> ty -> local_env -> local_env =
   fun x ty env -> { env with local_types = NameMap.add x ty env.local_types }
 
-let insert_data_definition : name -> name list -> ty -> local_env -> local_env =
-  fun constructor params underlying_type env ->
-    { env with data_definitions = NameMap.add constructor (params, underlying_type) env.data_definitions }
+let insert_data_definition : Typeref.level -> name -> name list -> ty -> local_env -> local_env =
+  fun level constructor params underlying_type env ->
+    { env with data_definitions = NameMap.add constructor (level, params, underlying_type) env.data_definitions }
 
 let insert_type_alias : name -> name list -> ty -> local_env -> local_env =
   fun constructor params underlying_type env ->
@@ -409,8 +427,8 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
       , TypePat(loc, pattern, ty)
       )
     | DataPat(loc, constructor_name, pattern) ->
-      let type_variables, underlying_type_raw = match NameMap.find_opt constructor_name env.data_definitions with
-      | Some (vars, ty) -> vars, ty
+      let datacon_level, type_variables, underlying_type_raw = match NameMap.find_opt constructor_name env.data_definitions with
+      | Some (level, vars, ty) -> level, vars, ty
       | None -> panic __LOC__ (Loc.pretty loc ^ ": Data constructor not found in typechecker: '" ^ Name.pretty constructor_name ^ "'. This should have been caught earlier!")
       in
       let vars_with_unifs = List.map (fun var -> (var, fresh_unif_with env var.name)) type_variables in
@@ -549,7 +567,7 @@ and check_pattern : local_env -> bool -> pattern -> ty -> (local_env -> local_en
     | DataPat(loc, data_name, underlying_pattern), TyConstructor(constr_name, args) when Name.equal data_name constr_name ->
       begin match NameMap.find_opt data_name env.data_definitions with
       | None -> panic __LOC__ "Unbound data constructor in type checker"
-      | Some (type_params, underlying_type_raw) -> 
+      | Some (_datacon_level, type_params, underlying_type_raw) -> 
         let underlying_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq type_params) (List.to_seq args))) underlying_type_raw in
         let env_trans, underlying_pattern = check_pattern env allow_polytype underlying_pattern underlying_type in
         ( env_trans
@@ -613,7 +631,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       end
     | DataConstructor(loc, data_name) ->
       begin match NameMap.find_opt data_name env.data_definitions with
-      | Some (params, ty) -> 
+      | Some (_datacon_level, params, ty) -> 
         let data_constructor_type = 
           List.fold_right (fun param ty -> Forall (param, ty)) params
             (Fun([ty], TyConstructor(data_name, List.map (fun x -> TyVar(x)) params)))
@@ -1169,13 +1187,22 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
          so we *need to merge these* with the current environment. 
          (This is fine since data constructor names are always unique, even across modules)
       *)
+      let data_definitions_with_levels = 
+        NameMap.map
+          (fun (params, underlying) -> (env.level, params, underlying))
+          module_env.data_definitions
+      in
       (fun env -> 
         { env with 
             module_var_contents = NameMap.add name module_env env.module_var_contents;
-            data_definitions = NameMap.union (fun _ _ x -> Some x) env.data_definitions module_env.data_definitions;
+            data_definitions = 
+              NameMap.union 
+                (fun _ _ x -> Some x) 
+                env.data_definitions 
+                data_definitions_with_levels;
         }), LetModuleSeq(loc, name, mod_expr)
     | LetDataSeq(loc, data_name, params, ty) ->
-      insert_data_definition data_name params ty, LetDataSeq(loc, data_name, params, ty)
+      insert_data_definition env.level data_name params ty, LetDataSeq(loc, data_name, params, ty)
     | LetTypeSeq(loc, alias_name, params, ty) ->
       insert_type_alias alias_name params ty, LetTypeSeq(loc, alias_name, params, ty)
     | ProgCall (loc, prog, args) ->
@@ -1239,8 +1266,14 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
     let exprs = check_seq (env_trans env) loc expected_ty exprs in
     expr :: exprs
 
+let datacon_level : name -> local_env -> Typeref.level =
+  fun constructor env ->
+    match NameMap.find_opt constructor env.data_definitions with
+    | None -> panic __LOC__ ("Trying to look up level of unbound data constructor " ^ Name.pretty constructor)
+    | Some (level, _, _) -> level    
+
 (* Perform an occurs check and adjust levels (See Note [Levels]) *)
-let occurs_and_adjust needle name full_ty loc optional_unify_context =
+let occurs_and_adjust needle name full_ty loc definition_env optional_unify_context =
   let traversal = object
     inherit [bool] Traversal.traversal
 
@@ -1263,9 +1296,25 @@ let occurs_and_adjust needle name full_ty loc optional_unify_context =
           else
             raise (TypeError (loc, SkolemUnifyEscape(Unif (needle, name), skol, full_ty, optional_unify_context)))
         end
+      | TyConstructor (constructor_name, _) ->
+        begin match Typeref.get needle with
+        | Bound _ -> panic __LOC__ ("Trying to perform an occurs check on a bound unification variable: " ^ pretty_type (Unif (needle, Name.fresh "unknown")))
+        | Unbound needle_level ->
+          if Typeref.unifiable_level ~type_level:(datacon_level constructor_name definition_env) ~unif_level:needle_level then
+            (ty, state)
+          else
+            raise (TypeError (loc, DataConUnifyEscape(Unif (needle, name), constructor_name, full_ty, optional_unify_context)))
+          end
       | ty -> (ty, state)
   end in
   snd (traversal#traverse_type false full_ty)
+
+module A : sig 
+  val f : ('a -> 'b) -> 'a -> 'b
+end = struct 
+  let f : ('a -> 'b) -> 'a -> 'b =
+    fun f x -> f x
+end
 
 type unify_state = {
   deferred_constraints : ty_constraint Difflist.t ref option
@@ -1289,17 +1338,17 @@ let bind_unchecked : ty Typeref.t -> name -> ty -> unit
 
 (** Bind a typeref to a new type.
     This panics if the typeref has already been bound *)
-let bind_directly : loc -> ty Typeref.t -> name -> ty -> unify_context option -> unit 
-  = fun loc typeref name ty unify_context ->
-    if occurs_and_adjust typeref name ty loc unify_context then
+let bind_directly : loc -> ty Typeref.t -> name -> ty -> local_env -> unify_context option -> unit 
+  = fun loc typeref name ty definition_env unify_context ->
+    if occurs_and_adjust typeref name ty loc definition_env unify_context then
       raise (TypeError (loc, OccursCheck (typeref, name, ty, unify_context)))
     else
       bind_unchecked typeref name ty
 
 
 
-let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
-  fun loc env state original_type1 original_type2 ->
+let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> local_env -> unit =
+  fun loc env state original_type1 original_type2 definition_env ->
     trace_unify (lazy (pretty_type original_type1 ^ " ~ " ^ pretty_type original_type2));
 
     let unify_context = (original_type1, original_type2) in
@@ -1315,7 +1364,7 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       
       let bind_with_context typeref name ty context =
         match Typeref.get typeref with
-        | Unbound _ -> bind_directly loc typeref name ty context
+        | Unbound _ -> bind_directly loc typeref name ty definition_env context
         (* TODO: Preserve the order somehow for the sake of error messages *)
         | Bound previous_ty -> 
           trace_unify (lazy 
@@ -1377,11 +1426,13 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> unit =
       | TyConstructor(name1, args1), TyConstructor(name2, args2) ->
         if Name.compare name1 name2 <> 0 then
           raise (TypeError (loc, MismatchedTyCon(name1, name2, optional_unify_context)))
-        else
+        else begin
           if List.compare_lengths args1 args2 <> 0 then
             panic __LOC__ (Loc.pretty loc ^ ": Trying to unify applications of type constructor '" ^ Name.pretty name1 ^ "' to different numbers of arguments.\n    ty1: " ^ pretty_type ty1 ^ "\n    ty2: " ^ pretty_type ty2)
-          else
+          else begin
             List.iter2 go args1 args2
+          end
+        end
       | Fun (dom1, cod1), Fun (dom2, cod2) ->
         if List.compare_lengths dom1 dom2 != 0 then
           raise (TypeError (loc, 
@@ -1519,14 +1570,15 @@ let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> local_env -> u
   fun loc env state ty1 ty2 definition_env ->
     match normalize_unif ty1 with
     | TyConstructor(name, args) ->
-      let var_names, underlying_type_raw = begin match NameMap.find_opt name definition_env.data_definitions with
+      let data_level, var_names, underlying_type_raw = begin match NameMap.find_opt name definition_env.data_definitions with
       | None -> panic __LOC__ (Loc.pretty loc ^ ": Data constructor '" ^ Name.pretty name ^ "' not found in unwrap expression. This should have been caught earlier!")
-      | Some (var_names, underlying_type_raw) -> var_names, underlying_type_raw 
+      | Some (data_level, var_names, underlying_type_raw) -> data_level, var_names, underlying_type_raw 
       end in
+      (* TODO: Can local types escape this way? *)
       let underlying_type = replace_tvars (NameMap.of_seq (Seq.zip (List.to_seq var_names) (List.to_seq args))) underlying_type_raw in
-      solve_unify loc env state underlying_type ty2
+      solve_unify loc env state underlying_type ty2 definition_env
     | Ref(value_type) ->
-      solve_unify loc env state value_type ty2
+      solve_unify loc env state value_type ty2 definition_env
     | ty -> 
       (* Defer this constraint if possible. If not (i.e. we already deferred this one) we throw a type error *)
       match state.deferred_constraints with
@@ -1534,29 +1586,29 @@ let solve_unwrap : loc -> local_env -> unify_state -> ty -> ty -> local_env -> u
       | Some deferred_constraint_ref ->
         deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (Unwrap(loc, ty, ty2, definition_env))
 
-let rec solve_program_arg : loc -> local_env -> unify_state -> ty -> unit =
-  fun loc env state ty -> match normalize_unif ty with
+let rec solve_program_arg : loc -> local_env -> unify_state -> ty -> local_env -> unit =
+  fun loc env state ty definition_env  -> match normalize_unif ty with
   | String | Number -> ()
-  | List ty -> solve_program_arg loc env state ty
+  | List ty -> solve_program_arg loc env state ty definition_env
   | ty -> 
     match state.deferred_constraints with
     | None ->
       (* Fall back to matching against strings. This might be a little
        brittle, but we're going to replace this with type classes in the future anyway. *)
-      solve_unify loc env state ty String
+      solve_unify loc env state ty String definition_env
     | Some deferred_constraint_ref ->
-      deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (ProgramArg (loc, ty))
+      deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (ProgramArg (loc, ty, definition_env))
 
 let solve_constraints : local_env -> ty_constraint list -> unit =
   fun env constraints ->
     let go unify_state constraints = 
       List.iter begin function
-        | Unify (loc, ty1, ty2) -> 
-          solve_unify loc env unify_state ty1 ty2
+        | Unify (loc, ty1, ty2, definition_env) -> 
+          solve_unify loc env unify_state ty1 ty2 definition_env
         | Unwrap (loc, ty1, ty2, definition_env) ->
           solve_unwrap loc env unify_state ty1 ty2 definition_env
-        | ProgramArg (loc, ty) ->
-          solve_program_arg loc env unify_state ty
+        | ProgramArg (loc, ty, definition_env) ->
+          solve_program_arg loc env unify_state ty definition_env
         end constraints;
     in
 
@@ -1609,11 +1661,17 @@ let generalize : local_env -> ty -> ty =
     
 let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env * Typed.expr =
   fun global_env check_or_infer expr ->
+    let data_definitions_with_levels = 
+      NameMap.map 
+        (fun (params, underlying) -> (global_env.ambient_level, params, underlying)) 
+        global_env.data_definitions
+    in
+
     let local_env = 
       { local_types = global_env.var_types;
         module_var_contents = global_env.module_var_contents;
         constraints = ref Difflist.empty;
-        data_definitions = global_env.data_definitions;
+        data_definitions = data_definitions_with_levels;
         type_aliases = global_env.type_aliases;
         level = global_env.ambient_level;
       } in
@@ -1641,6 +1699,11 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
       else temp_local_env.local_types
     in
 
+    let data_definitions_without_levels =
+      NameMap.map 
+        (fun (_level, params, underlying) -> (params, underlying)) 
+        temp_local_env.data_definitions
+    in
     let global_env = { 
         var_types = 
           NameMap.union (fun _ _ x -> Some x) 
@@ -1653,7 +1716,7 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
         data_definitions =
           NameMap.union (fun _ _ x -> Some x)
             (global_env.data_definitions)
-            temp_local_env.data_definitions;
+            data_definitions_without_levels;
         type_aliases =
           NameMap.union (fun _ _ x -> Some x)
             (global_env.type_aliases)

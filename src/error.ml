@@ -46,7 +46,7 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
     | Some context -> pretty_unify_context context
   in
   function
-  | Panic msg -> print_fun None ("PANIC! The 'impossible' happened (This is a bug, please report it!):\n" ^ msg)
+  | Panic msg -> print_fun None ("PANIC! The 'impossible' happened (This is a bug in the Polaris interpreter, please report it!):\n" ^ msg)
   | TODO loc -> print_fun None ("PANIC! Unresolved compiler TODO at '" ^ loc ^ "'.\nIf you see this, please report it and tell the author to finish their things before releasing them!")
   | ParseError (loc, msg) -> print_fun (Some loc) ("Parse Error: " ^ msg)
   | SpecificParseError (MismatchedLetName(loc, name1, name2)) ->
@@ -178,6 +178,11 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
     | SkolemUnifyEscape (unif, skol, ty, unify_context) ->
       "Unable to match type " ^ text_style.ty (Typed.pretty_type unif) ^ " with a type involving the rigid type variable " ^ text_style.ty (Typed.pretty_type skol) ^ ".\n"
     ^ "    The rigid type variable would escape its scope.\n"
+    ^ "    Unable to unify " ^ text_style.ty (Typed.pretty_type unif) ^ " and " ^ text_style.ty (Typed.pretty_type ty)
+    ^ pretty_optional_unify_context unify_context
+    | DataConUnifyEscape (unif, constructor, ty, unify_context) ->
+      "Unable to match type " ^ text_style.ty (Typed.pretty_type unif) ^ " with a type involving the type constructor " ^ text_style.identifier (Name.pretty constructor) ^ ".\n"
+    ^ "    The type constructor " ^ text_style.identifier (Name.pretty constructor) ^ " would escape its scope.\n"
     ^ "    Unable to unify " ^ text_style.ty (Typed.pretty_type unif) ^ " and " ^ text_style.ty (Typed.pretty_type ty)
     ^ pretty_optional_unify_context unify_context
 end

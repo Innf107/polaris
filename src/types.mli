@@ -23,6 +23,7 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                                     (* ^    ^    ^ unified type
                                        |    | skolem
                                        | unif *)
+                | DataConUnifyEscape of ty * name * ty * unify_context option
 
 exception TypeError of loc * type_error
 

@@ -1,1 +1,7 @@
-aaa
+test/categories/types/local_data_escape.pls:5:5: ERROR:
+Unable to match type 'α$11' with a type involving the type constructor 'A'.
+    The type constructor 'A' would escape its scope.
+    Unable to unify 'α$11' and 'A'
+  | 
+5 |     A(5)
+  |     ^^^^

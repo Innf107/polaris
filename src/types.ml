@@ -1309,13 +1309,6 @@ let occurs_and_adjust needle name full_ty loc definition_env optional_unify_cont
   end in
   snd (traversal#traverse_type false full_ty)
 
-module A : sig 
-  val f : ('a -> 'b) -> 'a -> 'b
-end = struct 
-  let f : ('a -> 'b) -> 'a -> 'b =
-    fun f x -> f x
-end
-
 type unify_state = {
   deferred_constraints : ty_constraint Difflist.t ref option
 }

@@ -86,6 +86,8 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       ^ "                 but was given " ^ text_style.number (List.length args))
     | NonExceptionInTry(name, loc) ->
       print_fun (Some loc) ("Invalid non-exception data constructor " ^ text_style.identifier (Name.pretty name) ^ " in an exception handler")  
+    | UnboundExportConstructor (name, loc) ->
+      print_fun (Some loc) ("Exported constructor not found: " ^ text_style.identifier name)
     end
   | EvalError error -> begin match error with
     | PolarisException (name, arguments, trace, message_lazy) ->

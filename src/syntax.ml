@@ -241,7 +241,7 @@ module Template = struct
         | ModVar (loc, _) | SubModule (loc, _, _) -> loc
         | Import (ext, _) -> import_ext_loc ext
   
-      let collect : type a. (module Monoid with type t = a) -> (t -> a) -> t -> a =
+      let collect : type a. (module Monoid with type t = a) -> (module_expr -> a) -> module_expr -> a =
         fun monoid get mexpr ->
           let (module M) = monoid in
           let rec go mexpr =
@@ -254,7 +254,7 @@ module Template = struct
           in 
           go mexpr
   
-      let collect_list : 'a. (t -> 'a list) -> t -> 'a list =
+      let collect_list : 'a. (module_expr -> 'a list) -> module_expr -> 'a list =
         fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
       end
   
@@ -338,7 +338,7 @@ module Template = struct
       DARK MAGIC WILL ENGULF THEIR SOULS AND BREAK YOUR INVARIANTS.
       SEGMENTATION FAULTS WILL ROAM THE LAND! TURN BACK WHILE YOU CAN! *)
   type export_item = ExportVal of loc * name
-                   | ExportType of loc * name
+                   | ExportConstructor of (ExportConstructorExt.t) * name
 
   type header = {
       usage: string option
@@ -1053,6 +1053,14 @@ module LocOnly = struct
   let traverse_ty state _ loc = loc, state
 end
 
+module LocWithNonTy(NonTy : sig type t end) = struct
+  type t = (loc * NonTy.t)
+
+  let loc (loc, _) = loc
+
+  let traverse_ty state _ loc = loc, state
+end
+
 module SubLocation = struct
   type t = { main : loc; subloc : loc }
   let loc loc = loc.main
@@ -1104,6 +1112,7 @@ module Parsed = Template (struct
 
   module LetRecExt = SubLocation
 
+  module ExportConstructorExt = LocOnly
 end) [@@ttg_pass]
 
 
@@ -1131,6 +1140,7 @@ module Typed = Template (struct
 
   module LetRecExt = SubLocationWithType
 
+  module ExportConstructorExt = LocWithNonTy (struct type t = [ `Type | `Exception ] end)
 end) [@@ttg_pass]
 
 type module_exports = Typed.module_exports
@@ -1161,6 +1171,8 @@ module Renamed = Template (struct
   module ModSubscriptExt = LocOnly
 
   module LetRecExt = SubLocation
+
+  module ExportConstructorExt = LocWithNonTy (struct type t = [ `Type | `Exception ] end)
 end) [@@ttg_pass]
 
 

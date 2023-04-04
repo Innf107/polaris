@@ -1,1 +1,5 @@
+export {
+    A
+}
+
 exception A = "AAA"

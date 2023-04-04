@@ -107,7 +107,7 @@ ident_with_loc:
 
 export_item:
     | IDENT { ExportVal (loc $startpos $endpos, $1) }
-    | CONSTRUCTOR { ExportType (loc $startpos $endpos, $1) }
+    | CONSTRUCTOR { ExportConstructor (loc $startpos $endpos, $1) }
 
 export_list:
     EXPORT "{" sep_trailing(semis(COMMA), semis(export_item)) "}" { $3 }

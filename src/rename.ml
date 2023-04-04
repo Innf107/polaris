@@ -18,6 +18,7 @@ type rename_error =
     | HigherRankType of Parsed.ty * loc
     | WrongNumberOfTyConArgs of name * int * Parsed.ty list * loc
     | NonExceptionInTry of name * loc
+    | UnboundExportConstructor of string * loc
 
 
 exception RenameError of rename_error
@@ -317,7 +318,11 @@ let rec rename_mod_expr : (module_exports * Typed.expr list) FilePathMap.t
                         | DataConSort -> RenameScope.insert_data_constructor name renamed NewtypeConSort r
                         | TypeAliasSort -> r))
                     mod_exports.exported_ty_constructors
-                    RenameScope.empty)
+                (NameMap.fold
+                    (fun name _ r ->
+                        RenameScope.insert_data_constructor name.name name ExceptionSort r) 
+                    mod_exports.exported_exceptions
+                    RenameScope.empty))
             in
             Import ((loc, mod_exports, body), path), scope
         end
@@ -663,10 +668,14 @@ let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def): Renamed.
 let rename_exports : RenameScope.t -> Parsed.export_item list -> Renamed.export_item list =
     fun scope -> List.map begin function
         | Parsed.ExportVal (loc, name) -> Renamed.ExportVal (loc, RenameScope.lookup_var scope loc name)
-        | Parsed.ExportType (loc, name) -> 
-            (* TODO: Allow exception exports *)
-            let name, _, _ = RenameScope.lookup_tycon scope loc name in
-            Renamed.ExportType (loc, name)
+        | Parsed.ExportConstructor (loc, name) -> 
+            match RenameMap.find_opt name scope.ty_constructors with
+            | Some (name, _, _sort)  ->
+                Renamed.ExportConstructor((loc, `Type), name)
+            | None -> match RenameMap.find_opt name scope.data_constructors with
+                | Some (name, ExceptionSort) ->
+                    Renamed.ExportConstructor((loc, `Exception), name)
+                | _ -> raise (RenameError (UnboundExportConstructor (name, loc)))
     end
     
 

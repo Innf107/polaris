@@ -270,23 +270,29 @@ let rec match_params patterns arg_vals locs = match patterns, arg_vals with
   let trans = match_pat pat arg locs in
   fun s -> match_params pats args locs (trans s)
 
+(* This returns a runtime module *as well as a transformation for the ambient environment*.
+   This is necessary since exceptions are flattened by the renamer so this needs to know about
+   every possible exception definition.  *)
 let rec eval_mod_expr env = function
 | Import ((loc, _, body), _) -> 
     (* TODO This ignores the header for now. I hope this is fine? *)
     let _, module_env = eval_seq_state (empty_eval_env env.argv) body in
     { modules = module_env.module_vars; 
       mod_vars = module_env.vars;
-    }
+    }, (fun ambient_env -> 
+      { ambient_env with 
+        exceptions = NameMap.union (fun _ _ x -> Some x) ambient_env.exceptions module_env.exceptions
+      })
 | ModVar (loc, var) -> 
   begin match VarMap.find_opt var env.module_vars with
   | None -> panic __LOC__ (Loc.pretty loc ^ ": Module variable not found at runtime: '" ^ Name.pretty var ^ "'. This should have been caught way earlier!")
-  | Some runtime_module -> runtime_module
+  | Some runtime_module -> runtime_module, Fun.id
   end
 | SubModule (loc, mod_expr, name) -> 
-  let runtime_module = eval_mod_expr env mod_expr in
+  let runtime_module, ambient_env_trans = eval_mod_expr env mod_expr in
   begin match VarMap.find_opt name runtime_module.modules with
   | None -> panic __LOC__ (Loc.pretty loc ^ ": Submodule not found at runtime: '" ^ Name.pretty name ^ "'. This should have been caught way earlier!")
-  | Some runtime_module -> runtime_module
+  | Some runtime_module -> runtime_module, ambient_env_trans
   end
 
 and eval_expr (env : eval_env) (expr : Typed.expr) : value =
@@ -723,8 +729,8 @@ and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr,
     let env' = insert_env_var loc x (eval_expr env e) env in
     eval_seq_cont env' exprs cont
   | LetModuleSeq (loc, x, me) :: exprs ->
-    let module_val = eval_mod_expr env me in
-    let env = insert_module_var x module_val env in
+    let module_val, ambient_env_trans = eval_mod_expr env me in
+    let env = ambient_env_trans (insert_module_var x module_val env) in
     eval_seq_cont env exprs cont
   | (LetDataSeq (loc, _, _, _) | LetTypeSeq (loc, _, _, _)) :: exprs -> 
     (* Types are erased at runtime, so we don't need to do anything clever here *)

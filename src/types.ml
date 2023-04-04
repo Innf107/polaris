@@ -1286,6 +1286,11 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
                 (fun _ _ x -> Some x) 
                 env.data_definitions 
                 data_definitions_with_levels;
+            exception_definitions =
+            NameMap.union
+              (fun _ _ x -> Some x)
+              env.exception_definitions
+              module_env.exception_definitions
         }), LetModuleSeq(loc, name, mod_expr)
     | LetDataSeq(loc, data_name, params, ty) ->
       insert_data_definition env.level data_name params ty, LetDataSeq(loc, data_name, params, ty)

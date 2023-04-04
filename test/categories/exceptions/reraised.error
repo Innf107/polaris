@@ -1,4 +1,4 @@
-test/categories/exceptions/reraised.pls:5:1-5:27: ERROR:
+test/categories/exceptions/reraised.pls:5:5: ERROR:
 Exception: PANIC! AAAAA
     Caused by 'Panic'
 Call trace:
@@ -9,4 +9,4 @@ Reraised at:
     test/categories/exceptions/reraised.pls:15:24-15:33
   | 
 5 |     raise (Panic("AAAAA"))
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     ^^^^^^^^^^^^^^^^^^^^^^

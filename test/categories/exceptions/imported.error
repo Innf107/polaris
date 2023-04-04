@@ -1,0 +1,7 @@
+test/categories/exceptions/imported.pls:3:1: ERROR:
+Exception: AAA
+    Caused by 'A'
+
+  | 
+3 | raise Base.A()
+  | ^^^^^^^^^^^^^^

@@ -222,7 +222,7 @@ module Template = struct
     | MakeRef of loc * expr                           (* ref e *)
     (* Exceptions *)
     | LetExceptionSeq of loc * name * (name * ty) list * expr (* exception name(x : t, .., x : t) = e *)
-    | Try of loc * expr * (name * pattern list * name option * expr) list (* try expr with { x(p, ..) [as x] -> e, .. } *)
+    | Try of loc * expr * (pattern * expr) list (* try expr with {p -> e, .. } *)
     | Raise of loc * expr (* raise e *)
 
   and list_comp_clause =
@@ -306,7 +306,7 @@ module Template = struct
           | MakeRef(_, expr) -> go expr
           | LetExceptionSeq(_, name, params, message_expr) -> go message_expr
           | Try (loc, try_expr, body_expr) -> 
-            M.append (go try_expr) (fold monoid (fun (_, _, _, expr) -> go expr) body_expr)
+            M.append (go try_expr) (fold monoid (fun (_, expr) -> go expr) body_expr)
           | Raise (loc, expr) -> 
             go expr
           in
@@ -503,10 +503,8 @@ module Template = struct
     | Try(_, try_expr, branches) ->
       "try " ^ pretty try_expr ^ " with {"
       ^ "\n    " ^ String.concat ("\n    ") (List.map 
-        (fun (name, params, maybe_as_name, e) -> 
-          pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_pattern params) ^ ")" 
-          ^ (match maybe_as_name with None -> " " | Some name -> " as " ^ pretty_name name)
-          ^ " -> " ^ pretty e) 
+        (fun (pattern, expr) -> 
+          pretty_pattern pattern ^ " -> " ^ pretty expr)
         branches)
       ^ "\n}"
     | Raise(_, expr) -> "raise " ^ pretty expr
@@ -784,12 +782,10 @@ module Template = struct
           | Try(loc, try_expr, branches) ->
             let try_expr, state = self#traverse_expr state try_expr in
             let branches, state = traverse_list 
-              (fun state (name, patterns, as_name_opt, expr) ->
-                let name, state = self#traverse_name state name in
-                let patterns, state = traverse_list self#traverse_pattern state patterns in
-                let as_name_opt, state = traverse_option self#traverse_name state as_name_opt in
+              (fun state (pattern, expr) ->
+                let pattern, state = self#traverse_pattern state pattern in
                 let expr, state = self#traverse_expr state expr in
-                (name, patterns, as_name_opt, expr), state) state branches 
+                (pattern, expr), state) state branches 
             in
             Try(loc, try_expr, branches), state
           | Raise(loc, expr) ->

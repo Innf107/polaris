@@ -333,7 +333,7 @@ let skolemize : local_env -> ty -> ty =
     (* Unapplied exception constructors are values (just like DataConstructors) *)
     | ExceptionConstructor _ -> true
     | Try (_, try_expr, handlers) ->
-      is_value try_expr && List.for_all (fun (_, _, _, expr) -> is_value expr) handlers
+      is_value try_expr && List.for_all (fun (_, expr) -> is_value expr) handlers
     (* TODO: Are we allowed to generalize over the result of raise? 
        If we are, do we need to check that the raised value is a value?
        It's never going to be returned anyway. *)
@@ -470,8 +470,24 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
       , VariantPat(loc, constructor_name, patterns)
       )
     | ExceptionDataPat(loc, name, patterns) -> 
-      (* Return type: Exception, check patterns against definition *)
-      todo __LOC__
+      begin match NameMap.find_opt name env.exception_definitions with
+      | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound exception in type checker: " ^ Name.pretty name)
+      | Some param_types ->
+        begin match Base.List.zip patterns param_types with
+        | Unequal_lengths -> todo __LOC__
+        | Ok (patterns_and_types) ->
+          let env_transformers, patterns = 
+            List.split 
+              (List.map 
+                (fun (pattern, ty) -> check_pattern env false pattern ty) 
+                patterns_and_types) 
+          in
+          ( Exception
+          , Util.compose env_transformers
+          , ExceptionDataPat(loc, name, patterns)
+          )
+        end
+      end
       
 (* Note [Inferring Variant Patterns]
   Inference for variant patterns is quite complicated.
@@ -593,9 +609,8 @@ and check_pattern : local_env -> bool -> pattern -> ty -> (local_env -> local_en
         )
       end
     | DataPat _, _ -> defer_to_inference ()
-    | VariantPat _, _ -> 
-      defer_to_inference ()
-    | ExceptionDataPat _, _ -> todo __LOC__
+    | VariantPat _, _ -> defer_to_inference ()
+    | ExceptionDataPat _, _ -> defer_to_inference ()
 
 (** Split a function type into its components.
     If the type is not statically known to be a function, this is achieved by unifying
@@ -961,22 +976,10 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
     | Try (loc, try_expr, handlers) -> 
       let result_type, try_expr = infer env try_expr in
 
-      let check_handler (exception_name, patterns, as_name_opt, body) = 
-        match NameMap.find_opt exception_name env.exception_definitions with
-        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound exception in type checker: " ^  Name.pretty exception_name)
-        | Some pattern_types ->
-          match Base.List.zip patterns pattern_types with
-          | Unequal_lengths -> panic __LOC__ (Loc.pretty loc ^ ": ")
-          | Ok patterns_with_types ->
-            let env_transformers, patterns = List.split (List.map (fun (pattern, ty) -> check_pattern env true pattern ty) patterns_with_types) in
-            let env_transformers, as_name_opt = match as_name_opt with
-            | None -> env_transformers, None
-            | Some name ->
-              insert_var name Exception :: env_transformers, Some name 
-            in
-
-            let body = check (Util.compose env_transformers env) result_type body in
-            (exception_name, patterns, as_name_opt, body)
+      let check_handler (pattern, body) = 
+        let env_trans, pattern = check_pattern env true pattern Exception in
+        let body = check (env_trans env) result_type body in
+        (pattern, body)
       in
 
       let handlers = List.map check_handler handlers in
@@ -1144,21 +1147,11 @@ and check : local_env -> ty -> expr -> Typed.expr =
     | Try (loc, try_expr, handlers), expected_ty ->
       let try_expr = check env expected_ty try_expr in
 
-      let check_handler (exception_name, patterns, as_name_opt, body) = 
-        match NameMap.find_opt exception_name env.exception_definitions with
-        | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound exception in type checker: " ^  Name.pretty exception_name)
-        | Some pattern_types ->
-          match Base.List.zip patterns pattern_types with
-          | Unequal_lengths -> panic __LOC__ (Loc.pretty loc ^ ": ")
-          | Ok patterns_with_types ->
-            let env_transformers, patterns = List.split (List.map (fun (pattern, ty) -> check_pattern env true pattern ty) patterns_with_types) in
-            let env_transformers, as_name_opt = match as_name_opt with
-            | None -> env_transformers, None
-            | Some name ->
-              insert_var name Exception :: env_transformers, Some name 
-            in
-            let body = check (Util.compose env_transformers env) expected_ty body in
-            (exception_name, patterns, as_name_opt, body)
+      let check_handler (pattern, body) = 
+        let env_trans, pattern = check_pattern env true pattern Exception in
+        let body = check (env_trans env) expected_ty body in
+
+        (pattern, body)
       in
 
       let handlers = List.map check_handler handlers in

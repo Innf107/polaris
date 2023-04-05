@@ -239,9 +239,13 @@ let rec match_pat_opt (pat : Typed.pattern) (scrut : value) : (eval_env -> eval_
   | DataPat(_, constructor_name, pattern), DataConV(val_constructor_name, underlying) when constructor_name = val_constructor_name ->
     match_pat_opt pattern underlying
   | VariantPat(_, constructor_name, patterns), VariantConstructorV(val_constructor_name, values)
-    when constructor_name = val_constructor_name ->
+    when String.equal constructor_name val_constructor_name ->
       let* transformations = Util.sequence_options (List.map2 match_pat_opt patterns values) in
       Some(Util.compose transformations)
+  | ExceptionDataPat(_, name, patterns), ExceptionV(exception_name, args, trace, lazy_message) 
+    when Name.equal name exception_name ->
+      let* transformations = Util.sequence_options (List.map2 (fun pattern (_, arg) -> match_pat_opt pattern arg) patterns args) in
+      Some (Util.compose transformations)
   | _ -> None
 
 let match_pat pat scrut locs =
@@ -641,21 +645,14 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     with
     | EvalError (PolarisException (exception_name, arguments, trace, lazy_message)) ->
       let rec go = function
-        | (handled_name, patterns, as_name_opt, body) :: handlers 
-          when Name.equal exception_name handled_name -> 
-            begin match match_patterns_opt patterns (List.map snd arguments) with
-            (* This one matched! *)
-            | Some env_trans ->
-              begin match as_name_opt with
-              | None -> eval_expr (env_trans env) body
-              | Some name ->
-                let exception_value = (ExceptionV(exception_name, arguments, trace, lazy_message)) in
-                eval_expr (insert_var name exception_value (env_trans env)) body
-              end
-            (* This handler did not match *)
-            | None -> go handlers
-            end
-        | _ :: handlers -> go handlers
+        | (pattern, body) :: handlers  ->
+          begin match match_pat_opt pattern (ExceptionV (exception_name, arguments, trace, lazy_message)) with
+          (* This is the handler! *)
+          | Some env_trans ->
+            eval_expr (env_trans env) body
+          (* This handler did not match, so we try the next one *)
+          | None -> go handlers
+          end
         | [] -> 
           (* No handler matched so we rethrow the exception *)
           raise_notrace (EvalError (PolarisException (exception_name, arguments, trace, lazy_message)))

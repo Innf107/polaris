@@ -284,8 +284,7 @@ expr_leaf:
     | TYPE CONSTRUCTOR "=" ty { LetTypeSeq(loc $startpos $endpos, $2, [], $4) }
     | TYPE CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetTypeSeq(loc $startpos $endpos, $2, $4, $7) }
     | EXCEPTION CONSTRUCTOR "(" sep_trailing(COMMA, typed_ident) ")" "=" expr { LetExceptionSeq(loc $startpos $endpos, $2, $4, $7) }
-    | EXCEPTION CONSTRUCTOR "=" expr { LetExceptionSeq(loc $startpos $endpos, $2, [], $4) }
-    | TRY expr WITH "{" sep_trailing(SEMI+, try_branch) "}" { Try(loc $startpos $endpos, $2, $5) }
+    | TRY expr WITH "{" sep_trailing(SEMI+, match_branch) "}" { Try(loc $startpos $endpos, $2, $5) }
     | RAISE expr { Raise(loc $startpos $endpos, $2) }
     | REF expr { MakeRef(loc $startpos $endpos, $2) }
 
@@ -296,10 +295,6 @@ expr_or_fun_def_ext:
 
 match_branch:
     pattern "->" expr { ($1, $3) } 
-
-try_branch:
-    | CONSTRUCTOR as_name? "->" expr { ($1, [], $2, $4) }
-    | CONSTRUCTOR "(" sep_trailing(COMMA, pattern) ")" as_name? "->" expr { ($1, $3, $5, $7) }
 
 as_name:
     | AS IDENT { $2 }

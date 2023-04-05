@@ -2,4 +2,4 @@ export {
     A
 }
 
-exception A = "AAA"
+exception A() = "AAA"

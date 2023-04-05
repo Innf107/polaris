@@ -2,6 +2,6 @@
 
 exception A() = "A"
 
-exception B = "B"
+exception B() = "B"
 
 print(5)

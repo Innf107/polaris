@@ -31,14 +31,14 @@ let pretty_call_trace (locs : loc list) =
   match locs with
   | [] -> ""
   | _ -> "Call trace:"
-        ^ "\n    " ^ String.concat "\n    " (List.map Loc.pretty locs)    
+        ^ "\n    " ^ String.concat "\n    " (List.map Loc.pretty_start locs)    
 
 let pretty_reraised (locations : loc list) =
   match locations with
   | [] -> ""
   | _ -> "\nReraised at:"
         (* Reraise locations are accumulated in reverse so we need to use rev_map here *)
-        ^ "\n    " ^ String.concat "\n    " (List.rev_map Loc.pretty locations)
+        ^ "\n    " ^ String.concat "\n    " (List.rev_map Loc.pretty_start locations)
 
 let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a = 
   fun text_style print_fun -> 

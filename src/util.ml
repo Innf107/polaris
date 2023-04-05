@@ -99,3 +99,9 @@ let rec split3 = function
       (x :: xs, y :: ys, z :: zs)
 
 let compose funs = List.fold_right (fun t r x -> t (r x)) funs (fun x -> x)
+
+let abbreviate message =
+  if String.length message <= 100 then
+    message
+  else
+    String.sub message 0 100 ^ "..."

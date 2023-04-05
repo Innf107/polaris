@@ -7,9 +7,22 @@ options {
 
 module List = import("../lib/list.pls")
 
+# Silently ignore failures
+let silent(cont) = try cont() with {
+    # I *really* need to add record patterns
+    CommandFailure(result) -> result.stdout
+}
+
 let for = if sync then List.for else List.forConcurrent
 
-let doesFileExist(file) = (!bash "-c" ("stat '" ~ file ~ "' > /dev/null 2> /dev/null && echo 'true'")) == "true"
+let doesFileExist(file) = 
+    try {
+        # This needs to use !bash since polaris doesn't have a way to silence stderr yet
+        let _ = !bash "-c" ("stat '" ~ file ~ "' 2> /dev/null")
+        true 
+    } with {
+        CommandFailure(_) -> false
+    }
 let stripExtension(path) = (!dirname path) ~ "/" ~ (!basename "-s" ".pls" path)
 
 let categories = lines(!find (scriptLocal("categories")) "-mindepth" 1 "-maxdepth" 1 "-not" "-name" "*.disabled" [["-not", "-name", ex] | let ex <- exclude])
@@ -31,15 +44,15 @@ if useDune then {
 else {}
 
 for(files, \file -> {
-    let expectation = !grep "-Po" "(?<=# EXPECT: ).+" file;
-    let args = split("|", !grep "-Po" "(?<=# ARGS: ).+" file);
+    let expectation = silent (\ -> !grep "-Po" "(?<=# EXPECT: ).+" file);
+    let args = split("|", silent(\ -> !grep "-Po" "(?<=# ARGS: ).+" file));
 
     let result = 
         if useDune then 
             # dune produces .exe files, even on linux
-            !_build/default/bin/main.exe file args
+            silent (\ -> !_build/default/bin/main.exe file args)
         else
-            !polaris file args 
+            silent (\ -> !polaris file args)
 
 
     if doesFileExist (stripExtension(file) ~ ".error") then {

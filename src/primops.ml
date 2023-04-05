@@ -40,5 +40,11 @@ let is_primop name = PrimOpMap.mem name primops
 let command_failure_exception = Name.{ name = "CommandFailure"; index = Name.primop_index }
 
 let prim_exceptions = PrimOpMap.of_seq (List.to_seq [
-  "CommandFailure", (command_failure_exception, [String; List(String)])
+  "CommandFailure", (command_failure_exception, [
+    RecordClosed [|
+        "program", String;
+        "arguments", List(String); 
+        "exitCode", Number; 
+        "stdout", String
+      |]])
 ])

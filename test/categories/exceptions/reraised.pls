@@ -6,12 +6,12 @@ let raisesInitially() = {
 }
 
 let reraises() = {
-    try raisesInitially() with {
+    try raisesInitially() {
         Panic(_) as exn -> raise exn
     }
 }
 
-try reraises() with {
+try reraises() {
     Panic(_) as exn -> raise exn
 }
 

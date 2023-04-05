@@ -30,6 +30,7 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                                        |    | skolem
                                        | unif *)
                 | DataConUnifyEscape of ty * name * ty * unify_context option
+                | IncorrectNumberOfExceptionArgs of name * int * ty list
 
 exception TypeError of loc * type_error
 
@@ -474,7 +475,7 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
       | None -> panic __LOC__ (Loc.pretty loc ^ ": Unbound exception in type checker: " ^ Name.pretty name)
       | Some param_types ->
         begin match Base.List.zip patterns param_types with
-        | Unequal_lengths -> todo __LOC__
+        | Unequal_lengths -> raise (TypeError (loc, IncorrectNumberOfExceptionArgs(name, List.length patterns, param_types)))
         | Ok (patterns_and_types) ->
           let env_transformers, patterns = 
             List.split 

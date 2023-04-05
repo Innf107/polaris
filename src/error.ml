@@ -209,6 +209,10 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
     ^ "    The type constructor " ^ text_style.identifier (Name.pretty constructor) ^ " would escape its scope.\n"
     ^ "    Unable to unify " ^ text_style.ty (Typed.pretty_type unif) ^ " and " ^ text_style.ty (Typed.pretty_type ty)
     ^ pretty_optional_unify_context unify_context
+    | IncorrectNumberOfExceptionArgs (name, given_arg_count, expected_types) ->
+      "Incorrect number of arguments passed to exception constructor " ^ text_style.identifier (Name.pretty name) ^ ".\n"
+    ^ "    This constructor expects " ^ text_style.number (List.length expected_types) ^ " arguments\n"
+    ^ "               but was given " ^ text_style.number given_arg_count
 end
 
 

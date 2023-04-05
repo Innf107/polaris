@@ -24,6 +24,7 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                                        |    | skolem
                                        | unif *)
                 | DataConUnifyEscape of ty * name * ty * unify_context option
+                | IncorrectNumberOfExceptionArgs of name * int * ty list
 
 exception TypeError of loc * type_error
 

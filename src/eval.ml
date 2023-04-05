@@ -34,7 +34,7 @@ and value =
   | ClosureV of eval_env lazy_t * Typed.pattern list * Typed.expr
   (* PrimOps should be mostly indistinguishable from regular closures.
      The only exception is pretty printing, where primops are printed as
-     "<primative: name>" instead of <closure(args)>
+     "<primop: name>" instead of <closure(args)>
      Also, primop names are represented as strings, not names, since
      they are definitely unique and there is no point in keeping
      an additional index *)
@@ -103,7 +103,7 @@ module Value = struct
     | ClosureV (_, params, _) ->
         "<closure(" ^ String.concat ", " (List.map Syntax.Typed.pretty_pattern params) ^ ")>"
     | PrimOpV name ->
-        "<primative: " ^ name ^ ">"
+        "<primop: " ^ name ^ ">"
     | BoolV b -> string_of_bool b
     | ListV vals -> "[" ^ String.concat ", " (List.map pretty vals) ^ "]"
     | TupleV vals -> "(" ^ String.concat ", " (Array.to_list (Array.map pretty vals)) ^ ")"

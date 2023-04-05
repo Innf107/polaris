@@ -36,7 +36,10 @@ module RenameScope = struct
     }
 
     let empty : t = { 
-            variables = RenameMap.empty; 
+            variables = 
+                RenameMap.mapi
+                    (fun name _ -> { name; index = Name.primop_index })
+                    Primops.primops; 
             module_vars = RenameMap.empty;
             ty_vars = RenameMap.empty;
             ty_constructors = RenameMap.empty;
@@ -357,9 +360,7 @@ let rename_binop : Parsed.binop -> Renamed.binop =
 let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t) (scope : RenameScope.t) (expr : Parsed.expr): Renamed.expr = let open RenameScope in
     match expr with 
     | Var (loc, var_name) ->
-        if Primops.is_primop var_name
-        then Var(loc, {name=var_name; index=Name.primop_index})
-        else Var (loc, lookup_var scope loc var_name)
+        Var (loc, lookup_var scope loc var_name)
     | VariantConstructor(loc, name, args) ->
         let args = List.map (rename_expr exports scope) args in
         VariantConstructor(loc, name, args)

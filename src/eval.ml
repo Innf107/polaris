@@ -274,6 +274,23 @@ let rec match_params patterns arg_vals locs = match patterns, arg_vals with
   let trans = match_pat pat arg locs in
   fun s -> match_params pats args locs (trans s)
 
+let raise_command_failure_exception env loc program program_args exit_code =
+  let trace = RaisedPreviously {
+    original_trace = loc :: env.call_trace;
+    reraised = []
+  } in
+  raise_notrace 
+    (EvalError (PolarisException 
+      ( Primops.command_failure_exception
+      , [ ({ name = "program"; index = Name.primop_index }, StringV program)
+        ; ({ name = "arguments"; index = Name.primop_index }, ListV (List.map (fun x -> StringV x) program_args))
+        ]
+      , trace
+      , lazy ("Program call failed with exit code " 
+          ^ string_of_int exit_code ^ ": !" ^ program ^ " " 
+          ^ String.concat " " (List.map (fun arg -> Value.pretty (StringV arg)) program_args))
+      )))
+
 (* This returns a runtime module *as well as a transformation for the ambient environment*.
    This is necessary since exceptions are flattened by the renamer so this needs to know about
    every possible exception definition.  *)
@@ -569,7 +586,14 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     let progs = progs_of_exprs env exprs in
     let in_chan, pid = Pipe.compose_in (Some (full_env_vars env)) progs in
     let result = StringV (trim_output (In_channel.input_all in_chan)) in
-    env.last_status := Pipe.wait_to_status pid;
+    let status = Pipe.wait_to_status pid in
+    env.last_status := status;
+    if status <> 0 then begin
+      (* TODO: We currently always take the last program, i.e. the one that other
+         program calls pipe into. Maybe we should print out all programs in the chain? *)
+      let (program, arguments) = Base.List.last_exn progs in
+      raise_command_failure_exception env loc program arguments status
+    end;
     result
 
   | Pipe (loc, (expr :: exprs)) ->
@@ -581,7 +605,13 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
         List.iter (fun str -> Out_channel.output_string out_chan (str ^ "\n")) output_lines
       ) in
     let result = StringV (trim_output (In_channel.input_all in_chan)) in
-    env.last_status := Pipe.wait_to_status pid;
+    let status = Pipe.wait_to_status pid in
+    env.last_status := status;
+    if status <> 0 then begin
+      let (program, arguments) = Base.List.last_exn progs in
+      raise_command_failure_exception env loc program arguments status
+    end;      
+
     result
   | EnvVar(loc, var) ->
     (* We first check if the env var has been locally overriden by a 
@@ -746,7 +776,12 @@ and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr,
   | Pipe (loc, ((ProgCall _ :: _) as prog_exprs)) :: exprs -> 
     let progs = progs_of_exprs env prog_exprs in
     let pid = Pipe.compose (Some (full_env_vars env)) progs in
-    env.last_status := Pipe.wait_to_status pid;
+    let status = Pipe.wait_to_status pid in
+    env.last_status := status;
+    if status <> 0 then begin
+      let (program, arguments) = Base.List.last_exn progs in
+      raise_command_failure_exception env loc program arguments status
+    end;
     eval_seq_cont env exprs cont
   | Pipe (loc, (expr :: prog_exprs)) :: exprs ->
     let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr env expr) in
@@ -756,7 +791,12 @@ and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr,
     let pid = Pipe.compose_out_with (Some (full_env_vars env)) progs (fun out_chan -> 
         List.iter (fun line -> Out_channel.output_string out_chan (line ^ "\n")) output_lines
       ) in
-    env.last_status := Pipe.wait_to_status pid;
+    let status = Pipe.wait_to_status pid in
+    env.last_status := status;
+    if status <> 0 then begin
+      let (program, arguments) = Base.List.last_exn progs in
+      raise_command_failure_exception env loc program arguments status
+    end;
     eval_seq_cont env exprs cont
 
   | [ e ] -> 

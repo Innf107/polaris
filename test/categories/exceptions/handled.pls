@@ -8,6 +8,6 @@ let f() = {
     print("EXCEPTION DID NOT ABORT THE PROGRAM!!!")
 }
 
-try f() {
+try f() with {
     IndexOutOfBounds(index) -> print("Trying to access something at out of bounds index " ~ toString(index))
 }

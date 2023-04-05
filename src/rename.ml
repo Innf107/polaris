@@ -40,7 +40,10 @@ module RenameScope = struct
             module_vars = RenameMap.empty;
             ty_vars = RenameMap.empty;
             ty_constructors = RenameMap.empty;
-            data_constructors = RenameMap.empty;
+            data_constructors =
+                RenameMap.map 
+                    (fun (name, _) -> (name, ExceptionSort))
+                    Primops.prim_exceptions;
         }
 
     let insert_var (old : string) (renamed : name) (scope : t) : t =

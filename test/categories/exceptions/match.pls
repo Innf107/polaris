@@ -8,7 +8,7 @@ exception C() = "C"
 
 
 let catchAB(cont) = 
-    try cont() {
+    try cont() with {
         A(x) -> "A(" ~ toString(x) ~ ")"
         exn -> 
             match exn {

@@ -1871,7 +1871,11 @@ let empty_env = {
   var_types = prim_types; 
   module_var_contents = NameMap.empty; 
   data_definitions = NameMap.empty;
-  exception_definitions = NameMap.empty;
+  exception_definitions = 
+    NameMap.of_seq (
+      Seq.map 
+        (fun (_, (name, param_types)) -> (name, param_types))
+        (StringMap.to_seq Primops.prim_exceptions));
   type_aliases = NameMap.empty;
   ambient_level = Typeref.initial_top_level;
 }

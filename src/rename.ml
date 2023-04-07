@@ -79,12 +79,6 @@ module RenameScope = struct
         with
             Not_found -> raise (RenameError (DataConNotFound (data, loc)))
 
-    let lookup_tycon (scope : t) (loc : loc) (data : string) : name * int * type_constructor_sort =
-        try 
-            find data scope.ty_constructors 
-        with
-            Not_found -> raise (RenameError (TyConNotFound (data, loc)))        
-
     let lookup_mod_var (scope : t) (loc : loc) (var : string) : name * t =
         try
             find var scope.module_vars

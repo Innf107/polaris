@@ -137,7 +137,7 @@ let rec deduplicate_head_patterns = function
   | (pattern :: rest) ->
     pattern :: deduplicate_head_patterns (List.filter (fun other -> not (compatible_head_pattern ~exact:true pattern other)) rest)
 
-let check_and_close_column ~normalize_unif ~close_variant = function
+let check_and_close_column ~close_variant = function
   | [] -> panic __LOC__ "check_and_close_column: called on an empty pattern column"
     (* Any pattern row containing wildcards is automatically exhaustive
        and can stay open if it also matches variants *)
@@ -163,7 +163,7 @@ let check_and_close_column ~normalize_unif ~close_variant = function
     | VariantPat((loc, ty), name, _) -> 
       trace (lazy ("closing variant type: " ^ Typed.pretty_type ty));
       close_variant ty;
-      let variant_constructors = match normalize_unif ty with
+      let variant_constructors = match Typed.Ty.normalize_unif ty with
         | Typed.VariantClosed constructors
         | Typed.VariantUnif (constructors, _) 
         | Typed.VariantVar (constructors, _)
@@ -188,7 +188,7 @@ let check_and_close_column ~normalize_unif ~close_variant = function
     | OrPat _ -> panic __LOC__ "or pattern after simplification"
     | VarPat _ -> panic __LOC__ "variable pattern in ostensibly non-wildcard pattern column"
 
-let check_exhaustiveness_and_close_variants ~normalize_unif ~close_variant patterns =
+let check_exhaustiveness_and_close_variants ~close_variant patterns =
   trace (lazy ("unprocessed patterns: " ^ String.concat " | " (List.map Typed.pretty_pattern patterns)));
   let matrix = as_pattern_matrix patterns in
   trace (lazy ("simplified matrix: " ^ String.concat " | " (List.map (fun (x, rest) -> "(" ^ Typed.pretty_pattern x ^ ", {" ^ String.concat " | " (List.map Typed.pretty_pattern rest) ^ "})") matrix)));
@@ -200,7 +200,7 @@ let check_exhaustiveness_and_close_variants ~normalize_unif ~close_variant patte
       let head_patterns = deduplicate_head_patterns (List.map (fun (pattern, _) -> pattern) matrix) in
       trace (lazy ("head_patterns: " ^ String.concat " | " (List.map Typed.pretty_pattern head_patterns)));
 
-      check_and_close_column ~normalize_unif ~close_variant head_patterns;
+      check_and_close_column ~close_variant head_patterns;
 
       let continue pattern =
         if wildcard_like pattern then

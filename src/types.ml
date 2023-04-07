@@ -84,24 +84,7 @@ and local_env = {
   exception_definitions : ty list NameMap.t;
 }
 
-let rec normalize_unif : ty -> ty =
-  function
-  | Unif (typeref, name) as ty -> 
-    begin match Typeref.get typeref with
-    | Unbound _ -> ty
-    | Bound inner_ty -> normalize_unif inner_ty
-    end
-  | RecordUnif (fields, (typeref, name)) as ty ->
-    begin match Typeref.get typeref with
-    | Unbound _ -> ty
-    | Bound inner_ty -> Ty.replace_record_extension fields (normalize_unif inner_ty)
-    end
-  | VariantUnif (fields, (typeref, name)) as ty ->
-    begin match Typeref.get typeref with
-    | Unbound _ -> ty
-    | Bound inner_ty -> Ty.replace_variant_extension fields (normalize_unif inner_ty)
-    end  
-  | ty -> ty     
+let normalize_unif = Ty.normalize_unif
 
 let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
@@ -1757,7 +1740,6 @@ let check_exhaustiveness_and_close_variants_in_exprs expr =
   let check_column loc patterns =
     begin match
     Pattern.check_exhaustiveness_and_close_variants 
-      ~normalize_unif
       ~close_variant
       patterns
     with

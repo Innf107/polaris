@@ -119,6 +119,24 @@ module Template = struct
       VariantVar (Array.append fields fields2, var)
     | ty -> panic __LOC__ ("Variant extension variable replaced with non-variant type")
 
+    let rec normalize_unif : ty -> ty =
+      function
+      | Unif (typeref, name) as ty -> 
+        begin match Typeref.get typeref with
+        | Unbound _ -> ty
+        | Bound inner_ty -> normalize_unif inner_ty
+        end
+      | RecordUnif (fields, (typeref, name)) as ty ->
+        begin match Typeref.get typeref with
+        | Unbound _ -> ty
+        | Bound inner_ty -> replace_record_extension fields (normalize_unif inner_ty)
+        end
+      | VariantUnif (fields, (typeref, name)) as ty ->
+        begin match Typeref.get typeref with
+        | Unbound _ -> ty
+        | Bound inner_ty -> replace_variant_extension fields (normalize_unif inner_ty)
+        end  
+      | ty -> ty  
   end
 
   type pattern =
@@ -347,7 +365,7 @@ module Template = struct
     ; exports: export_item list
   }
 
-  let rec pretty_type = function
+  let rec pretty_type = fun ty -> match Ty.normalize_unif ty with
     | Forall (var, ty) -> "∀" ^ pretty_name var ^ ". " ^ pretty_type ty
     | Fun (args, res) -> "(" ^ String.concat ", " (List.map pretty_type args) ^ ") -> " ^ pretty_type res
     | TyConstructor (name, []) -> pretty_name name

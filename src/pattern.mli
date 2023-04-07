@@ -11,7 +11,6 @@ type pattern_error =
 exception PatternError of pattern_error
 
 val check_exhaustiveness_and_close_variants 
-  :  normalize_unif:(Typed.ty -> Typed.ty)
-  -> close_variant:(Typed.ty -> unit)
+  :  close_variant:(Typed.ty -> unit)
   -> Typed.pattern list
   -> unit

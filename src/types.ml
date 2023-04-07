@@ -466,9 +466,11 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
 
       let extension_unif = fresh_unif_raw env in
 
-      ( VariantUnif([|(constructor_name, pattern_types)|], extension_unif)
+      let variant_type = VariantUnif([|(constructor_name, pattern_types)|], extension_unif) in
+
+      ( variant_type
       , Util.compose env_transformers
-      , VariantPat(loc, constructor_name, patterns)
+      , VariantPat((loc, variant_type), constructor_name, patterns)
       )
     | ExceptionDataPat(loc, name, patterns) -> 
       begin match NameMap.find_opt name env.exception_definitions with

@@ -133,7 +133,7 @@ module Template = struct
     | TypePat of loc * pattern * ty
     | DataPat of loc * name * pattern
     | ExceptionDataPat of loc * name * pattern list
-    | VariantPat of loc * string * pattern list
+    | VariantPat of VariantPatExt.t * string * pattern list
 
   type module_exports = {
       exported_variables : name StringMap.t;
@@ -533,9 +533,10 @@ module Template = struct
 
   let get_pattern_loc = function
     | VarPat (ext, _) -> VarPatExt.loc ext
+    | VariantPat(ext, _, _) -> VariantPatExt.loc ext
     | AsPat(loc, _, _) | ConsPat(loc, _, _) | ListPat (loc, _) | TuplePat (loc, _)
     | NumPat (loc, _) | StringPat(loc, _) | OrPat (loc, _, _) | TypePat (loc, _, _) | DataPat (loc, _, _)
-    | VariantPat(loc, _, _) | ExceptionDataPat(loc, _, _)
+    | ExceptionDataPat(loc, _, _)
     -> loc
 
 
@@ -1100,6 +1101,8 @@ module Parsed = Template (struct
 
   module VarPatExt = LocOnly
 
+  module VariantPatExt = LocOnly
+
   module DataConExt = LocOnly
 
   module SubscriptExt = SubLocation
@@ -1127,6 +1130,8 @@ module Typed = Template (struct
   module VarExt = WithType
 
   module VarPatExt = WithType
+
+  module VariantPatExt = WithType
 
   module DataConExt = WithType
 
@@ -1159,6 +1164,8 @@ module Renamed = Template (struct
   module VarExt = LocOnly
 
   module VarPatExt = LocOnly
+
+  module VariantPatExt = LocOnly
 
   module DataConExt = LocOnly
 

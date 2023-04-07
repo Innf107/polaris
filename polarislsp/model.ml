@@ -21,6 +21,7 @@ module LocOverlapMap = Map.Make(LocByOverlap)
 
 type hover_entry = VarLike of name * ty
                  | Subscript of string * ty
+                 | Variant of string * ty
 
 type model = {
   (* Since matching in the map is a little fuzzy, we need to store the exact
@@ -52,6 +53,8 @@ let build exprs =
       match pattern with
       | Typed.VarPat ((loc, ty), name) ->
         pattern, Difflist.append hover_entries (Difflist.of_list [(loc, (loc, VarLike (name, ty)))])
+      | Typed.VariantPat ((loc, ty), name, _) ->
+        pattern, Difflist.append hover_entries (Difflist.of_list [(loc, (loc, Variant (name, ty)))])
       | _ -> pattern, hover_entries
   end
   in

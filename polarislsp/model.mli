@@ -14,6 +14,7 @@ type t = model
 
 type hover_entry = VarLike of name * ty
                  | Subscript of string * ty
+                 | Variant of string * ty
 
 val build : expr list -> model
 

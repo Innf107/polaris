@@ -100,6 +100,8 @@ let on_hover model_ref (hover_params : Lsp.hover_params) =
       build_diagnostic loc (Polaris.Syntax.Name.pretty var_name ^ " : " ^ Polaris.Syntax.Typed.pretty_type ty)
     | Some (loc, Model.Subscript (key, ty)) ->
       build_diagnostic loc ("." ^ key ^ " : " ^ Polaris.Syntax.Typed.pretty_type ty)
+    | Some (loc, Model.Variant (name, ty)) ->
+      build_diagnostic loc ("`" ^ name ^ " : " ^ Polaris.Syntax.Typed.pretty_type ty)
     | None -> no_response ()
 
 let () =

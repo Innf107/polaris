@@ -80,5 +80,11 @@ module MonadOption : Monad = struct
     let pure = Option.some
 end
 
-module Option = MonadUtil(MonadOption)
+module MonadList = MonadUtil(struct
+    type 'a t = 'a list
+    let bind x cont = List.concat_map cont x
 
+    let pure x = [x]
+end)
+
+module Option = MonadUtil(MonadOption)

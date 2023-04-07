@@ -1,0 +1,5 @@
+test/categories/records/update_multi.pls:4:7: ERROR:
+Duplicate key in record update: 'x'
+  | 
+4 | print({ r with x = 3, x = "b" })
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^

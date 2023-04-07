@@ -1,5 +1,5 @@
-# EXPECT: { x = 3, x = "b" }
+# EXPECT: { x = 3, x = "b", x = 1, x = "a" }
 
 let r = { x = 1, x = "a" }
 
-print({ r with x = 3, x = "b" })
+print({ r extend x = 3, x = "b" })

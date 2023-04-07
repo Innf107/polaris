@@ -1,6 +1,8 @@
 open Syntax
 open Util
 
+module StringSet = Set.Make(String)
+
 module RenameMap = Map.Make(String)
 
 module FilePathMap = Map.Make(String)
@@ -19,6 +21,7 @@ type rename_error =
     | WrongNumberOfTyConArgs of name * int * Parsed.ty list * loc
     | NonExceptionInTry of name * loc
     | UnboundExportConstructor of string * loc
+    | DuplicateKeyInRecordUpdate of string * loc
 
 
 exception RenameError of rename_error
@@ -417,7 +420,16 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
         let key_name = RenameScope.lookup_var module_export_scope loc key in
         ModSubscript (loc, mod_name, key_name)
     | Subscript (loc, expr, key) -> Subscript (loc, rename_expr exports scope expr, key)
-    | RecordUpdate (loc, expr, kvs) -> RecordUpdate (loc, rename_expr exports scope expr, List.map (fun (x, expr) -> (x, rename_expr exports scope expr)) kvs)
+    | RecordUpdate (loc, expr, kvs) -> 
+        let rec duplicate_key previous = function
+        | [] -> None
+        | (key, _) :: rest when StringSet.mem key previous -> Some key
+        | (key, _) :: rest -> duplicate_key (StringSet.add key previous) rest
+        in
+        begin match duplicate_key StringSet.empty kvs with
+        | Some key -> raise (RenameError (DuplicateKeyInRecordUpdate (key, loc)))
+        | None -> RecordUpdate (loc, rename_expr exports scope expr, List.map (fun (x, expr) -> (x, rename_expr exports scope expr)) kvs)
+        end
     | RecordExtension (loc, expr, kvs) -> RecordExtension (loc, rename_expr exports scope expr, List.map (fun (x, expr) -> (x, rename_expr exports scope expr)) kvs)
     | DynLookup (loc, mexpr, kexpr) -> DynLookup (loc, rename_expr exports scope mexpr, rename_expr exports scope kexpr)
 

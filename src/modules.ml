@@ -3,16 +3,13 @@ open Syntax
 let _export_category, trace_exports = Trace.make ~flag:"exports" ~prefix:"Exports" 
 
 
-let extract_import_paths_mod =
-  Parsed.MExpr.collect_list begin function
-  | Import (_, path) -> [path]
-  | _ -> []
-  end
+let extract_import_paths = object
+    inherit [string list] Parsed.Traversal.traversal
 
-let extract_import_paths =
-  Parsed.Expr.collect_list begin function
-    | LetModuleSeq (_, _, mexpr) -> extract_import_paths_mod mexpr
-    | _ -> []
+    method! module_expr state = function
+    | Import (_, path) as mod_expr ->
+      mod_expr, path :: state
+    | mod_expr -> mod_expr, state
   end
 
 let build_export_map header exprs rename_scope global_env =

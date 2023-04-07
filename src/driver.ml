@@ -61,7 +61,7 @@ let rec parse_rename_typecheck : driver_options
 
 
   let imported_files = List.map (fun x -> (x, Util.path_relative_to options.filename x)) 
-                        (List.concat_map (Modules.extract_import_paths) ast) in
+                        (snd (Parsed.Traversal.traverse_list Modules.extract_import_paths#traverse_expr [] ast)) in
   
   trace_driver (lazy ("Importing modules from (" ^ String.concat ", " (List.map snd imported_files) ^ ")"));
 

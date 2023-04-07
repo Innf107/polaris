@@ -76,15 +76,6 @@ let wildcard_like = function
   | ExceptionDataPat _
   | VariantPat _ -> false
 
-(* TODO: Is this... correct? *)
-let reduce_wildcard (matrix : matrix) : matrix =
-  let reduce_if_wildcard = function
-    | (head_pattern, (next :: rest)) when wildcard_like head_pattern ->
-      Some (next, rest)
-    | _ -> None
-  in
-  List.filter_map reduce_if_wildcard matrix
-
 let sub_patterns ?(count = 0) = function
   | Typed.VarPat _ as pattern -> Util.replicate count pattern
   | ConsPat (_, head, tail) -> [head; tail]

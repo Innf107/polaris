@@ -258,84 +258,8 @@ module Template = struct
       let get_loc = function
         | ModVar (loc, _) | SubModule (loc, _, _) -> loc
         | Import (ext, _) -> import_ext_loc ext
-  
-      let collect : type a. (module Monoid with type t = a) -> (module_expr -> a) -> module_expr -> a =
-        fun monoid get mexpr ->
-          let (module M) = monoid in
-          let rec go mexpr =
-            let result = get mexpr in
-            let remaining = match mexpr with
-              | Import _ | ModVar _ -> M.empty 
-              | SubModule (_, mod_expr, _) -> go mod_expr
-            in
-            M.append result remaining
-          in 
-          go mexpr
-  
-      let collect_list : 'a. (module_expr -> 'a list) -> module_expr -> 'a list =
-        fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
       end
   
-
-  module Expr = struct
-    let collect : type a. (module Monoid with type t = a) -> (expr -> a) -> expr -> a =
-      fun monoid get expr ->
-        let (module M) = monoid in
-        let rec go expr = 
-          let result = get expr in
-          let remaining = match expr with
-          | Var _ | DataConstructor _ | ExceptionConstructor _ | ModSubscriptDataCon _ | StringLit _ | NumLit _ | BoolLit _ | EnvVar _
-          | UnitLit _ | ModSubscript _ | LetDataSeq _ | LetTypeSeq _ -> M.empty
-          | VariantConstructor(_, _, args) ->
-            fold monoid go args
-          | App(_, fexpr, arg_exprs) -> M.append (go fexpr) (fold monoid go arg_exprs) 
-          | Lambda(_, _, expr) -> go expr
-          | ListLit(_, exprs) -> fold monoid go exprs
-          | TupleLit(_, exprs) -> fold monoid go exprs
-          | RecordLit(_, fields) -> fold monoid (fun (_, expr) -> go expr) fields
-          | Subscript(_, expr, field) -> go expr
-          | RecordUpdate(_, rec_expr, updates) -> M.append (go rec_expr) (fold monoid (fun (_, expr) -> go expr) updates)
-          | RecordExtension(_, rec_expr, exts) -> M.append (go rec_expr) (fold monoid (fun (_, expr) -> go expr) exts)
-          | DynLookup(_, expr1, expr2) -> M.append (go expr1) (go expr2)
-          | BinOp(_, expr1, _, expr2) 
-            -> M.append (go expr1) (go expr2)
-          | Not(_, expr) -> go expr
-          | Range(_, expr1, expr2) -> M.append (go expr1) (go expr2)
-          | ListComp(_, expr, clauses) -> 
-            let go_clause = function
-              | DrawClause (_pat, expr) -> go expr
-              | FilterClause expr -> go expr
-            in
-            M.append (go expr) (fold monoid go_clause clauses)
-          | If(_, condition, then_expr, else_expr) -> M.append (go condition) (M.append (go then_expr) (go else_expr))
-          | Seq(_, exprs) -> fold monoid go exprs
-          | LetSeq(_, _, expr) | LetRecSeq(_, _, _, _, expr) | LetEnvSeq(_, _, expr) -> go expr
-          | Let(_, _, bind_expr, rest_expr) | LetRec(_, _, _, _, bind_expr, rest_expr) | LetEnv(_, _, bind_expr, rest_expr)
-            -> M.append (go bind_expr) (go rest_expr)
-          | ProgCall(_, _, arg_exprs) -> fold monoid go arg_exprs
-          | Pipe(_, exprs) -> fold monoid go exprs
-          | Async (_, expr) -> go expr
-          | Await (_, expr) -> go expr
-          | Match(_, scrut_expr, branch_exprs) -> M.append (go scrut_expr) (fold monoid (fun (_, expr) -> go expr) branch_exprs)
-          | LetModuleSeq _ -> M.empty
-          | Ascription (_, expr, _) -> go expr
-          | Unwrap(_, expr) -> go expr
-          | Assign(_, place_expr, expr) -> M.append (go place_expr) (go expr)
-          | MakeRef(_, expr) -> go expr
-          | LetExceptionSeq(_, name, params, message_expr) -> go message_expr
-          | Try (loc, try_expr, body_expr) -> 
-            M.append (go try_expr) (fold monoid (fun (_, expr) -> go expr) body_expr)
-          | Raise (loc, expr) -> 
-            go expr
-          in
-          M.append result remaining
-        in
-        go expr
-
-    let collect_list = 
-      fun get -> Difflist.to_list << (collect monoid_difflist (Difflist.of_list << get))
-
-  end
 
   type flag_args =
     | Varargs of name

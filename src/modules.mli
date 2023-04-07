@@ -1,8 +1,6 @@
 open Syntax
 
-val extract_import_paths_mod : Parsed.module_expr -> string list
-
-val extract_import_paths : Parsed.expr -> string list
+val extract_import_paths : string list Parsed.Traversal.traversal
 
 
 val build_export_map : Typed.header 

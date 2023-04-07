@@ -1753,22 +1753,37 @@ let close_variant ty =
   | VariantUnif (_, (ref, name)) -> bind_unchecked ref name (VariantClosed [||])
   | _ -> ()
 
-let check_exhaustiveness_and_close_variants_in_match_exprs expr =
-  let traversal = object 
+let check_exhaustiveness_and_close_variants_in_exprs expr =
+  let check_column loc patterns =
+    begin match
+    Pattern.check_exhaustiveness_and_close_variants 
+      ~normalize_unif
+      ~close_variant
+      patterns
+    with
+    | () -> ()
+    | exception (Pattern.PatternError err) ->
+      raise (TypeError (loc, PatternError err))
+    end
+  in
+
+
+  let traversal = object
     inherit [unit] Typed.Traversal.traversal
 
     method! expr () = function
       | Typed.Match (loc, _, patterns) as expr ->
-        begin match
-          Pattern.check_exhaustiveness_and_close_variants 
-            ~normalize_unif
-            ~close_variant
-            (List.map fst patterns)
-        with
-        | () -> expr, ();
-        | exception (Pattern.PatternError err) ->
-          raise (TypeError (loc, PatternError err))
-        end
+        check_column loc (List.map fst patterns);
+        expr, ()
+      | Typed.LetSeq (loc, pattern, _) 
+      | Typed.Let(loc, pattern, _, _) ->
+        check_column (Typed.get_pattern_loc pattern) [pattern];
+        expr, ()
+      | Typed.LetRecSeq (_, _, _, patterns, _) 
+      | Typed.LetRec(_, _, _, patterns, _, _) ->
+        (* The patterns should be independent and irrefutable so we treat them each as individual columns *)
+        List.iter (fun pattern -> check_column (Typed.get_pattern_loc pattern) [pattern]) patterns;
+        expr, ()
       | expr -> expr, ()
   end in
 
@@ -1812,7 +1827,7 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
 
     solve_constraints local_env (Difflist.to_list !(local_env.constraints));
 
-    check_exhaustiveness_and_close_variants_in_match_exprs typed_expr;
+    check_exhaustiveness_and_close_variants_in_exprs typed_expr;
 
     let local_types = if binds_value expr 
       then NameMap.map (generalize temp_local_env) temp_local_env.local_types 

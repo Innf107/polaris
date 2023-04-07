@@ -213,6 +213,27 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       "Incorrect number of arguments passed to exception constructor " ^ text_style.identifier (Name.pretty name) ^ ".\n"
     ^ "    This constructor expects " ^ text_style.number (List.length expected_types) ^ " arguments\n"
     ^ "               but was given " ^ text_style.number given_arg_count
+    | PatternError (pattern_error) -> 
+      "Non-exhaustive pattern match\n"
+      ^ begin match pattern_error with
+        (* TODO: Think of something better to write here*)
+        | ListWithoutNil ->
+          "    Missing a pattern for " ^ text_style.emphasis "[]"
+        | ListWithoutCons ->
+          "    Missing a pattern for " ^ text_style.emphasis "_ :: _"
+        | ExceptionWithoutWildcard ->
+          "    Match on " ^ text_style.emphasis "exceptions" ^ " is missing a wildcard case.\n"
+        ^ "    Pattern matching needs to handle every possible exception."
+        | NumWithoutWildcard ->
+          "    Match on " ^ text_style.emphasis "numbers" ^ " is missing a wildcard case.\n"
+        ^ "    Pattern matching needs to handle every possible number."
+        | StringWithoutWildcard ->
+          "    Match on " ^ text_style.emphasis "strings" ^ " is missing a wildcard case.\n"
+        ^ "    Pattern matching needs to handle every possible string."
+        | VariantNonExhaustive constructors ->
+          "    Unhandled constructors:\n"
+        ^ String.concat "\n" (List.map (fun x -> "    - " ^ x) constructors)
+        end
 end
 
 

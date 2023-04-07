@@ -25,6 +25,7 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                                        | unif *)
                 | DataConUnifyEscape of ty * name * ty * unify_context option
                 | IncorrectNumberOfExceptionArgs of name * int * ty list
+                | PatternError of Pattern.pattern_error
 
 exception TypeError of loc * type_error
 

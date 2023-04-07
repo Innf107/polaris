@@ -1,0 +1,10 @@
+test/categories/types/variant_pattern_too_open.pls:6:9: ERROR:
+Mismatched variant constructors.
+Missing mutual variant constructors '<  >'
+                                and '< A(Number) >'
+                                respectively.
+    While trying to unify '< A(Number) | α$17 >'
+                      and '< Just(Number), Nothing() >'
+  | 
+6 | print(f(A(5)))
+  |         ^^^^

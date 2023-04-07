@@ -105,3 +105,7 @@ let abbreviate message =
     message
   else
     String.sub message 0 100 ^ "..."
+
+let rec replicate count x = match count with
+  | count when count <= 0 -> []
+  | count -> x :: replicate (count - 1) x

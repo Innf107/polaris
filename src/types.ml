@@ -31,6 +31,7 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                                        | unif *)
                 | DataConUnifyEscape of ty * name * ty * unify_context option
                 | IncorrectNumberOfExceptionArgs of name * int * ty list
+                | PatternError of Pattern.pattern_error
 
 exception TypeError of loc * type_error
 
@@ -93,12 +94,12 @@ let rec normalize_unif : ty -> ty =
   | RecordUnif (fields, (typeref, name)) as ty ->
     begin match Typeref.get typeref with
     | Unbound _ -> ty
-    | Bound inner_ty -> Ty.replace_record_extension fields inner_ty
+    | Bound inner_ty -> Ty.replace_record_extension fields (normalize_unif inner_ty)
     end
   | VariantUnif (fields, (typeref, name)) as ty ->
     begin match Typeref.get typeref with
     | Unbound _ -> ty
-    | Bound inner_ty -> Ty.replace_variant_extension fields inner_ty
+    | Bound inner_ty -> Ty.replace_variant_extension fields (normalize_unif inner_ty)
     end  
   | ty -> ty     
 
@@ -1745,6 +1746,34 @@ let generalize : local_env -> ty -> ty =
     in
     trace_tc (lazy ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty'));
     ty'
+
+let close_variant ty =
+  match normalize_unif ty with
+  | Unif (ref, name)
+  | VariantUnif (_, (ref, name)) -> bind_unchecked ref name (VariantClosed [||])
+  | _ -> ()
+
+let check_exhaustiveness_and_close_variants_in_match_exprs expr =
+  let traversal = object 
+    inherit [unit] Typed.Traversal.traversal
+
+    method! expr () = function
+      | Typed.Match (loc, _, patterns) as expr ->
+        begin match
+          Pattern.check_exhaustiveness_and_close_variants 
+            ~normalize_unif
+            ~close_variant
+            (List.map fst patterns)
+        with
+        | () -> expr, ();
+        | exception (Pattern.PatternError err) ->
+          raise (TypeError (loc, PatternError err))
+        end
+      | expr -> expr, ()
+  end in
+
+  let _ = traversal#traverse_expr () expr in
+  ()
     
 let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env * Typed.expr =
   fun global_env check_or_infer expr ->
@@ -1782,6 +1811,8 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
     } in
 
     solve_constraints local_env (Difflist.to_list !(local_env.constraints));
+
+    check_exhaustiveness_and_close_variants_in_match_exprs typed_expr;
 
     let local_types = if binds_value expr 
       then NameMap.map (generalize temp_local_env) temp_local_env.local_types 

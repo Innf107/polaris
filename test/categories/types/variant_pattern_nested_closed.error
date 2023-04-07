@@ -1,0 +1,10 @@
+test/categories/types/variant_pattern_nested_closed.pls:10:18: ERROR:
+Mismatched variant constructors.
+Missing mutual variant constructors '<  >'
+                                and '< C() >'
+                                respectively.
+    While trying to unify '< C() | α$41 >'
+                      and '< Ok(Number), Err(Number) >'
+   | 
+10 | print(f(Nothing, C))
+   |                  ^

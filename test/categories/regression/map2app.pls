@@ -2,10 +2,6 @@
 
 module List = import("../../../lib/list.pls")
 
-let fst([x, _]) = x
-
-let snd([_, x]) = x
-
 let escapeHTML(content) = {
     let toReplace = 
         [ ["<", "&lt;"]
@@ -13,5 +9,5 @@ let escapeHTML(content) = {
         , ["<!--.*?-->", ""]
         ]
 
-    List.foldr(\(x, r) -> regexpReplace(fst(x), snd(x), r), content, toReplace)
+    List.foldr(\(x, r) -> regexpReplace(x, x, r), content, toReplace)
 }

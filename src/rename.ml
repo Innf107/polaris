@@ -17,7 +17,6 @@ type rename_error =
     | SubscriptVarNotFound of string * loc
     | LetSeqInNonSeq of Parsed.expr * loc
     | SubModuleNotFound of string * loc
-    | HigherRankType of Parsed.ty * loc
     | WrongNumberOfTyConArgs of name * int * Parsed.ty list * loc
     | NonExceptionInTry of name * loc
     | UnboundExportConstructor of string * loc
@@ -112,44 +111,48 @@ let rename_type loc (scope : RenameScope.t) original_type =
         (* Polaris does not support higher rank, let alone impredicative polymorphism,
         so top level foralls are the only way to bind type variables and everything else
         can use its own case *)
-        let rec rename_nonbinding = function
+        let rec rename_nonbinding (scope : RenameScope.t) =    
+        function
         | Parsed.Number -> Renamed.Number
         | Bool -> Bool
         | String -> String
         | Exception -> Exception
-        | List(ty) -> List(rename_nonbinding ty)
-        | Promise(ty) -> Promise(rename_nonbinding ty)
-        | Ref(ty) -> Ref(rename_nonbinding ty)
-        | Tuple(tys) -> Tuple(Array.map rename_nonbinding tys)
-        | Fun(tys1, ty) -> Fun(List.map rename_nonbinding tys1, rename_nonbinding ty)
-        | RecordClosed tys -> RecordClosed (Array.map (fun (x, ty) -> (x, rename_nonbinding ty)) tys)
-        | VariantClosed tys -> VariantClosed (Array.map (fun (x, ty) -> (x, List.map rename_nonbinding ty)) tys)
+        | List(ty) -> List(rename_nonbinding scope ty)
+        | Promise(ty) -> Promise(rename_nonbinding scope ty)
+        | Ref(ty) -> Ref(rename_nonbinding scope ty)
+        | Tuple(tys) -> Tuple(Array.map (rename_nonbinding scope) tys)
+        | Fun(tys1, ty) -> Fun(List.map (rename_nonbinding scope) tys1, (rename_nonbinding scope) ty)
+        | RecordClosed tys -> RecordClosed (Array.map (fun (x, ty) -> (x, rename_nonbinding scope ty)) tys)
+        | VariantClosed tys -> VariantClosed (Array.map (fun (x, ty) -> (x, List.map (rename_nonbinding scope) ty)) tys)
         | RecordVar (tys, varname) -> 
             begin match RenameMap.find_opt varname scope.ty_vars with
-            | Some varname -> RecordVar (Array.map (fun (x, ty) -> (x, rename_nonbinding ty)) tys, varname)
+            | Some varname -> RecordVar (Array.map (fun (x, ty) -> (x, rename_nonbinding scope ty)) tys, varname)
             | None -> raise (RenameError (TyVarNotFound(varname, loc)))
             end
         | VariantVar (tys, varname) -> 
             begin match RenameMap.find_opt varname scope.ty_vars with
-            | Some varname -> VariantVar (Array.map (fun (x, ty) -> (x, List.map rename_nonbinding ty)) tys, varname)
+            | Some varname -> VariantVar (Array.map (fun (x, ty) -> (x, List.map (rename_nonbinding scope) ty)) tys, varname)
             | None -> raise (RenameError (TyVarNotFound(varname, loc)))
             end
         | TyConstructor(name, args) ->
-            rename_type_constructor rename_nonbinding loc scope name args
+            rename_type_constructor (rename_nonbinding scope) loc scope name args
         | ModSubscriptTyCon((), mod_name, name, args) -> 
             let _, module_export_scope = RenameScope.lookup_mod_var scope loc mod_name in
             (* The renamed name is guaranteed to be unique among all modules so we just get rid of the
                 ModSubscriptTyCon for later passes
                 TODO: The module might still be useful for debugging, so we should probably include it in the name somehow 
             *)
-            rename_type_constructor rename_nonbinding loc module_export_scope name args
+            rename_type_constructor (rename_nonbinding scope) loc module_export_scope name args
         | TypeAlias(name, args) ->
             panic __LOC__ (Loc.pretty loc ^ ": Type Alias found before renamer")
         | TyVar(tv) -> begin match RenameMap.find_opt tv scope.ty_vars with
             | Some tv' -> TyVar(tv')
             | None -> raise (RenameError (TyVarNotFound(tv, loc)))
             end
-        | Parsed.Forall _ -> raise (RenameError (HigherRankType(ty, loc)))
+        | Parsed.Forall (tyvar, ty) -> 
+            let tyvar' = fresh_var tyvar in
+            let ty = rename_nonbinding (RenameScope.insert_type_var tyvar tyvar' scope) ty in
+            Forall (tyvar', ty)
         | Unif(_) -> panic __LOC__ ("Unification variable found after parsing. How did this happen wtf?")
         | Skol(_) -> panic __LOC__ ("Skolem found after parsing. How did this happen wtf?")
         | RecordUnif _ | VariantUnif _ -> panic __LOC__ ("Unification variable row found after parsing. How did this happen wtf?")
@@ -161,7 +164,7 @@ let rename_type loc (scope : RenameScope.t) original_type =
             let scope_trans = RenameScope.insert_type_var tv tv' in
             let ty', other_trans = go (scope_trans scope) ty in
             Renamed.Forall(tv', ty'), (fun scope -> scope_trans (other_trans scope))
-        | _ -> rename_nonbinding ty, Fun.id
+        | _ -> rename_nonbinding scope ty, Fun.id
     in go scope original_type
 
 

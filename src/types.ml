@@ -100,14 +100,6 @@ let unify : local_env -> loc -> ty -> ty -> unit =
       ()
     | ty1, ty2 -> env.constraints := Difflist.snoc !(env.constraints) (Unify (loc, ty1, ty2, env))
 
-(* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2.
-   
-  Right now, subsumption doesn't do anything interesting, since there is no
-   subtyping at all yet. This might change in the future, so type checking should
-   already use `subsumes` instead of `unify` whenever possible, even if it doesn't make
-   a difference yet. *)
-let subsumes : local_env -> loc -> ty -> ty -> unit =
-  unify
 
 let unwrap_constraint : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
@@ -131,6 +123,10 @@ let fresh_unif env =
 let fresh_unif_with env name =
   let typeref, name = fresh_unif_raw_with env name in
   Unif (typeref, name)
+
+let fresh_skolem_with env name =
+  let unique = Unique.fresh () in
+  Skol (unique, env.level, name)
 
 let increase_ambient_level env =
   { env with level = Typeref.next_level env.level }
@@ -257,6 +253,16 @@ let skolemize : local_env -> ty -> ty =
     let (skolemized, _) = skolemize_with_function env ty in
     skolemized
   
+
+(* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2.
+   
+  Right now, subsumption doesn't do anything interesting, since there is no
+   subtyping at all yet. This might change in the future, so type checking should
+   already use `subsumes` instead of `unify` whenever possible, even if it doesn't make
+   a difference yet. *)
+   let subsumes : local_env -> loc -> ty -> ty -> unit =
+    fun env loc sub_type super_type ->
+      unify env loc (instantiate env sub_type) (skolemize env super_type)  
 
 (* Check that an expression is syntactically a value and can be generalized.
    We might be able to extend this in the future, similar to OCaml's relaxed value restriction *)
@@ -1517,6 +1523,11 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> local_env -> un
       | List ty1, List ty2 -> go ty1 ty2
       | Promise ty1, Promise ty2 -> go ty1 ty2
       | Ref ty1, Ref ty2 -> go ty1 ty2
+      | Forall (var1, body1), Forall (var2, body2) ->
+        (* Foralls are unified through α-conversion, by replacing
+           the type variables in both types with the same fresh skolem. *)
+        let skolem = fresh_skolem_with env var1 in
+        go (replace_tvar var1 skolem body1) (replace_tvar var2 skolem body2)
       | (Forall _, _) | (_, Forall _) -> raise (TypeError (loc, Impredicative ((ty1, ty2), optional_unify_context)))
       | (Number, Number) | (Bool, Bool) | (String, String) | (Exception, Exception) -> ()
       | Skol (u1, level1, _), Skol (u2, level2, _) when Unique.equal u1 u2 -> 

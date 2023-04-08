@@ -78,8 +78,6 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
         
     | SubModuleNotFound (name, loc) ->
       print_fun (Some loc) ("Module does not contain a submodule named " ^ text_style.identifier name)
-    | HigherRankType (_ty, loc) ->
-      print_fun (Some loc) ("Illegal inner forall in type.\n    Polaris does not support higher rank polymorphism")
     | WrongNumberOfTyConArgs(name, expected_arg_count, args, loc) ->
       print_fun (Some loc) ("Invalid number of arguments supplied to type constructor " ^ text_style.ty (Name.pretty name) ^ ".\n"
       ^ "    The type constructor takes " ^ text_style.number expected_arg_count ^ " arguments\n"

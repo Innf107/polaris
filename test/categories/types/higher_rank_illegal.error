@@ -1,6 +1,0 @@
-test/categories/types/higher_rank_illegal.pls:2:1: ERROR:
-Illegal inner forall in type.
-    Polaris does not support higher rank polymorphism
-  | 
-2 | let x : (forall a. a -> a) -> Number = let loop() = loop() in loop ()
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

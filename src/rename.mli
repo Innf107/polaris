@@ -10,7 +10,6 @@ type rename_error =
     | SubscriptVarNotFound of string * loc
     | LetSeqInNonSeq of Parsed.expr * loc
     | SubModuleNotFound of string * loc
-    | HigherRankType of Parsed.ty * loc
     | WrongNumberOfTyConArgs of name * int * Parsed.ty list * loc
     | NonExceptionInTry of name * loc
     | UnboundExportConstructor of string * loc

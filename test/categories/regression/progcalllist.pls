@@ -1,7 +1,6 @@
 # EXPECT: test a b
 
-let _ = {
-    let args = split("|", "a|b");
+let args = split("|", "a|b");
 
-    !echo "test" args
-}
+!echo "test" args
+

@@ -100,7 +100,7 @@ let run_env : driver_options
   
   trace_driver (lazy "Evaluating...");
   let env = Eval.eval_header env renamed_header in
-  let res, new_env = Eval.eval_seq_state env renamed in
+  let res, new_env = Eval.eval_seq_state `Statement env renamed in
   res, new_env, new_scope, new_type_env
 
 let run_eval (options : driver_options) (lexbuf : Lexing.lexbuf) : value =

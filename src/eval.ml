@@ -305,7 +305,7 @@ let raise_command_failure_exception env loc program program_args exit_code stdou
 let rec eval_mod_expr env = function
 | Import ((loc, _, body), _) -> 
     (* TODO This ignores the header for now. I hope this is fine? *)
-    let _, module_env = eval_seq_state (empty_eval_env env.argv) body in
+    let _, module_env = eval_seq_state `Statement (empty_eval_env env.argv) body in
     { modules = module_env.module_vars; 
       mod_vars = module_env.vars;
     }, (fun ambient_env -> 
@@ -323,6 +323,51 @@ let rec eval_mod_expr env = function
   | None -> panic __LOC__ (Loc.pretty loc ^ ": Submodule not found at runtime: '" ^ Name.pretty name ^ "'. This should have been caught way earlier!")
   | Some runtime_module -> runtime_module, ambient_env_trans
   end
+
+and eval_statement (env : eval_env) (expr : Typed.expr) =
+  match expr with
+  | If (loc, condition_expr, then_expr, else_expr) ->
+    let condition = eval_expr env condition_expr in
+    begin match condition with
+    | BoolV true -> eval_statement env then_expr
+    | BoolV false -> eval_statement env else_expr 
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in if condition at runtime: " ^ Value.pretty condition)
+    end
+    (* Single program calls are just evaluated like pipes *)
+  | ProgCall (loc, _, _) as expr ->
+    eval_statement env (Pipe (loc, [expr]))
+  (* Pipes in statements inherit the parents stdout. *)
+  (* Pipes without value inputs also inherit the parents stdin *)
+  | Pipe (loc, ((ProgCall _ :: _) as prog_exprs)) -> 
+    let progs = progs_of_exprs env prog_exprs in
+    let pid = Pipe.compose (Some (full_env_vars env)) progs in
+    let status = Pipe.wait_to_status pid in
+    env.last_status := status;
+    if status <> 0 then begin
+      let (program, arguments) = Base.List.last_exn progs in
+      raise_command_failure_exception env loc program arguments status ""
+    end
+    
+  | Pipe (loc, (expr :: prog_exprs)) ->
+    let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr env expr) in
+    
+    let progs = progs_of_exprs env prog_exprs in
+    
+    let pid = Pipe.compose_out_with (Some (full_env_vars env)) progs (fun out_chan -> 
+        List.iter (fun line -> Out_channel.output_string out_chan (line ^ "\n")) output_lines
+      ) in
+    let status = Pipe.wait_to_status pid in
+    env.last_status := status;
+    if status <> 0 then begin
+      let (program, arguments) = Base.List.last_exn progs in
+      raise_command_failure_exception env loc program arguments status ""
+    end
+  | Seq (_, exprs) -> 
+    let _ = eval_seq `Statement env exprs in
+    ()
+  | expr ->
+    let _ = eval_expr env expr in
+    ()
 
 and eval_expr (env : eval_env) (expr : Typed.expr) : value =
   let open Typed in
@@ -568,7 +613,7 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     | BoolV false -> eval_expr env else_expr 
     | _ -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in if condition at runtime: " ^ Value.pretty condition)
       end
-  | Seq (_, exprs) -> eval_seq env exprs
+  | Seq (_, exprs) -> eval_seq `Expr env exprs
   | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ 
   | LetExceptionSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
@@ -734,87 +779,71 @@ and eval_app env loc fun_v arg_vals =
 
 
 (* This takes a continuation argument in order to stay mutually tail recursive with eval_expr *)
-and eval_seq_cont : 'r. eval_env -> Typed.expr list -> (eval_env -> (Typed.expr, value) either -> 'r) -> 'r =
-  fun env exprs cont ->
+and eval_seq_cont : 
+  'r. [ `Expr | `Statement ]
+  -> eval_env 
+  -> Typed.expr list 
+  -> (eval_env -> (Typed.expr, value) either -> 'r) 
+  -> 'r =
+  fun context env exprs cont ->
   match exprs with
   | [] -> cont env (Right unitV)
   | LetSeq (loc, pat, e) :: exprs -> 
     let scrut = eval_expr env e in
     let env_trans = match_pat pat scrut (loc :: env.call_trace) in
-    eval_seq_cont (env_trans env) exprs cont
+    eval_seq_cont context (env_trans env) exprs cont
 
     (* We can safely ignore the type annotation since it has been checked by the typechecker already *)
   | LetRecSeq (loc, _ty, f, params, e) :: exprs ->
     let rec env' = lazy (insert_var f (ClosureV (env', params, e)) env) in
-    eval_seq_cont (Lazy.force env') exprs cont
+    eval_seq_cont context (Lazy.force env') exprs cont
   | LetEnvSeq (loc, x, e) :: exprs ->
     let env' = insert_env_var loc x (eval_expr env e) env in
-    eval_seq_cont env' exprs cont
+    eval_seq_cont context env' exprs cont
   | LetModuleSeq (loc, x, me) :: exprs ->
     let module_val, ambient_env_trans = eval_mod_expr env me in
     let env = ambient_env_trans (insert_module_var x module_val env) in
-    eval_seq_cont env exprs cont
+    eval_seq_cont context env exprs cont
   | (LetDataSeq (loc, _, _, _) | LetTypeSeq (loc, _, _, _)) :: exprs -> 
     (* Types are erased at runtime, so we don't need to do anything clever here *)
-    eval_seq_cont env exprs cont
+    eval_seq_cont context env exprs cont
   | LetExceptionSeq(_loc, exception_name, params, message_expr) :: exprs -> 
     let updated_env = 
       { env with exceptions = VarMap.add exception_name (List.map fst params, env, message_expr) env.exceptions } 
     in
-    eval_seq_cont updated_env exprs cont
-  (* Single program calls are just evaluated like pipes *)
-  | ProgCall (loc, _, _) as expr :: exprs ->
-    eval_seq_cont env (Pipe (loc, [expr]) :: exprs) cont
-  
-  (* Pipes in seq exprs inherit the parents stdout. *)
-  (* Pipes without value inputs also inherit the parents stdin *)
-  | Pipe (loc, ((ProgCall _ :: _) as prog_exprs)) :: exprs -> 
-    let progs = progs_of_exprs env prog_exprs in
-    let pid = Pipe.compose (Some (full_env_vars env)) progs in
-    let status = Pipe.wait_to_status pid in
-    env.last_status := status;
-    if status <> 0 then begin
-      let (program, arguments) = Base.List.last_exn progs in
-      raise_command_failure_exception env loc program arguments status ""
-    end;
-    eval_seq_cont env exprs cont
-  | Pipe (loc, (expr :: prog_exprs)) :: exprs ->
-    let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr env expr) in
-    
-    let progs = progs_of_exprs env prog_exprs in
-    
-    let pid = Pipe.compose_out_with (Some (full_env_vars env)) progs (fun out_chan -> 
-        List.iter (fun line -> Out_channel.output_string out_chan (line ^ "\n")) output_lines
-      ) in
-    let status = Pipe.wait_to_status pid in
-    env.last_status := status;
-    if status <> 0 then begin
-      let (program, arguments) = Base.List.last_exn progs in
-      raise_command_failure_exception env loc program arguments status ""
-    end;
-    eval_seq_cont env exprs cont
-
+    eval_seq_cont context updated_env exprs cont
   | [ e ] -> 
     cont env (Left e)  
   | e :: exprs ->
-      (* The result of 'eval_expr e' is purposefully ignored *)
-      let _ = eval_expr env e in
-      eval_seq_cont env exprs cont
+      eval_statement env e;
+      eval_seq_cont context env exprs cont
 
-and eval_seq (env : eval_env) (exprs : Typed.expr list) : value = 
-  eval_seq_cont env exprs 
+and eval_seq context (env : eval_env) (exprs : Typed.expr list) : value = 
+  eval_seq_cont context env exprs 
     (fun env expr_or_val -> 
       match expr_or_val with
-      | Left expr -> eval_expr env expr
+      | Left expr ->
+        begin match context with
+        | `Expr -> eval_expr env expr
+        | `Statement ->
+          eval_statement env expr;
+          unitV
+        end
       | Right value -> value
       )
 
 
-and eval_seq_state (env : eval_env) (exprs : Typed.expr list) : value * eval_env = 
-  eval_seq_cont env exprs 
+and eval_seq_state context (env : eval_env) (exprs : Typed.expr list) : value * eval_env = 
+  eval_seq_cont context env exprs 
     (fun env expr_or_val -> 
       match expr_or_val with 
-      | Left expr -> (eval_expr env expr, env)
+      | Left expr -> 
+        begin match context with
+        | `Expr -> (eval_expr env expr, env)
+        | `Statement ->
+          eval_statement env expr;
+          (unitV, env)
+        end
       | Right value -> (value, env))
 
 and eval_list_comp env loc result_expr = function
@@ -1053,7 +1082,7 @@ and empty_eval_env (argv: string list): eval_env = {
   exceptions = VarMap.empty;
 }
 
-let eval (argv : string list) (exprs : Typed.expr list) : value = eval_seq (empty_eval_env argv) exprs
+let eval (argv : string list) (exprs : Typed.expr list) : value = eval_seq `Expr (empty_eval_env argv) exprs
 
 let flag_info_of_flag_def (env_ref : eval_env ref) (flag_def : Typed.flag_def): Argparse.flag_info =
   let aliases = flag_def.flags in

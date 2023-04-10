@@ -165,7 +165,6 @@ let as_paren state = let open Parser in function
 
 let ident_token = let open Parser in function
 | "let" -> LET
-| "in" -> IN
 | "if" -> IF
 | "then" -> THEN
 | "else" -> ELSE

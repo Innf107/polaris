@@ -7,7 +7,6 @@ let pretty_token = function
 | INT i -> "INT(" ^ Int.to_string i ^ ")" 
 | FLOAT f -> "FLOAT"
 | LET -> "LET"
-| IN -> "IN"
 | TRUE -> "TRUE" 
 | FALSE -> "FALSE"
 | LAMBDA -> "LAMBDA" 

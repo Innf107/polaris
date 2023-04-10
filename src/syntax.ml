@@ -217,10 +217,6 @@ module Template = struct
     | LetEnvSeq of loc * string * expr            (* let $x = e *)
     | LetDataSeq of loc * name * name list * ty   (* data X(x, .., x) = t *)
     | LetTypeSeq of loc * name * name list * ty   (* type X(x, .., x) = t *)
-    (* local definitions *)
-    | Let of loc * pattern * expr * expr              (* let p = e1 in e2 (valid everywhere) *)
-    | LetRec of LetRecExt.t * ty option * name * pattern list * expr * expr  (* [let f : ty]; let f(x, .., x) = e*)
-    | LetEnv of loc * string * expr * expr            (* let $x = e in e *)
     (* Scripting capabilities *)
     | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
@@ -416,11 +412,6 @@ module Template = struct
     | LetTypeSeq (_, varname, params, ty) -> "type " ^ pretty_name varname ^ "(" ^ String.concat ", " (List.map pretty_name params) ^ ") = " ^ pretty_type ty
 
 
-    | Let (_, x, e1, e2) ->
-        "let " ^ pretty_pattern x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
-    | LetRec (_, None, x, xs, e1, e2) -> "let rec " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
-    | LetRec (_, Some ty, x, xs, e1, e2) -> "let " ^ pretty_name x ^ " : " ^ pretty_type ty ^ "; let " ^ pretty_name x ^ "(" ^ String.concat ", " (List.map pretty_pattern xs) ^ ") = " ^ pretty e1 ^ " in " ^ pretty e2
-    | LetEnv (_, x, e1, e2) -> "let $" ^ x ^ " = " ^ pretty e1 ^ " in " ^ pretty e2
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
@@ -459,7 +450,6 @@ module Template = struct
     | DataConstructor(ext, _) -> DataConExt.loc ext 
     | Subscript(ext, _, _) -> SubscriptExt.loc ext
     | ModSubscript (ext, _, _) -> ModSubscriptExt.loc ext
-    | LetRec(ext, _, _, _, _, _)
     | LetRecSeq(ext, _, _, _, _) -> LetRecExt.loc ext
     | ExceptionConstructor(loc, _) | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
     | BoolLit (loc, _) | UnitLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
@@ -467,8 +457,8 @@ module Template = struct
     | BinOp(loc, _, _, _) | Not(loc, _)
     | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetEnvSeq(loc, _, _) 
-    | LetDataSeq (loc, _, _, _) | LetTypeSeq(loc, _, _, _) | Let(loc, _, _, _)
-    | LetEnv(loc, _, _, _) | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
+    | LetDataSeq (loc, _, _, _) | LetTypeSeq(loc, _, _, _)
+    | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _)
     | MakeRef(loc, _) | LetExceptionSeq (loc, _, _, _) | Try(loc, _, _) | Raise(loc, _)
     -> loc
@@ -648,27 +638,6 @@ module Template = struct
             let params, state = traverse_list self#traverse_name state params in
             let ty, state = self#traverse_type state ty in
             LetTypeSeq(loc, data_name, params, ty), state  
-          | Let(loc, pattern, expr, rest_expr) ->
-            let pattern, state = self#traverse_pattern state pattern in
-            let expr, state = self#traverse_expr state expr in
-            let rest_expr, state = self#traverse_expr state rest_expr in
-            Let(loc, pattern, expr, rest_expr), state
-          | LetRec(loc, maybe_typesig, fun_name, param_patterns, body_expr, rest_expr) ->
-            let maybe_typesig, state = match maybe_typesig with
-            | None -> None, state
-            | Some ty -> 
-              let ty, state = self#traverse_type state ty in
-              Some ty, state
-            in
-            let fun_name, state = self#traverse_name state fun_name in
-            let param_patterns, state = traverse_list self#traverse_pattern state param_patterns in
-            let body_expr, state = self#traverse_expr state body_expr in
-            let rest_expr, state = self#traverse_expr state rest_expr in
-            LetRec(loc, maybe_typesig, fun_name, param_patterns, body_expr, rest_expr), state
-          | LetEnv(loc, envvar, expr, rest_expr) ->
-            let expr, state = self#traverse_expr state expr in
-            let rest_expr, state = self#traverse_expr state rest_expr in
-            LetEnv(loc, envvar, expr, rest_expr), state
           | Assign(loc, place_expr, expr) ->
             let place_expr, state = self#traverse_expr state place_expr in
             let expr, state = self#traverse_expr state expr in

@@ -572,19 +572,6 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
   | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ 
   | LetExceptionSeq _ -> raise (Panic "let assignment found outside of sequence expression")
 
-  | Let (loc, pat, e1, e2) ->
-    let scrut = eval_expr env e1 in
-    let env_trans =match_pat pat scrut (loc :: env.call_trace) in
-    eval_expr (env_trans env) e2
-
-    (* We can safely ignore the type annotation since it has been checked by the
-       typechecker already *)
-  | LetRec (loc, _ty, f, params, e1, e2) ->
-    let rec env' = lazy (insert_var f (ClosureV (env', params, e1)) env) in
-    eval_expr (Lazy.force env') e2
-  | LetEnv (loc, x, e1, e2) ->
-    let env' = insert_env_var loc x (eval_expr env e1) env in
-    eval_expr env' e2
   | ProgCall (loc, prog, args) as expr -> 
     eval_expr env (Pipe (loc, [expr]))
 

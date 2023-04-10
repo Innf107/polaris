@@ -308,8 +308,6 @@ let skolemize : local_env -> ty -> ty =
     | Seq (_, exprs) -> List.for_all is_value exprs
     | LetSeq (_, _, expr) | LetEnvSeq (_, _, expr) -> is_value expr
     | LetRecSeq _ | LetTypeSeq _ | LetDataSeq _ -> true
-    | Let (_, _, expr, rest) | LetEnv (_, _, expr, rest) -> is_value expr && is_value rest
-    | LetRec (_, _, _, _, _, rest) -> is_value rest
     (* TODO: This might be a bit too restrictive. Program calls cannot return polymorphic values anyway 
        so we should be able to generalize e.g. the type of ([], !ls) to forall a. (List(a), String) *)
     | ProgCall _ | Pipe _ -> false
@@ -339,8 +337,8 @@ let skolemize : local_env -> ty -> ty =
 
 let binds_value : expr -> bool =
   function
-  | Let (_, _, expr, _) | LetSeq (_, _, expr) -> is_value expr
-  | LetRec _ | LetRecSeq _ -> true
+  | LetSeq (_, _, expr) -> is_value expr
+  | LetRecSeq _ -> true
   | _ -> false
 
 let rec is_polytype : local_env -> ty -> bool =
@@ -857,35 +855,6 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       )
     | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ 
     | LetExceptionSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
-    | Let (loc, pattern, body, rest) ->
-      let ty, env_trans, pattern = infer_pattern env (is_value body) pattern in
-      (* Lets are non-recursive, so we use the *unaltered* environment *)
-      (* See Note [Levels] *)
-      let body = enter_level env begin fun env -> 
-        check env ty body 
-      end in
-      let result_type, rest = infer (env_trans env) rest in
-      ( result_type
-      , Let (loc, pattern, body, rest)
-      )
-    | LetRec (loc, mty, fun_name, pats, body, rest) ->
-      (* We defer to `check_seq_expr` here, since the core logic is exactly the same *)
-      let env_trans, typed_seq_expr = check_seq_expr env `Check (LetRecSeq(loc, mty, fun_name, pats, body)) in
-      let (loc, mty, fun_name, pats, body) = match typed_seq_expr with
-      | LetRecSeq(loc, mty, fun_name, pats, body) -> loc, mty, fun_name, pats, body
-      | _ -> panic __LOC__ (Loc.pretty loc.main ^ ": check_seq_expr returned non-LetRecSeq expression when passed one")
-      in 
-      
-      let result_type, rest = infer (env_trans env) rest in
-      ( result_type
-      , LetRec (loc, mty, fun_name, pats, body, rest)
-      )
-    | LetEnv (loc, envvar, body, rest) ->
-      let body = check env String body in
-      let result_ty, rest = infer env rest in
-      ( result_ty
-      , LetEnv(loc, envvar, body, rest) 
-      )
     | ProgCall (loc, program, args) ->
       let args_with_types = List.map (infer env) args in
       (* We require a ProgramArgument constraint on every argument for now.
@@ -1088,29 +1057,6 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let exprs = check_seq env loc expected_ty exprs in
       Seq (loc, exprs)
     | (LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ | LetExceptionSeq _), _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
-    | Let (loc, pattern, body, rest), expected_ty ->
-      let ty, env_trans, pattern = infer_pattern env (is_value body) pattern in
-
-      (* Lets are non-recursive, so we use the *unaltered* environment *)
-      let body = enter_level env begin fun env -> 
-        check env ty body 
-      end in
-      let rest = check (env_trans env) expected_ty rest in
-      Let (loc, pattern, body, rest)
-    | LetRec (loc, mty, fun_name, pats, body, rest), expected_ty ->
-      (* We defer to `check_seq_expr` here, since the core logic is exactly the same *)
-      let env_trans, expr = check_seq_expr env `Check (LetRecSeq(loc, mty, fun_name, pats, body)) in
-      let loc, mty, fun_name, pats, body = match expr with
-      | LetRecSeq (loc, mty, fun_name, pats, body) -> loc, mty, fun_name, pats, body
-      | _ -> panic __LOC__ (Loc.pretty loc.main ^ ": check_seq_expr returned non-LetRec expression when passed one")
-      in
-      
-      let rest = check (env_trans env) expected_ty rest in
-      LetRec (loc, mty, fun_name, pats, body, rest)
-    | LetEnv (loc, envvar, e1, e2), expected_ty ->
-      let e1 = check env String e1 in
-      let e2 = check env expected_ty e2 in
-      LetEnv(loc, envvar, e1, e2)
     | ProgCall _, _ -> defer_to_inference ()
     | Pipe _, _ -> defer_to_inference ()
     | EnvVar _, _ -> defer_to_inference ()
@@ -1779,12 +1725,10 @@ let check_exhaustiveness_and_close_variants_in_exprs expr =
       | Typed.Match (loc, _, patterns) as expr ->
         check_column loc (List.map fst patterns);
         expr, ()
-      | Typed.LetSeq (loc, pattern, _) 
-      | Typed.Let(loc, pattern, _, _) ->
+      | Typed.LetSeq (loc, pattern, _)  ->
         check_column (Typed.get_pattern_loc pattern) [pattern];
         expr, ()
-      | Typed.LetRecSeq (_, _, _, patterns, _) 
-      | Typed.LetRec(_, _, _, patterns, _, _) ->
+      | Typed.LetRecSeq (_, _, _, patterns, _) ->
         (* The patterns should be independent and irrefutable so we treat them each as individual columns *)
         List.iter (fun pattern -> check_column (Typed.get_pattern_loc pattern) [pattern]) patterns;
         expr, ()

@@ -25,7 +25,7 @@ type expr_or_fun_def_ext =
 %token <string> PROGCALL
 %token <string> ENVVAR
 %token BANG "!"
-%token LET IN
+%token LET
 %token TRUE FALSE
 %token LAMBDA "\\"
 %token ARROW "->"
@@ -236,24 +236,8 @@ expr_leaf:
     | "(" expr ")" { $2 }
     | "(" expr COMMA sep_trailing(COMMA, expr) ")" { TupleLit(loc $startpos $endpos, $2 :: $4) }
     | "\\" pattern* "->" expr { Lambda(loc $startpos $endpos, $2, $4) }  
-    | LET pattern "=" expr IN expr { Let(loc $startpos $endpos, $2, $4, $6) }
     | LET pattern "=" expr { LetSeq(loc $startpos $endpos, $2, $4) }
-    | LET ENVVAR "=" expr IN expr { LetEnv(loc $startpos $endpos, $2, $4, $6) }
     | LET ENVVAR "=" expr { LetEnvSeq(loc $startpos $endpos, $2, $4) }
-    | LET ident_with_loc "(" sep_trailing(COMMA, pattern) ")" "=" expr IN expr { let var_loc, var = $2 in LetRec({ main = loc $startpos $endpos; subloc = var_loc }, None, var, $4, $7, $9) }    
-    (* Workaround to get both `let x : ty = e in e` and `let f : ty; f(x) = e in e` working *)
-    | LET ident_with_loc ":" ty expr_or_fun_def_ext IN expr
-        {   
-            let var_loc, var = $2 in
-            match $5 with
-            (* TODO: The location in the type pattern is a bit off *)
-            | ExprExt expr -> Let(loc $startpos $endpos, TypePat (loc $startpos $endpos, VarPat(var_loc, var), $4), expr, $7) 
-            | FunExt(name, params, body) ->
-                if var <> name then
-                    raise (SpecificParseError (MismatchedLetName(loc $startpos $endpos,var, name)))
-                else
-                    LetRec({ main = loc $startpos $endpos; subloc = var_loc }, Some $4, name, params, body, $7)    
-        }
     | LET ident_with_loc "(" sep_trailing(COMMA, pattern) ")" "=" expr         { let var_loc, var = $2 in LetRecSeq({main = loc $startpos $endpos; subloc = var_loc }, None, var, $4, $7) }
     
     (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)

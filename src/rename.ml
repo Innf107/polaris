@@ -464,35 +464,6 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
     (* TODO: Improve this error message *)
     | LetModuleSeq (loc, _, _) | LetDataSeq(loc, _, _, _) | LetTypeSeq(loc, _, _, _)
     | LetExceptionSeq (loc, _, _, _) -> raise (RenameError (LetSeqInNonSeq (expr, loc)))
-
-    | Let (loc, p, e1, e2) ->
-        let p', scope_trans, ty_trans = rename_pattern scope p in
-        (* Regular lets are non-recursive, so e1 is *not* evaluated in the new scope with the value transformer applied.
-           Let patterns *can* bind type variables though (See Note [PatternTypeTransformers]), so `e1` needs
-           to be evaluated in a scope where `ty_trans` has been applied.
-
-           At the same time, `e2` should *not* be able to use the type variables bound by `p` *)
-        Let (loc, p', rename_expr exports (ty_trans scope) e1, rename_expr exports (scope_trans scope) e2)
-    | LetRec (loc, mty, x, patterns, e1, e2) ->
-        let x' = fresh_var x in
-        let patterns', scope_trans, _param_ty_trans = rename_patterns scope patterns in
-        let scope' = insert_var x x' scope in
-
-        let mty', type_trans = match mty with
-        | None -> None, Fun.id
-        | Some ty ->
-            let ty', ty_trans = rename_type loc.main scope ty in
-            Some ty', ty_trans
-        in
-
-        let inner_scope = type_trans (scope_trans scope') in
-
-        (* let rec's *are* recursive. The fist type transformer is part of the *parameters*, so we ignore it here. 
-           We do need to include the type transformer for the (possible) type annotation though!
-           (See Note [PatternTypeTransformers]) *)
-        LetRec(loc, mty', x', patterns', rename_expr exports inner_scope e1, rename_expr exports scope' e2)
-    | LetEnv (loc, x, e1, e2) ->
-        LetEnv (loc, x, rename_expr exports scope e1, rename_expr exports scope e2)
     | ProgCall (loc, p, args) ->
         ProgCall (loc, p, List.map (rename_expr exports scope) args)
     | Pipe (loc, exprs) ->

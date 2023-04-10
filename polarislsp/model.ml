@@ -45,7 +45,7 @@ let build exprs =
         (* Subscripts use the location of the field, not the entire expression *)
       | Typed.Subscript ((loc, ty), _, key) -> 
         expr, Difflist.snoc hover_entries (loc.subloc, (loc.subloc, Subscript (key, ty)))
-      | Typed.LetRecSeq ((loc, ty), _, name, _, _) | Typed.LetRec ((loc, ty), _, name, _, _, _) ->
+      | Typed.LetRecSeq ((loc, ty), _, name, _, _)  ->
         expr, Difflist.snoc hover_entries (loc.subloc, (loc.subloc, VarLike (name, ty)))
       | _ -> expr, hover_entries
 

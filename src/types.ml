@@ -30,7 +30,6 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                                     (* ^    ^    ^ unified type
                                        |    | skolem
                                        | unif *)
-                | SkolemInferEscape of ty * ty
                 | DataConUnifyEscape of ty * name * ty * unify_context option
                 | IncorrectNumberOfExceptionArgs of name * int * ty list
                 | PatternError of Pattern.pattern_error
@@ -1405,24 +1404,6 @@ let occurs_and_adjust needle name full_ty loc definition_env optional_unify_cont
       | ty -> (ty, state)
   end in
   snd (traversal#traverse_type false full_ty)
-
-(* Check that none of the skolems escape their scope if they are released into the current environment.
-   This is necessary every time a level boundary is crossed by inference (unification has its own check in occurs_and_adjust),
-   i.e. primarily in let bindings. *)
-let catch_escaping_skolems env loc full_ty =
-  let traversal = object
-    inherit [unit] Traversal.traversal
-
-    method! ty () = function
-      | Skol (_, skol_level, _) as ty ->
-        if Typeref.escaping_level ~ambient:env.level skol_level then
-          raise (TypeError (loc, SkolemInferEscape(ty, full_ty)))
-        else
-          ty, ()
-      | ty -> ty, ()
-  end in
-  let _ = traversal#traverse_type () full_ty in
-  ()
 
 type unify_state = {
   deferred_constraints : ty_constraint Difflist.t ref option

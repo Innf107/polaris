@@ -204,9 +204,6 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
     ^ "    The rigid type variable would escape its scope.\n"
     ^ "    Unable to unify " ^ text_style.ty (Typed.pretty_type unif) ^ " and " ^ text_style.ty (Typed.pretty_type ty)
     ^ pretty_optional_unify_context unify_context
-    | SkolemInferEscape (skol, ty) ->
-      "The rigid type variable " ^ text_style.ty (Typed.pretty_type skol) ^ " would escape its scope\n"
-    ^ "    In the inferred type: " ^ text_style.ty_secondary (Typed.pretty_type ty)
     | DataConUnifyEscape (unif, constructor, ty, unify_context) ->
       "Unable to match type " ^ text_style.ty (Typed.pretty_type unif) ^ " with a type involving the type constructor " ^ text_style.identifier (Name.pretty constructor) ^ ".\n"
     ^ "    The type constructor " ^ text_style.identifier (Name.pretty constructor) ^ " would escape its scope.\n"

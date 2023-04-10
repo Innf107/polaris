@@ -8,6 +8,8 @@ val pretty_level : level -> string
 
 val generalizable_level : ambient:level -> level -> bool
 
+val escaping_level : ambient:level -> level -> bool
+
 val unifiable_level : type_level:level -> unif_level:level -> bool
 
 type 'a state =

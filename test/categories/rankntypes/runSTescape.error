@@ -1,1 +1,9 @@
-aaa
+test/categories/rankntypes/runSTescape.pls:12:19: ERROR:
+Unable to match type 'a$31' with a type involving the rigid type variable 's@32'.
+    The rigid type variable would escape its scope.
+    Unable to unify 'a$31' and 'STRef(s@32, Number)'
+    While trying to unify 'ST(s@32, STRef(s@32, Number))'
+                      and 'ST(s@32, a$31)'
+   | 
+12 | let stRef = runST(newSTRef(5))!
+   |                   ^^^^^^^^^^^

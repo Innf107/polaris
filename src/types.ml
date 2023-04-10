@@ -2,7 +2,8 @@ open Syntax
 open Syntax.Renamed
 open Util
 
-let _tc_category,    trace_tc    = Trace.make ~flag:"types" ~prefix:"Types" 
+let _tc_category,    trace_tc    = Trace.make ~flag:"types" ~prefix:"Types"
+let _emit_category,  trace_emit  = Trace.make ~flag:"emit"  ~prefix:"Emit"
 let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
 let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix:"Subst"
 
@@ -29,6 +30,7 @@ type type_error = UnableToUnify of (ty * ty) * unify_context option
                                     (* ^    ^    ^ unified type
                                        |    | skolem
                                        | unif *)
+                | SkolemInferEscape of ty * ty
                 | DataConUnifyEscape of ty * name * ty * unify_context option
                 | IncorrectNumberOfExceptionArgs of name * int * ty list
                 | PatternError of Pattern.pattern_error
@@ -88,6 +90,7 @@ let normalize_unif = Ty.normalize_unif
 
 let unify : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
+    trace_emit (lazy (Typed.pretty_type ty1 ^ " ~ " ^ Typed.pretty_type ty2));
     match normalize_unif ty1, normalize_unif ty2 with
     (* We can skip obviously equal constraints. 
        This will make debugging vastly simpler and might improve performance a little. *)
@@ -103,10 +106,12 @@ let unify : local_env -> loc -> ty -> ty -> unit =
 
 let unwrap_constraint : local_env -> loc -> ty -> ty -> unit =
   fun env loc ty1 ty2 ->
+    trace_emit (lazy ("Unwrap " ^ Typed.pretty_type ty1 ^ " ==> " ^ Typed.pretty_type ty2));
     env.constraints := Difflist.snoc !(env.constraints) (Unwrap (loc, ty1, ty2, env))
 
 let prog_arg_constraint : local_env -> loc -> ty -> unit =
   fun env loc ty ->
+    trace_emit (lazy ("Arg " ^ Typed.pretty_type ty));
     env.constraints := Difflist.snoc !(env.constraints) (ProgramArg (loc, ty, env))
 
 let fresh_unif_raw_with env raw_name =
@@ -237,20 +242,22 @@ let instantiate : local_env -> ty -> ty =
     let (instaniated, _) = instantiate_with_function env ty in
     instaniated
 
-let rec skolemize_with_function : local_env -> ty -> ty * (ty -> ty) =
+let rec skolemize_with_function : local_env -> ty -> ty * (ty -> ty) * (local_env -> local_env) =
   fun env ty -> match normalize_unif ty with
   | Forall (tv, ty) ->
-    let skol = Skol (Unique.fresh (), env.level, tv) in
-    let replacement_fun = replace_tvar tv skol in
-    let skolemized, inner_replacement_fun = skolemize_with_function env (replacement_fun ty) in
-    skolemized, (fun ty -> inner_replacement_fun (replacement_fun ty))
+    enter_level env begin fun env ->
+      let skol = Skol (Unique.fresh (), env.level, tv) in
+      let replacement_fun = replace_tvar tv skol in
+      let skolemized, inner_replacement_fun, inner_trans = skolemize_with_function env (replacement_fun ty) in
+      skolemized, (fun ty -> inner_replacement_fun (replacement_fun ty)), increase_ambient_level << inner_trans
+    end
   | TypeAlias (name, args) ->
     skolemize_with_function env (instantiate_type_alias env name args)
-  | ty -> ty, Fun.id
+  | ty -> ty, Fun.id, Fun.id
 
 let skolemize : local_env -> ty -> ty =
   fun env ty ->
-    let (skolemized, _) = skolemize_with_function env ty in
+    let (skolemized, _, _) = skolemize_with_function env ty in
     skolemized
   
 
@@ -262,6 +269,7 @@ let skolemize : local_env -> ty -> ty =
    a difference yet. *)
    let subsumes : local_env -> loc -> ty -> ty -> unit =
     fun env loc sub_type super_type ->
+      trace_emit (lazy (Typed.pretty_type sub_type ^ " <= " ^ Typed.pretty_type super_type));
       unify env loc (instantiate env sub_type) (skolemize env super_type)  
 
 (* Check that an expression is syntactically a value and can be generalized.
@@ -989,8 +997,10 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
 and check : local_env -> ty -> expr -> Typed.expr =
   fun env polymorphic_expected_ty expr ->
     trace_tc (lazy (level_prefix env ^ "checking expression '" ^ pretty expr ^ "' : " ^ pretty_type polymorphic_expected_ty));
-    let expected_ty = skolemize env polymorphic_expected_ty in
+    let expected_ty, _, env_trans = skolemize_with_function env polymorphic_expected_ty in
 
+    let env = env_trans env in
+    
     let defer_to_inference () =
       let ty, expr = infer env expr in
       subsumes env (Typed.get_loc expr) ty expected_ty;
@@ -1175,7 +1185,8 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
     | LetSeq (loc, pat, body) ->
       let generalizable = is_value body in
       let ty, env_trans, pat = infer_pattern env generalizable pat in
-      let ty, skolemizer = skolemize_with_function env ty in
+      let ty, skolemizer, skolem_env_trans = skolemize_with_function env ty in
+      let env = skolem_env_trans env in
 
       let traversal = object(self)
         inherit [unit] Traversal.traversal
@@ -1200,20 +1211,21 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
       in
       env_trans, LetSeq(loc, pat, body)
     | LetRecSeq(loc, mty, fun_name, patterns, body) ->
-      let arg_tys, transformers, patterns, result_ty, ty_skolemizer = 
+      let arg_tys, transformers, patterns, result_ty, ty_skolemizer, env_trans = 
         match Option.map (skolemize_with_function env) mty with
         | None -> 
           let arg_tys, transformers, patterns = Util.split3 (List.map (infer_pattern env true) patterns) in
-          arg_tys, transformers, patterns, fresh_unif env, Fun.id
-        | Some (Fun(arg_tys, result_ty), ty_skolemizer) ->            
-          let transformers, patterns = match Base.List.map2 patterns arg_tys ~f:(check_pattern env true) with
-          | Ok transformers_and_patterns -> List.split transformers_and_patterns
-          | Unequal_lengths -> raise (TypeError (loc.main, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length patterns)))
+          arg_tys, transformers, patterns, fresh_unif env, Fun.id, Fun.id
+        | Some (Fun(arg_tys, result_ty), ty_skolemizer, env_transformer) ->            
+          let transformers, patterns = 
+            match Base.List.map2 patterns arg_tys ~f:(check_pattern (env_transformer env) true) with
+            | Ok transformers_and_patterns -> List.split transformers_and_patterns
+            | Unequal_lengths -> raise (TypeError (loc.main, ArgCountMismatchInDefinition(fun_name, arg_tys, List.length patterns)))
           in
-          arg_tys, transformers, patterns, result_ty, ty_skolemizer
-        | Some (ty, _) -> raise (TypeError (loc.main, NonFunTypeInLetRec(fun_name, ty)))
+          arg_tys, transformers, patterns, result_ty, ty_skolemizer, env_transformer
+        | Some (ty, _, _) -> raise (TypeError (loc.main, NonFunTypeInLetRec(fun_name, ty)))
       in
-
+      let env = env_trans env in
 
       trace_tc (lazy ("[Infer (LetRec(Seq) ..)]: " ^ Name.pretty fun_name ^ " : " ^ pretty_type (Fun (arg_tys, result_ty))));
 
@@ -1393,6 +1405,24 @@ let occurs_and_adjust needle name full_ty loc definition_env optional_unify_cont
       | ty -> (ty, state)
   end in
   snd (traversal#traverse_type false full_ty)
+
+(* Check that none of the skolems escape their scope if they are released into the current environment.
+   This is necessary every time a level boundary is crossed by inference (unification has its own check in occurs_and_adjust),
+   i.e. primarily in let bindings. *)
+let catch_escaping_skolems env loc full_ty =
+  let traversal = object
+    inherit [unit] Traversal.traversal
+
+    method! ty () = function
+      | Skol (_, skol_level, _) as ty ->
+        if Typeref.escaping_level ~ambient:env.level skol_level then
+          raise (TypeError (loc, SkolemInferEscape(ty, full_ty)))
+        else
+          ty, ()
+      | ty -> ty, ()
+  end in
+  let _ = traversal#traverse_type () full_ty in
+  ()
 
 type unify_state = {
   deferred_constraints : ty_constraint Difflist.t ref option

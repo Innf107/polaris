@@ -42,13 +42,13 @@ let pretty_reraised (locations : loc list) =
 
 let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a = 
   fun text_style print_fun -> 
-  let pretty_unify_context (original_type1, original_type2) =
-      "\n    While trying to unify " ^ text_style.ty_secondary (Renamed.pretty_type original_type1) ^ "\n"
-    ^ "                      and " ^ text_style.ty_secondary (Renamed.pretty_type original_type2)
+  let pretty_unify_context pretty_type (original_type1, original_type2) =
+      "\n    While trying to unify " ^ text_style.ty_secondary (pretty_type original_type1) ^ "\n"
+    ^ "                      and " ^ text_style.ty_secondary (pretty_type original_type2)
   in
-  let pretty_optional_unify_context = function
+  let pretty_optional_unify_context pretty_type = function
     | None -> ""
-    | Some context -> pretty_unify_context context
+    | Some context -> pretty_unify_context pretty_type context
   in
   function
   | Panic msg -> print_fun None ("PANIC! The 'impossible' happened (This is a bug in the Polaris interpreter, please report it!):\n" ^ msg)
@@ -135,80 +135,176 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
   end
   | TypeError (loc, err) -> print_fun (Some loc) begin match err with
     | UnableToUnify ((ty1, ty2), unify_context) -> 
-                       "Unable to unify types " ^ text_style.ty (Renamed.pretty_type ty1) ^ "\n"
-                     ^ "                  and " ^ text_style.ty (Renamed.pretty_type ty2)
-                     ^ pretty_optional_unify_context unify_context
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.ty ty1
+        |> Disambiguate.ty ty2
+        |> Disambiguate.unify_context_option unify_context
+        |> Disambiguate.pretty_type
+      in
+        "Unable to unify types " ^ text_style.ty (pretty_type ty1) ^ "\n"
+      ^ "                  and " ^ text_style.ty (pretty_type ty2)
+      ^ pretty_optional_unify_context pretty_type unify_context
     | DifferentVariantConstrArgs (constructor_name, types1, types2, unify_context) ->
-                       "Unable to unify an instance of the variant constructor " ^ text_style.identifier constructor_name ^ "\n"
-                     ^ "                                             with " ^ text_style.number (List.length types1) ^ " fields\n"
-                     ^ "    with an instance of the same constructor with " ^ text_style.number (List.length types2) ^ " fields\n"
-                     ^ "    Specifically: Unable to match\n"
-                     ^ "        argument types (" ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) types1) ^ ")\n"
-                     ^ "                  with (" ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) types2) ^ ")"
-                     ^ pretty_unify_context unify_context
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.types types1
+        |> Disambiguate.types types2
+        |> Disambiguate.unify_context unify_context
+        |> Disambiguate.pretty_type
+      in
+        "Unable to unify an instance of the variant constructor " ^ text_style.identifier constructor_name ^ "\n"
+      ^ "                                             with " ^ text_style.number (List.length types1) ^ " fields\n"
+      ^ "    with an instance of the same constructor with " ^ text_style.number (List.length types2) ^ " fields\n"
+      ^ "    Specifically: Unable to match\n"
+      ^ "        argument types (" ^ String.concat ", " (List.map (fun ty -> text_style.ty (pretty_type ty)) types1) ^ ")\n"
+      ^ "                  with (" ^ String.concat ", " (List.map (fun ty -> text_style.ty (pretty_type ty)) types2) ^ ")"
+      ^ pretty_unify_context pretty_type unify_context
     | MismatchedTyCon (constr_name1, constr_name2, unify_context) ->
-                       "Unable to match data constructors " ^ text_style.ty (Name.pretty constr_name1) ^ " and " ^ text_style.ty (Name.pretty constr_name2)
-                     ^ pretty_optional_unify_context unify_context
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.unify_context_option unify_context
+        |> Disambiguate.pretty_type
+      in
+        "Unable to match data constructors " ^ text_style.ty (Name.pretty constr_name1) ^ " and " ^ text_style.ty (Name.pretty constr_name2)
+      ^ pretty_optional_unify_context pretty_type unify_context
 
     | Impredicative ((ty1, ty2), unify_context) ->
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.ty ty1
+        |> Disambiguate.ty ty2
+        |> Disambiguate.unify_context_option unify_context
+        |> Disambiguate.pretty_type
+      in
         "Impredicative instantiation attempted\n"
-      ^ "    when matching types " ^ text_style.ty (Renamed.pretty_type ty1) ^ "\n"
-      ^ "                    and " ^ text_style.ty (Renamed.pretty_type ty2)
-      ^ pretty_optional_unify_context unify_context
+      ^ "    when matching types " ^ text_style.ty (pretty_type ty1) ^ "\n"
+      ^ "                    and " ^ text_style.ty (pretty_type ty2)
+      ^ pretty_optional_unify_context pretty_type unify_context
       ^ "\nUnification involving forall-types is not supported (and most likely a bug)"
     | OccursCheck (typeref, name, ty, unify_context) -> 
-                        "Unable to construct the infinite type " ^ text_style.ty (Renamed.pretty_type (Unif (typeref, name))) ^ "\n"
-                      ^ "                                    ~ " ^ text_style.ty (Renamed.pretty_type ty)
-                     ^ pretty_optional_unify_context unify_context
+      let pretty_type = 
+        Disambiguate.builder
+        |> Disambiguate.ty (Unif (typeref, name))
+        |> Disambiguate.ty ty
+        |> Disambiguate.unify_context_option unify_context
+        |> Disambiguate.pretty_type
+      in
+        "Unable to construct the infinite type " ^ text_style.ty (pretty_type (Unif (typeref, name))) ^ "\n"
+      ^ "                                    ~ " ^ text_style.ty (pretty_type ty)
+      ^ pretty_optional_unify_context pretty_type unify_context
     | FunctionsWithDifferentArgCounts (tys1, tys2, unify_context) ->
-                        "Unable to match a function type with " ^ text_style.number (List.length tys1) ^ " arguments with one that takes " ^ text_style.number (List.length tys2) ^ " arguments.\n"
-                      ^ "Unable to unify argument types " ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) tys1) ^ "\n"
-                      ^ "                           and " ^ String.concat ", " (List.map (fun ty -> text_style.ty (Renamed.pretty_type ty)) tys2)
-                      ^ pretty_unify_context unify_context
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.types tys1
+        |> Disambiguate.types tys2
+        |> Disambiguate.unify_context unify_context
+        |> Disambiguate.pretty_type
+      in
+        "Unable to match a function type with " ^ text_style.number (List.length tys1) ^ " arguments with one that takes " ^ text_style.number (List.length tys2) ^ " arguments.\n"
+      ^ "Unable to unify argument types " ^ String.concat ", " (List.map (fun ty -> text_style.ty (pretty_type ty)) tys1) ^ "\n"
+      ^ "                           and " ^ String.concat ", " (List.map (fun ty -> text_style.ty (pretty_type ty)) tys2)
+      ^ pretty_unify_context pretty_type unify_context
     | PassedIncorrectNumberOfArgsToFun (actual_count, expected_types, result_ty) ->
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.types expected_types
+        |> Disambiguate.ty result_ty
+        |> Disambiguate.pretty_type
+        in
         "Trying to pass " ^ text_style.number actual_count ^ " arguments to a function that expects " ^ text_style.number (List.length expected_types) ^ ".\n"
-      ^ "Incorrect number of arguments passed to a function of type " ^ text_style.ty (Renamed.pretty_type (Fun(expected_types, result_ty)))
+      ^ "Incorrect number of arguments passed to a function of type " ^ text_style.ty (pretty_type (Fun(expected_types, result_ty)))
     | IncorrectNumberOfArgsInLambda (actual_count, expected_types, result_ty) ->
+      let pretty_type = 
+        Disambiguate.builder
+        |> Disambiguate.types expected_types
+        |> Disambiguate.ty result_ty
+        |> Disambiguate.pretty_type
+      in
         "Incorrect number of parameters in lambda. This lambda takes " ^ text_style.number actual_count ^ " arguments\n"
       ^ "                  but its type suggests that it should take " ^ text_style.number (List.length expected_types)  ^ ".\n"
-      ^ "    When checking a lambda of expected type " ^ text_style.ty (Renamed.pretty_type (Fun(expected_types, result_ty)))
+      ^ "    When checking a lambda of expected type " ^ text_style.ty (pretty_type (Fun(expected_types, result_ty)))
     | NonProgCallInPipe expr ->
       (* TODO: Is this even possible? *)
       "Non program call expression in a pipe."
     | MissingRecordFields (remaining1, remaining2, unify_context) ->
-                       "Mismatched record fields.\n"
-                     ^ "Missing mutual record fields " ^ text_style.ty (Renamed.pretty_type (RecordClosed (Array.of_list remaining2))) ^ "\n"
-                     ^ "                         and " ^ text_style.ty (Renamed.pretty_type (RecordClosed (Array.of_list remaining1))) ^ "\n"
-                     ^ "                         respectively."
-                     ^ pretty_unify_context unify_context
+      let pretty_type = 
+        Disambiguate.builder
+        |> Disambiguate.types (List.map snd remaining1)
+        |> Disambiguate.types (List.map snd remaining2)
+        |> Disambiguate.unify_context unify_context
+        |> Disambiguate.pretty_type
+      in
+        "Mismatched record fields.\n"
+      ^ "Missing mutual record fields " ^ text_style.ty (pretty_type (RecordClosed (Array.of_list remaining2))) ^ "\n"
+      ^ "                         and " ^ text_style.ty (pretty_type (RecordClosed (Array.of_list remaining1))) ^ "\n"
+      ^ "                         respectively."
+      ^ pretty_unify_context pretty_type unify_context
     | MissingVariantConstructors (remaining1, remaining2, unify_context) ->
-                      "Mismatched variant constructors.\n"
-                    ^ "Missing mutual variant constructors " ^ text_style.ty (Renamed.pretty_type (VariantClosed (Array.of_list remaining2))) ^ "\n"
-                    ^ "                                and " ^ text_style.ty (Renamed.pretty_type (VariantClosed (Array.of_list remaining1))) ^ "\n"
-                    ^ "                                respectively."
-                    ^ pretty_unify_context unify_context
+      let pretty_type = 
+        Disambiguate.builder
+        |> Disambiguate.types (List.concat_map snd remaining1)
+        |> Disambiguate.types (List.concat_map snd remaining2)
+        |> Disambiguate.unify_context unify_context
+        |> Disambiguate.pretty_type
+      in
+        "Mismatched variant constructors.\n"
+      ^ "Missing mutual variant constructors " ^ text_style.ty (pretty_type (VariantClosed (Array.of_list remaining2))) ^ "\n"
+      ^ "                                and " ^ text_style.ty (pretty_type (VariantClosed (Array.of_list remaining1))) ^ "\n"
+      ^ "                                respectively."
+      ^ pretty_unify_context pretty_type unify_context
     | ArgCountMismatchInDefinition (fun_name, types, count) ->
-                       "The function " ^ text_style.identifier (Name.pretty fun_name) ^ " is declared with " ^ text_style.number count ^ " parameters\n"
-                     ^ "    but it's type suggests that it should have " ^ text_style.number (List.length types)
+        "The function " ^ text_style.identifier (Name.pretty fun_name) ^ " is declared with " ^ text_style.number count ^ " parameters\n"
+      ^ "    but it's type suggests that it should have " ^ text_style.number (List.length types)
     | NonFunTypeInLetRec(fun_name, ty) ->
-      "The function definition for " ^ text_style.identifier (Name.pretty fun_name) ^ " is declared as a function\n" 
-      ^"    but has a non-function type: " ^ text_style.ty (Typed.pretty_type ty)
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.ty ty
+        |> Disambiguate.pretty_type
+      in
+        "The function definition for " ^ text_style.identifier (Name.pretty fun_name) ^ " is declared as a function\n" 
+      ^ "    but has a non-function type: " ^ text_style.ty (pretty_type ty)
     | CannotUnwrapNonData ty ->
-      "Trying to unwrap invalid type " ^ text_style.ty (Renamed.pretty_type ty) ^ "\n    Unwrapping is only possible for types defined in a data declaration"
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.ty ty
+        |> Disambiguate.pretty_type
+      in
+      "Trying to unwrap invalid type " ^ text_style.ty (pretty_type ty) ^ "\n    Unwrapping is only possible for types defined in a data declaration"
     | ValueRestriction ty ->
-      "Value restriction violation\n"
-    ^ "    Trying to bind " ^ text_style.emphasis "non-value" ^ " to a variable\n"
-    ^ "    with a polymorphic type: " ^ text_style.ty (Typed.pretty_type ty)
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.ty ty
+        |> Disambiguate.pretty_type
+      in
+        "Value restriction violation\n"
+      ^ "    Trying to bind " ^ text_style.emphasis "non-value" ^ " to a variable\n"
+      ^ "    with a polymorphic type: " ^ text_style.ty (pretty_type ty)
     | SkolemUnifyEscape (unif, skol, ty, unify_context) ->
-      "Unable to match type " ^ text_style.ty (Typed.pretty_type unif) ^ " with a type involving the rigid type variable " ^ text_style.ty (Typed.pretty_type skol) ^ ".\n"
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.ty unif
+        |> Disambiguate.ty skol
+        |> Disambiguate.ty ty
+        |> Disambiguate.unify_context_option unify_context
+        |> Disambiguate.pretty_type
+      in
+      "Unable to match type " ^ text_style.ty (pretty_type unif) ^ " with a type involving the rigid type variable " ^ text_style.ty (pretty_type skol) ^ ".\n"
     ^ "    The rigid type variable would escape its scope.\n"
-    ^ "    Unable to unify " ^ text_style.ty (Typed.pretty_type unif) ^ " and " ^ text_style.ty (Typed.pretty_type ty)
-    ^ pretty_optional_unify_context unify_context
+    ^ "    Unable to unify " ^ text_style.ty (pretty_type unif) ^ " and " ^ text_style.ty (pretty_type ty)
+    ^ pretty_optional_unify_context pretty_type unify_context
     | DataConUnifyEscape (unif, constructor, ty, unify_context) ->
-      "Unable to match type " ^ text_style.ty (Typed.pretty_type unif) ^ " with a type involving the type constructor " ^ text_style.identifier (Name.pretty constructor) ^ ".\n"
+      let pretty_type =
+        Disambiguate.builder
+        |> Disambiguate.ty unif
+        |> Disambiguate.ty ty
+        |> Disambiguate.unify_context_option unify_context
+        |> Disambiguate.pretty_type
+      in
+      "Unable to match type " ^ text_style.ty (pretty_type unif) ^ " with a type involving the type constructor " ^ text_style.identifier (Name.pretty constructor) ^ ".\n"
     ^ "    The type constructor " ^ text_style.identifier (Name.pretty constructor) ^ " would escape its scope.\n"
-    ^ "    Unable to unify " ^ text_style.ty (Typed.pretty_type unif) ^ " and " ^ text_style.ty (Typed.pretty_type ty)
-    ^ pretty_optional_unify_context unify_context
+    ^ "    Unable to unify " ^ text_style.ty (pretty_type unif) ^ " and " ^ text_style.ty (pretty_type ty)
+    ^ pretty_optional_unify_context pretty_type unify_context
     | IncorrectNumberOfExceptionArgs (name, given_arg_count, expected_types) ->
       "Incorrect number of arguments passed to exception constructor " ^ text_style.identifier (Name.pretty name) ^ ".\n"
     ^ "    This constructor expects " ^ text_style.number (List.length expected_types) ^ " arguments\n"

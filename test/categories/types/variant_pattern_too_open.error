@@ -3,7 +3,7 @@ Mismatched variant constructors.
 Missing mutual variant constructors '<  >'
                                 and '< A(Number) >'
                                 respectively.
-    While trying to unify '< A(Number) | α$17 >'
+    While trying to unify '< A(Number) | ?α >'
                       and '< Just(Number), Nothing() >'
   | 
 6 | print(f(A(5)))

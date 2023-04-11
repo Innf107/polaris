@@ -285,7 +285,14 @@ module Template = struct
     ; exports: export_item list
   }
 
-  let rec pretty_type = fun ty -> match Ty.normalize_unif ty with
+  type pretty_type_options = {
+    pretty_unif : ty Typeref.t -> name -> string;
+    pretty_skol : Unique.t -> Typeref.level -> name -> string;
+  }
+
+  let rec pretty_type_with options ty = 
+    let pretty_type = pretty_type_with options in
+    match Ty.normalize_unif ty with
     | Forall (var, ty) -> "∀" ^ pretty_name var ^ ". " ^ pretty_type ty
     | Fun (args, res) -> "(" ^ String.concat ", " (List.map pretty_type args) ^ ") -> " ^ pretty_type res
     | TyConstructor (name, []) -> pretty_name name
@@ -296,23 +303,9 @@ module Template = struct
       pretty_name mod_name ^ "." ^ pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_type args) ^ ")"
     | TyVar var -> pretty_name var
     | Unif (typeref, name) -> 
-      begin match Typeref.get typeref with
-      | Unbound level -> 
-        if Config.print_levels () then
-          pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ "[" ^ Typeref.pretty_level level ^ "]"
-        else
-          pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref)
-      | Bound ty ->
-        if Config.print_subst_unif_vars () then
-          pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ "[= " ^ pretty_type ty ^ "]"
-        else
-          pretty_type ty
-      end 
-    | Skol (u, level, name) -> 
-      if Config.print_levels () then
-        pretty_name name ^ "@" ^ Unique.display u ^ "[" ^ Typeref.pretty_level level ^ "]"
-      else
-        pretty_name name ^ "@" ^ Unique.display u
+      options.pretty_unif typeref name
+    | Skol (unique, level, name) -> 
+      options.pretty_skol unique level name
     | Number -> "Number"
     | Bool -> "Bool"
     | String -> "String"
@@ -332,6 +325,32 @@ module Template = struct
     | VariantUnif (fields, (typeref, name)) -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " | " ^ pretty_type (Unif (typeref, name)) ^ " >"
     | VariantSkol (fields, (u, level, name)) -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " | " ^ pretty_type (Skol (u, level, name)) ^ " >"
     | VariantVar (fields, name) -> "< " ^ String.concat ", " (Array.to_list (Array.map (fun (x, tys) -> x ^ "(" ^ String.concat ", " (List.map pretty_type tys) ^ ")") fields)) ^ " | " ^ pretty_name name ^ " >"
+
+  
+  let rec pretty_type ty = pretty_type_with (Lazy.force default_pretty_type_config) ty
+
+  (* This is lazy to allow mutual recursion with pretty_type*)
+  and default_pretty_type_config = lazy {
+    pretty_unif = begin fun typeref name -> 
+      match Typeref.get typeref with
+      | Unbound level -> 
+        if Config.print_levels () then
+          "?" ^ pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ "[" ^ Typeref.pretty_level level ^ "]"
+        else
+          "?" ^ pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref)
+      | Bound ty ->
+        if Config.print_subst_unif_vars () then
+          "?" ^ pretty_name name ^ "$" ^ Unique.display (Typeref.get_unique typeref) ^ "[= " ^ pretty_type ty ^ "]"
+        else
+          pretty_type ty
+      end;
+    pretty_skol = begin fun unique level name ->
+      if Config.print_levels () then
+        pretty_name name ^ "@" ^ Unique.display unique ^ "[" ^ Typeref.pretty_level level ^ "]"
+      else
+        pretty_name name ^ "@" ^ Unique.display unique
+    end
+  }
 
   let rec pretty_pattern = function
     | VarPat (_, x) -> pretty_name x

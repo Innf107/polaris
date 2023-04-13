@@ -260,20 +260,18 @@ let skolemize : local_env -> ty -> ty =
     skolemized
   
 
-(* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2.
-   
-  Right now, subsumption doesn't do anything interesting, since there is no
-   subtyping at all yet. This might change in the future, so type checking should
-   already use `subsumes` instead of `unify` whenever possible, even if it doesn't make
-   a difference yet. *)
-   let subsumes : local_env -> loc -> ty -> ty -> unit =
-    fun env loc sub_type super_type ->
-      trace_emit (lazy (Typed.pretty_type sub_type ^ " <= " ^ Typed.pretty_type super_type));
-      unify env loc (instantiate env sub_type) (skolemize env super_type)  
+(* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2. 
+  Unlike, say, most object oriented languages, Polaris only has one notion of
+  subtyping: polytypes are subtypes of more specific types.
+  For example, forall a. a -> a is a subtype of Number -> Number  *)
+let subsumes : local_env -> loc -> ty -> ty -> unit =
+fun env loc sub_type super_type ->
+  trace_emit (lazy (Typed.pretty_type sub_type ^ " <= " ^ Typed.pretty_type super_type));
+  unify env loc (instantiate env sub_type) (skolemize env super_type)  
 
 (* Check that an expression is syntactically a value and can be generalized.
    We might be able to extend this in the future, similar to OCaml's relaxed value restriction *)
-   let rec is_value : expr -> bool =
+let rec is_value : expr -> bool =
     function
     | Var _ -> true
     | DataConstructor _ -> true
@@ -842,10 +840,20 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       )
     | If (loc, cond, then_branch, else_branch) ->
       let cond = check env Bool cond in
-      let res_ty, then_branch = infer env then_branch in
-      (* TODO: With subtyping (even subsumption), this might not be correct *)
-      let else_branch = check env res_ty else_branch in
-      ( res_ty
+      let then_ty, then_branch = infer env then_branch in
+
+      let else_ty, else_branch = infer env else_branch in
+
+      (* This is a bit subtle. We need to ensure that both branches have the same
+         type, but we cannot just use unify, since that might fail if either branch returns
+         something of a polymorphic type. Instead, we check that both types are mutual subtypes.
+         This way, no type is more general than the other, so it doesn't matter which one we
+         assign to the if expression as a whole. We arbitrarily pick the type of the then branch.
+         *)
+      subsumes env loc then_ty else_ty;
+      subsumes env loc else_ty then_ty;
+
+      ( then_ty
       , If (loc, cond, then_branch, else_branch)
       )
     | Seq (loc, exprs) -> 

@@ -14,6 +14,9 @@ type rename_error =
     | NonExceptionInTry of name * loc
     | UnboundExportConstructor of string * loc
     | DuplicateKeyInRecordUpdate of string * loc
+    | ClassNotFound of string * loc
+    | ClassMethodMismatch of { class_name : name; missing : string list; invalid : string list; loc : loc }
+    | WrongNumberOfClassArgsInInstance of { class_name : name; expected : int; actual : int; loc : loc }
 
 
 exception RenameError of rename_error

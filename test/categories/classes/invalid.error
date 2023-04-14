@@ -1,0 +1,6 @@
+test/categories/classes/invalid.pls:6:1: ERROR:
+Invalid methods in an instance of the type class 'Eq':
+    - 'somethingElse'
+  | 
+6 | instance Eq(Number){
+  | ^^^^^^^^^^^^^^^^^^^^

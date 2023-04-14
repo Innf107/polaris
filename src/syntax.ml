@@ -217,6 +217,8 @@ module Template = struct
     | LetEnvSeq of loc * string * expr            (* let $x = e *)
     | LetDataSeq of loc * name * name list * ty   (* data X(x, .., x) = t *)
     | LetTypeSeq of loc * name * name list * ty   (* type X(x, .., x) = t *)
+    | LetClassSeq of loc * name * name list * (name * ty) list (* class X(x, .., x) { x : t } *)
+    | LetInstanceSeq of loc * name * ty list * (name * pattern list * expr) list (* instance X(x, .., x) { x(p, .., p) = e }*)
     (* Scripting capabilities *)
     | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
@@ -429,7 +431,11 @@ module Template = struct
     | LetDataSeq (_, varname, params, ty) -> "data " ^ pretty_name varname ^ "(" ^ String.concat ", " (List.map pretty_name params) ^ ") = " ^ pretty_type ty
     | LetTypeSeq (_, varname, [], ty) -> "type " ^ pretty_name varname ^ " = " ^ pretty_type ty
     | LetTypeSeq (_, varname, params, ty) -> "type " ^ pretty_name varname ^ "(" ^ String.concat ", " (List.map pretty_name params) ^ ") = " ^ pretty_type ty
-
+    | LetClassSeq (_, classname, params, methods) -> "class " ^ pretty_name classname ^ "(" ^ String.concat ", " (List.map pretty_name params) ^ ") {\n"
+      ^ String.concat "\n" (List.map (fun (name, ty) -> pretty_name name ^ " : " ^ pretty_type ty) methods)
+      ^ "\n}"
+    | LetInstanceSeq (_, classname, params, methods) -> "instance " ^ pretty_name classname ^ "(" ^ String.concat ", " (List.map pretty_type params) ^ ") {\n"
+      ^ String.concat "\n" (List.map (fun (name, patterns, body) -> pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_pattern patterns) ^ ") = " ^ pretty body) methods)
 
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
@@ -477,6 +483,7 @@ module Template = struct
     | Range(loc, _, _) | ListComp(loc, _, _)
     | If(loc, _, _, _) | Seq(loc, _) | LetSeq(loc, _, _) | LetEnvSeq(loc, _, _) 
     | LetDataSeq (loc, _, _, _) | LetTypeSeq(loc, _, _, _)
+    | LetClassSeq (loc, _, _, _) | LetInstanceSeq(loc, _, _, _)
     | Assign(loc, _, _) | ProgCall(loc, _, _) | Pipe(loc, _) | EnvVar(loc, _)
     | Async(loc, _) | Await(loc, _) | Match(loc, _, _) | LetModuleSeq(loc, _, _) | Ascription (loc, _, _) | Unwrap(loc, _)
     | MakeRef(loc, _) | LetExceptionSeq (loc, _, _, _) | Try(loc, _, _) | Raise(loc, _)
@@ -656,7 +663,28 @@ module Template = struct
             let data_name, state = self#traverse_name state data_name in
             let params, state = traverse_list self#traverse_name state params in
             let ty, state = self#traverse_type state ty in
-            LetTypeSeq(loc, data_name, params, ty), state  
+            LetTypeSeq(loc, data_name, params, ty), state
+          | LetClassSeq(loc, class_name, params, methods) ->
+            let class_name, state = self#traverse_name state class_name in
+            let params, state = traverse_list self#traverse_name state params in
+            let methods, state = traverse_list (
+              fun state (name, ty) ->
+                let name, state = self#traverse_name state name in
+                let ty, state = self#traverse_type state ty in
+                (name, ty), state
+            ) state methods in
+            LetClassSeq(loc, class_name, params, methods), state
+          | LetInstanceSeq(loc, class_name, params, methods) ->
+            let class_name, state = self#traverse_name state class_name in
+            let params, state = traverse_list self#traverse_type state params in
+            let methods, state = traverse_list (
+              fun state (class_name, patterns, expr) ->
+                let class_name, state = self#traverse_name state class_name in
+                let patterns, state = traverse_list self#traverse_pattern state patterns in
+                let expr, state = self#traverse_expr state expr in
+                (class_name, patterns, expr), state
+            ) state methods in 
+            LetInstanceSeq(loc, class_name, params, methods), state
           | Assign(loc, place_expr, expr) ->
             let place_expr, state = self#traverse_expr state place_expr in
             let expr, state = self#traverse_expr state expr in

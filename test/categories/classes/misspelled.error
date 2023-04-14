@@ -1,0 +1,9 @@
+test/categories/classes/misspelled.pls:5:1: ERROR:
+An instance of the type class 'Eq' is missing required methods:
+    - 'eq'
+    but also contains invalid methods:
+    - 'eqq'
+    Did you misspell something?
+  | 
+5 | instance Eq(Number) {
+  | ^^^^^^^^^^^^^^^^^^^^^

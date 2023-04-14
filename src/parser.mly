@@ -68,6 +68,8 @@ type expr_or_fun_def_ext =
 %token FORALL
 %token DATA
 %token TYPE
+%token CLASS
+%token INSTANCE
 %token BACKTICK "`"
 %token REF
 %token EXCEPTION TRY RAISE
@@ -267,10 +269,19 @@ expr_leaf:
     | DATA CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetDataSeq(loc $startpos $endpos, $2, $4, $7) }
     | TYPE CONSTRUCTOR "=" ty { LetTypeSeq(loc $startpos $endpos, $2, [], $4) }
     | TYPE CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "=" ty { LetTypeSeq(loc $startpos $endpos, $2, $4, $7) }
+    | CLASS CONSTRUCTOR "(" sep_trailing1(COMMA, IDENT) ")" "{"
+            sep_trailing(SEMI+, typed_ident)
+        "}" { LetClassSeq(loc $startpos $endpos, $2, $4, $7) }
+    | INSTANCE CONSTRUCTOR "(" sep_trailing1(COMMA, ty) ")" "{"
+            sep_trailing(SEMI+, instance_def)
+        "}" { LetInstanceSeq(loc $startpos $endpos, $2, $4, $7) }
     | EXCEPTION CONSTRUCTOR "(" sep_trailing(COMMA, typed_ident) ")" "=" expr { LetExceptionSeq(loc $startpos $endpos, $2, $4, $7) }
     | TRY expr WITH "{" sep_trailing(SEMI+, match_branch) "}" { Try(loc $startpos $endpos, $2, $5) }
     | RAISE expr { Raise(loc $startpos $endpos, $2) }
     | REF expr { MakeRef(loc $startpos $endpos, $2) }
+
+instance_def:
+    | IDENT "(" sep_trailing(COMMA, pattern) ")" "=" expr { ($1, $3, $6) }
 
 (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)
 expr_or_fun_def_ext:
@@ -279,9 +290,6 @@ expr_or_fun_def_ext:
 
 match_branch:
     pattern "->" expr { ($1, $3) } 
-
-as_name:
-    | AS IDENT { $2 }
 
 assign:
     IDENT "=" expr SEMI* { ($1, $3) }

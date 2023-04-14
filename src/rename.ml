@@ -21,6 +21,9 @@ type rename_error =
     | NonExceptionInTry of name * loc
     | UnboundExportConstructor of string * loc
     | DuplicateKeyInRecordUpdate of string * loc
+    | ClassNotFound of string * loc
+    | ClassMethodMismatch of { class_name : name; missing : string list; invalid : string list; loc : loc }
+    | WrongNumberOfClassArgsInInstance of { class_name : name; expected : int; actual : int; loc : loc }
 
 
 exception RenameError of rename_error
@@ -35,6 +38,7 @@ module RenameScope = struct
            just check that type constructors are always fully applied in the renamer. *)
         ty_constructors: (name * int * type_constructor_sort) RenameMap.t;
         data_constructors: (name * data_constructor_sort) RenameMap.t;
+        type_classes : (name * int * name StringMap.t) RenameMap.t;
     }
 
     let empty : t = { 
@@ -49,6 +53,7 @@ module RenameScope = struct
                 RenameMap.map 
                     (fun (name, _) -> (name, ExceptionSort))
                     Primops.prim_exceptions;
+            type_classes = RenameMap.empty;
         }
 
     let insert_var (old : string) (renamed : name) (scope : t) : t =
@@ -65,6 +70,9 @@ module RenameScope = struct
 
     let insert_data_constructor old renamed sort scope =
         { scope with data_constructors = add old (renamed, sort) scope.data_constructors }    
+
+    let insert_type_class unqualified_name class_name parameter_count method_names scope =
+        { scope with type_classes = add unqualified_name (class_name, parameter_count, method_names) scope.type_classes }
 
     let lookup_var (scope : t) (loc : loc) (var : string) : name =
         try 
@@ -108,9 +116,6 @@ let rename_type_constructor : (Parsed.ty -> Renamed.ty)
 
 let rename_type loc (scope : RenameScope.t) original_type = 
     let rec go (scope : RenameScope.t) ty = 
-        (* Polaris does not support higher rank, let alone impredicative polymorphism,
-        so top level foralls are the only way to bind type variables and everything else
-        can use its own case *)
         let rec rename_nonbinding (scope : RenameScope.t) =    
         function
         | Parsed.Number -> Renamed.Number
@@ -463,6 +468,7 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
     | LetSeq (loc, _, _) | LetRecSeq ({ main = loc; _ }, _, _, _, _) | LetEnvSeq (loc, _, _) 
     (* TODO: Improve this error message *)
     | LetModuleSeq (loc, _, _) | LetDataSeq(loc, _, _, _) | LetTypeSeq(loc, _, _, _)
+    | LetClassSeq (loc, _, _, _) | LetInstanceSeq (loc, _, _, _)
     | LetExceptionSeq (loc, _, _, _) -> raise (RenameError (LetSeqInNonSeq (expr, loc)))
     | ProgCall (loc, p, args) ->
         ProgCall (loc, p, List.map (rename_expr exports scope) args)
@@ -593,6 +599,69 @@ and rename_seq_state (exports : (module_exports * Typed.expr list) FilePathMap.t
 
         let exprs, scope = rename_seq_state exports scope exprs in
         LetTypeSeq (loc, alias_name', List.map snd renamed_params, underlying_type') :: exprs, scope
+    | LetClassSeq (loc, class_name, params, methods) :: exprs ->
+        let class_name' = fresh_var class_name in
+        let renamed_params = List.map (fun param ->
+            let param' = fresh_var param in
+            (param, param')) params
+        in
+        let method_scope = Util.compose (List.map (fun (param, param') scope -> insert_type_var param param' scope) renamed_params) scope in
+        let methods' = List.map (fun (name, ty) ->
+            let name' = fresh_var name in
+            let ty', _ = rename_type loc method_scope ty in
+            (name', ty')) methods
+        in
+
+        let method_map = StringMap.of_seq (Seq.map (fun (name, _) -> (name.name, name)) (List.to_seq methods')) in
+        let scope = insert_type_class class_name class_name' (List.length params) method_map scope in
+
+        let exprs, scope = rename_seq_state exports scope exprs in
+        LetClassSeq (loc, class_name', List.map snd renamed_params, methods') :: exprs, scope
+    | LetInstanceSeq (loc, class_name, args, methods) :: exprs ->
+        begin match RenameMap.find_opt class_name scope.type_classes with
+        | None -> raise (RenameError (ClassNotFound(class_name, loc)))
+        | Some (class_name', arg_count, _) when List.compare_length_with args arg_count <> 0 ->
+            raise (RenameError (WrongNumberOfClassArgsInInstance { 
+                    class_name = class_name';
+                    expected = arg_count; 
+                    actual = List.length args; 
+                    loc 
+                }))
+        | Some (class_name', arg_count, definition_methods) -> 
+            let args = List.map (fst << rename_type loc scope) args in
+
+            let (invalid_methods, methods') = 
+                List.partition_map
+                    (fun (name, patterns, body) -> 
+                        match StringMap.find_opt name definition_methods with
+                        | None -> Left name
+                        | Some name' ->
+                            (* We can safely ignore the type transformer, since this is only relevant
+                               in non-seq let bindings where the pattern describes what we are defining 
+                               (rather than a parameter like in this case) *)
+                            let patterns, scope_trans, _type_trans = rename_patterns scope patterns in
+                            let body = rename_expr exports (scope_trans scope) body in
+                            Right (name', patterns, body)
+                        ) 
+                    methods
+            in
+            let method_names = List.map (fun (name, _, _) -> name) methods in
+            let missing_methods = 
+                List.filter
+                    (fun name -> not (List.mem name method_names))
+                    (List.of_seq (Seq.map fst (StringMap.to_seq definition_methods)))
+            in
+            match invalid_methods, missing_methods with
+            | [], [] -> 
+                let exprs, scope = rename_seq_state exports scope exprs in
+                LetInstanceSeq(loc, class_name', args, methods') :: exprs, scope
+            | _ -> raise (RenameError (ClassMethodMismatch { 
+                    class_name=class_name'; 
+                    invalid=invalid_methods;
+                    missing=missing_methods;
+                    loc;
+                }))
+        end
     | LetExceptionSeq(loc, exception_name, params, message_expr) :: exprs ->
         let rename_param scope (param_name, ty) = 
             let param_name' = fresh_var param_name in

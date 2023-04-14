@@ -614,8 +614,9 @@ and eval_expr (env : eval_env) (expr : Typed.expr) : value =
     | _ -> panic __LOC__ (Loc.pretty loc ^ ": Non-bool in if condition at runtime: " ^ Value.pretty condition)
       end
   | Seq (_, exprs) -> eval_seq `Expr env exprs
-  | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ 
-  | LetExceptionSeq _ -> raise (Panic "let assignment found outside of sequence expression")
+  | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _
+  | LetClassSeq _ | LetInstanceSeq _
+  | LetExceptionSeq _ -> panic __LOC__ "let assignment found outside of sequence expression"
 
   | ProgCall (loc, prog, args) as expr -> 
     eval_expr env (Pipe (loc, [expr]))
@@ -807,6 +808,7 @@ and eval_seq_cont :
   | (LetDataSeq (loc, _, _, _) | LetTypeSeq (loc, _, _, _)) :: exprs -> 
     (* Types are erased at runtime, so we don't need to do anything clever here *)
     eval_seq_cont context env exprs cont
+  | (LetClassSeq _ | LetInstanceSeq _) :: exprs -> todo __LOC__
   | LetExceptionSeq(_loc, exception_name, params, message_expr) :: exprs -> 
     let updated_env = 
       { env with exceptions = VarMap.add exception_name (List.map fst params, env, message_expr) env.exceptions } 

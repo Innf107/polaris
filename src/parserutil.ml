@@ -68,3 +68,5 @@ let pretty_token = function
 | EXCEPTION -> "EXCEPTION"
 | TRY -> "TRY"
 | RAISE -> "RAISE"
+| INSTANCE -> "INSTANCE"
+| CLASS -> "CLASS"

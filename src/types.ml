@@ -305,7 +305,8 @@ let rec is_value : expr -> bool =
       is_value condition && is_value then_branch && is_value else_branch
     | Seq (_, exprs) -> List.for_all is_value exprs
     | LetSeq (_, _, expr) | LetEnvSeq (_, _, expr) -> is_value expr
-    | LetRecSeq _ | LetTypeSeq _ | LetDataSeq _ -> true
+    | LetRecSeq _ | LetTypeSeq _ | LetDataSeq _
+    | LetClassSeq _ | LetInstanceSeq _  -> true
     (* TODO: This might be a bit too restrictive. Program calls cannot return polymorphic values anyway 
        so we should be able to generalize e.g. the type of ([], !ls) to forall a. (List(a), String) *)
     | ProgCall _ | Pipe _ -> false
@@ -862,7 +863,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       , Seq (loc, exprs)
       )
     | LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ 
-    | LetExceptionSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
+    | LetClassSeq _ | LetInstanceSeq _ | LetExceptionSeq _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
     | ProgCall (loc, program, args) ->
       let args_with_types = List.map (infer env) args in
       (* We require a ProgramArgument constraint on every argument for now.
@@ -1064,7 +1065,8 @@ and check : local_env -> ty -> expr -> Typed.expr =
     | Seq (loc, exprs), expected_ty ->
       let exprs = check_seq env loc expected_ty exprs in
       Seq (loc, exprs)
-    | (LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ | LetExceptionSeq _), _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
+    | (LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _ | LetTypeSeq _ | LetExceptionSeq _
+      | LetClassSeq _ | LetInstanceSeq _), _ -> panic __LOC__ ("Found LetSeq expression outside of expression block during typechecking")
     | ProgCall _, _ -> defer_to_inference ()
     | Pipe _, _ -> defer_to_inference ()
     | EnvVar _, _ -> defer_to_inference ()
@@ -1247,6 +1249,8 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
       insert_data_definition env.level data_name params ty, LetDataSeq(loc, data_name, params, ty)
     | LetTypeSeq(loc, alias_name, params, ty) ->
       insert_type_alias alias_name params ty, LetTypeSeq(loc, alias_name, params, ty)
+    | LetClassSeq _ -> todo __LOC__
+    | LetInstanceSeq _ -> todo __LOC__
     | LetExceptionSeq (loc, exception_name, params, message_expr) -> 
       
       let message_env = List.fold_right (fun (param, ty) r -> insert_var param ty r) params env in
@@ -1729,8 +1733,8 @@ let check_exhaustiveness_and_close_variants_in_exprs expr =
   let traversal = object
     inherit [unit] Typed.Traversal.traversal
 
-    method! expr () = function
-      | Typed.Match (loc, _, patterns) as expr ->
+    method! expr () expr = match expr with
+      | Typed.Match (loc, _, patterns) ->
         check_column loc (List.map fst patterns);
         expr, ()
       | Typed.LetSeq (loc, pattern, _)  ->
@@ -1739,6 +1743,12 @@ let check_exhaustiveness_and_close_variants_in_exprs expr =
       | Typed.LetRecSeq (_, _, _, patterns, _) ->
         (* The patterns should be independent and irrefutable so we treat them each as individual columns *)
         List.iter (fun pattern -> check_column (Typed.get_pattern_loc pattern) [pattern]) patterns;
+        expr, ()
+      | Typed.LetInstanceSeq (_, _, _, methods) ->
+        List.iter 
+          (fun (_, patterns, _) -> 
+            List.iter (fun pattern -> check_column (Typed.get_pattern_loc pattern) [pattern]) patterns)
+        methods;
         expr, ()
       | expr -> expr, ()
   end in

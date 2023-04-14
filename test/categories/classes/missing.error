@@ -1,0 +1,7 @@
+test/categories/classes/missing.pls:7:1: ERROR:
+An instance of the type class 'Num' is missing required methods:
+    - 'add'
+    - 'multiply'
+  | 
+7 | instance Num(Number) {
+  | ^^^^^^^^^^^^^^^^^^^^^^

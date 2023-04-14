@@ -68,7 +68,7 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
     | DataConNotFound (x, loc) -> print_fun (Some loc) ("Data constructor not found: " ^ text_style.ty x)
     | TooManyArgsToDataConPattern(name, patterns, loc) ->
       print_fun (Some loc) ("Too many arguments to data constructor " ^ text_style.identifier (Name.pretty name) ^ " in a pattern\n"
-      ^ "    Data constructors always take exactly " ^ text_style.number 1 ^ " arguments\n"
+      ^ "    Data constructors always take exactly " ^ text_style.number 1 ^ " argument\n"
       ^ "                   but this one was given " ^ text_style.number (List.length patterns))
     | SubscriptVarNotFound (x, loc) -> 
       print_fun (Some loc) ("Variable or module not found: " ^ text_style.identifier x)
@@ -88,6 +88,25 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       print_fun (Some loc) ("Exported constructor not found: " ^ text_style.identifier name)
     | DuplicateKeyInRecordUpdate (key, loc) ->
       print_fun (Some loc) ("Duplicate key in record update: " ^ text_style.identifier key)
+    | ClassNotFound (name, loc) ->
+      print_fun (Some loc) ("Type class not found: " ^ text_style.ty name)
+    | WrongNumberOfClassArgsInInstance { class_name; expected; actual; loc } -> 
+      print_fun (Some loc) ("Invalid number of arguments to type class " ^ text_style.ty (Name.pretty class_name) ^ "\n"
+      ^ "    The type class expects " ^ text_style.number expected ^ " arguments\n"
+      ^ "             but was given " ^ text_style.number actual)
+    | ClassMethodMismatch { class_name; missing; invalid; loc } ->
+      match missing, invalid with
+      | _, [] ->
+        print_fun (Some loc) ("An instance of the type class " ^ text_style.ty (Name.pretty class_name) ^ " is missing required methods:\n"
+        ^ String.concat "\n" (List.map (fun method_name -> "    - " ^ text_style.identifier method_name) missing))
+      | [], _ ->
+        print_fun (Some loc) ("Invalid methods in an instance of the type class " ^ text_style.ty (Name.pretty class_name) ^ ":\n"
+        ^ String.concat "\n" (List.map (fun method_name -> "    - " ^ text_style.identifier method_name) invalid))
+      | _ -> print_fun (Some loc) ("An instance of the type class " ^ text_style.ty (Name.pretty class_name) ^ " is missing required methods:\n"
+        ^ String.concat "\n"(List.map (fun method_name -> "    - " ^ text_style.identifier method_name) missing)
+        ^ "\n    but also contains invalid methods:\n"
+        ^ String.concat "\n" (List.map (fun method_name -> "    - " ^ text_style.identifier method_name) invalid)
+        ^ "\n    Did you misspell something?")
     end
   | EvalError error -> begin match error with
     | PolarisException (name, arguments, trace, message_lazy) ->

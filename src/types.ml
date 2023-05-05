@@ -73,6 +73,7 @@ and global_env = {
   type_aliases : (name list * Typed.ty) NameMap.t;
   ambient_level : Typeref.level;
   exception_definitions : ty list NameMap.t;
+  type_classes : name list NameMap.t;
 }
 
 and local_env = {
@@ -81,6 +82,9 @@ and local_env = {
   module_var_contents : global_env NameMap.t;
   data_definitions : (Typeref.level * name list * ty) NameMap.t;
   type_aliases : (name list * ty) NameMap.t;
+  (* We do not need carry type information about the type class methods here.
+     These have already been matched up with the correct instance methods by the renamer *)
+  type_classes : name list NameMap.t;
   level : Typeref.level;
   exception_definitions : ty list NameMap.t;
 }
@@ -189,6 +193,10 @@ let insert_data_definition : Typeref.level -> name -> name list -> ty -> local_e
 let insert_type_alias : name -> name list -> ty -> local_env -> local_env =
   fun constructor params underlying_type env ->
     { env with type_aliases = NameMap.add constructor (params, underlying_type) env.type_aliases }
+
+let insert_type_class : name -> name list -> local_env -> local_env =
+  fun class_name parameter_names env ->
+    { env with type_classes = NameMap.add class_name parameter_names env.type_classes }
 
 let insert_exception_definition : name -> ty list -> local_env -> local_env =
   fun name params env ->
@@ -361,6 +369,7 @@ let rec eval_module_env : local_env -> module_expr -> global_env * Typed.module_
       data_definitions = mod_exports.exported_data_definitions;
       exception_definitions = mod_exports.exported_exceptions;
       type_aliases = mod_exports.exported_type_aliases;
+      type_classes = NameMap.map fst mod_exports.exported_type_classes;
       ambient_level = Typeref.initial_top_level
     }, Import ((loc, mod_exports, exprs), path)
   | SubModule (loc, mod_expr, name) ->
@@ -1249,8 +1258,15 @@ and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> loc
       insert_data_definition env.level data_name params ty, LetDataSeq(loc, data_name, params, ty)
     | LetTypeSeq(loc, alias_name, params, ty) ->
       insert_type_alias alias_name params ty, LetTypeSeq(loc, alias_name, params, ty)
-    | LetClassSeq _ -> todo __LOC__
-    | LetInstanceSeq _ -> todo __LOC__
+    | LetClassSeq(loc, class_name, params, methods) -> 
+      
+      todo __LOC__
+    | LetInstanceSeq (loc, class_name, arguments, methods) -> 
+      let parameter_names = match NameMap.find_opt class_name env.type_classes with
+      | None -> panic __LOC__ (Loc.pretty loc ^ ": Type class not found in type checker: " ^ Name.pretty class_name)
+      | Some parameters -> parameters
+      in
+      todo __LOC__
     | LetExceptionSeq (loc, exception_name, params, message_expr) -> 
       
       let message_env = List.fold_right (fun (param, ty) r -> insert_var param ty r) params env in
@@ -1746,7 +1762,7 @@ let check_exhaustiveness_and_close_variants_in_exprs expr =
         expr, ()
       | Typed.LetInstanceSeq (_, _, _, methods) ->
         List.iter 
-          (fun (_, patterns, _) -> 
+          (fun (_, _, patterns, _) -> 
             List.iter (fun pattern -> check_column (Typed.get_pattern_loc pattern) [pattern]) patterns)
         methods;
         expr, ()
@@ -1771,6 +1787,7 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
         data_definitions = data_definitions_with_levels;
         exception_definitions = global_env.exception_definitions;
         type_aliases = global_env.type_aliases;
+        type_classes = global_env.type_classes;
         level = global_env.ambient_level;
       } in
     
@@ -1788,6 +1805,7 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
       data_definitions = NameMap.empty;
       exception_definitions = NameMap.empty;
       type_aliases = NameMap.empty;
+      type_classes = NameMap.empty;
       level = global_env.ambient_level;
     } in
 
@@ -1826,6 +1844,10 @@ let typecheck_top_level : global_env -> [`Check | `Infer] -> expr -> global_env 
           NameMap.union (fun _ _ x -> Some x)
             (global_env.type_aliases)
             temp_local_env.type_aliases;
+        type_classes =
+          NameMap.union (fun _ _ x -> Some x)
+            (global_env.type_classes)
+            temp_local_env.type_classes;  
         ambient_level = temp_local_env.level
       } in
     global_env, typed_expr
@@ -1891,5 +1913,6 @@ let empty_env = {
         (fun (_, (name, param_types)) -> (name, param_types))
         (StringMap.to_seq Primops.prim_exceptions));
   type_aliases = NameMap.empty;
+  type_classes = NameMap.empty;
   ambient_level = Typeref.initial_top_level;
 }

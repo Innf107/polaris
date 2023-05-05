@@ -78,6 +78,8 @@ let build_export_map header exprs rename_scope global_env =
     exported_exceptions = NameMap.of_seq (List.to_seq exported_exceptions);
 
     exported_type_aliases = NameMap.of_seq (List.to_seq exported_type_aliases);
+
+    exported_type_classes = Util.todo __LOC__
   }
 
 

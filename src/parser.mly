@@ -281,7 +281,7 @@ expr_leaf:
     | REF expr { MakeRef(loc $startpos $endpos, $2) }
 
 instance_def:
-    | IDENT "(" sep_trailing(COMMA, pattern) ")" "=" expr { ($1, $3, $6) }
+    | IDENT "(" sep_trailing(COMMA, pattern) ")" "=" expr { ((), $1, $3, $6) }
 
 (* Workaround to get both `let x : ty = e` and `let f : ty; f(x) = e` working *)
 expr_or_fun_def_ext:

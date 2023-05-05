@@ -90,7 +90,7 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       print_fun (Some loc) ("Duplicate key in record update: " ^ text_style.identifier key)
     | ClassNotFound (name, loc) ->
       print_fun (Some loc) ("Type class not found: " ^ text_style.ty name)
-    | WrongNumberOfClassArgsInInstance { class_name; expected; actual; loc } -> 
+    | WrongNumberOfClassArgs { class_name; expected; actual; loc } -> 
       print_fun (Some loc) ("Invalid number of arguments to type class " ^ text_style.ty (Name.pretty class_name) ^ "\n"
       ^ "    The type class expects " ^ text_style.number expected ^ " arguments\n"
       ^ "             but was given " ^ text_style.number actual)

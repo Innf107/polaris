@@ -109,3 +109,8 @@ let abbreviate message =
 let rec replicate count x = match count with
   | count when count <= 0 -> []
   | count -> x :: replicate (count - 1) x
+
+
+let f x =
+  let g : 'a -> 'a = fun x -> x + 1 in
+  g(5)

@@ -51,6 +51,7 @@ module MakeTy(Ext : sig
   type ty =
     | Forall of Ext.name * ty
     | Fun of ty list * ty
+    | Constraint of class_constraint * ty
     | TyVar of Ext.name
     | TyConstructor of Ext.name * ty list
     (* Type aliases are kept around as long as possible to improve error messages, but we need to differentiate
@@ -79,6 +80,8 @@ module MakeTy(Ext : sig
        by their (unique!) type constructor in the original module afterwards,
        where mod_subscript_tycon_ext is instantiated to void *)
     | ModSubscriptTyCon of Ext.mod_subscript_tycon_ext * Ext.name * Ext.name * ty list
+  
+  and class_constraint = { class_name : Ext.name; args : ty list }
 end
 
 module Template = struct
@@ -162,6 +165,7 @@ module Template = struct
       exported_exceptions : (ty list) NameMap.t;
       
       exported_type_aliases : (name list * ty) NameMap.t;
+      exported_type_classes : (name list * (name * ty) list) NameMap.t
     }
 
   type binop = 
@@ -218,7 +222,7 @@ module Template = struct
     | LetDataSeq of loc * name * name list * ty   (* data X(x, .., x) = t *)
     | LetTypeSeq of loc * name * name list * ty   (* type X(x, .., x) = t *)
     | LetClassSeq of loc * name * name list * (name * ty) list (* class X(x, .., x) { x : t } *)
-    | LetInstanceSeq of loc * name * ty list * (name * pattern list * expr) list (* instance X(x, .., x) { x(p, .., p) = e }*)
+    | LetInstanceSeq of loc * name * ty list * (InstanceMethodExt.t * name * pattern list * expr) list (* instance X(x, .., x) { x(p, .., p) = e }*)
     (* Scripting capabilities *)
     | ProgCall of loc * string * expr list  (* !p e₁ .. eₙ *)
     | Pipe of loc * expr list               (* (e₁ | .. | eₙ) *)
@@ -297,6 +301,8 @@ module Template = struct
     match Ty.normalize_unif ty with
     | Forall (var, ty) -> "∀" ^ pretty_name var ^ ". " ^ pretty_type ty
     | Fun (args, res) -> "(" ^ String.concat ", " (List.map pretty_type args) ^ ") -> " ^ pretty_type res
+    | Constraint({class_name; args}, ty) ->
+      pretty_name class_name ^ "(" ^ String.concat ", " (List.map pretty_type args) ^ ") => " ^ pretty_type ty
     | TyConstructor (name, []) -> pretty_name name
     | TyConstructor (name, args) -> pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_type args) ^ ")"
     | TypeAlias (name, []) -> pretty_name name
@@ -435,7 +441,7 @@ module Template = struct
       ^ String.concat "\n" (List.map (fun (name, ty) -> pretty_name name ^ " : " ^ pretty_type ty) methods)
       ^ "\n}"
     | LetInstanceSeq (_, classname, params, methods) -> "instance " ^ pretty_name classname ^ "(" ^ String.concat ", " (List.map pretty_type params) ^ ") {\n"
-      ^ String.concat "\n" (List.map (fun (name, patterns, body) -> pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_pattern patterns) ^ ") = " ^ pretty body) methods)
+      ^ String.concat "\n" (List.map (fun (_, name, patterns, body) -> pretty_name name ^ "(" ^ String.concat ", " (List.map pretty_pattern patterns) ^ ") = " ^ pretty body) methods)
 
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
@@ -678,11 +684,12 @@ module Template = struct
             let class_name, state = self#traverse_name state class_name in
             let params, state = traverse_list self#traverse_type state params in
             let methods, state = traverse_list (
-              fun state (class_name, patterns, expr) ->
-                let class_name, state = self#traverse_name state class_name in
+              fun state (ext, method_name, patterns, expr) ->
+                let ext, state = InstanceMethodExt.traverse_ty state self#traverse_type ext in
+                let method_name, state = self#traverse_name state method_name in
                 let patterns, state = traverse_list self#traverse_pattern state patterns in
                 let expr, state = self#traverse_expr state expr in
-                (class_name, patterns, expr), state
+                (ext, method_name, patterns, expr), state
             ) state methods in 
             LetInstanceSeq(loc, class_name, params, methods), state
           | Assign(loc, place_expr, expr) ->
@@ -813,6 +820,11 @@ module Template = struct
           let dom_types, state = traverse_list self#traverse_type state dom_types in
           let cod_type, state = self#traverse_type state cod_type in
           Fun(dom_types, cod_type), state
+        | Constraint({class_name; args}, ty) ->
+          let class_name, state = self#traverse_name state class_name in
+          let args, state = traverse_list self#traverse_type state args in
+          let ty, state = self#traverse_type state ty in
+          Constraint({class_name; args}, ty), state
         | TyVar(name) ->
           let name, state = self#traverse_name state name in
           TyVar(name), state
@@ -1002,6 +1014,12 @@ module FullTypeDefinition = MakeTy(struct
   type mod_subscript_tycon_ext = void
 end)
 
+module EmptyExt = struct 
+  type t = unit
+
+  let traverse_ty state _ () = (), state
+end
+
 module LocOnly = struct 
   type t = loc
   let loc loc = loc
@@ -1070,6 +1088,8 @@ module Parsed = Template (struct
   module LetRecExt = SubLocation
 
   module ExportConstructorExt = LocOnly
+
+  module InstanceMethodExt = EmptyExt
 end) [@@ttg_pass]
 
 
@@ -1100,6 +1120,12 @@ module Typed = Template (struct
   module LetRecExt = SubLocationWithType
 
   module ExportConstructorExt = LocWithNonTy (struct type t = [ `Type | `Exception ] end)
+
+  module InstanceMethodExt = struct 
+    type t = FullTypeDefinition.ty
+
+    let traverse_ty state f ty = f state ty
+  end
 end) [@@ttg_pass]
 
 type module_exports = Typed.module_exports
@@ -1134,6 +1160,14 @@ module Renamed = Template (struct
   module LetRecExt = SubLocation
 
   module ExportConstructorExt = LocWithNonTy (struct type t = [ `Type | `Exception ] end)
+
+  (* Renamed instance methods contain the type that was declared in their class definition.
+     Notably this *does not* contain the type class constraint yet. *)
+  module InstanceMethodExt = struct 
+    type t = FullTypeDefinition.ty
+
+    let traverse_ty state f ty = f state ty
+  end
 end) [@@ttg_pass]
 
 

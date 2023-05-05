@@ -23,8 +23,7 @@ type rename_error =
     | DuplicateKeyInRecordUpdate of string * loc
     | ClassNotFound of string * loc
     | ClassMethodMismatch of { class_name : name; missing : string list; invalid : string list; loc : loc }
-    | WrongNumberOfClassArgsInInstance of { class_name : name; expected : int; actual : int; loc : loc }
-
+    | WrongNumberOfClassArgs of { class_name : name; expected : int; actual : int; loc : loc }
 
 exception RenameError of rename_error
 
@@ -38,7 +37,7 @@ module RenameScope = struct
            just check that type constructors are always fully applied in the renamer. *)
         ty_constructors: (name * int * type_constructor_sort) RenameMap.t;
         data_constructors: (name * data_constructor_sort) RenameMap.t;
-        type_classes : (name * int * name StringMap.t) RenameMap.t;
+        type_classes : (name * int * (name * Renamed.ty) StringMap.t) RenameMap.t;
     }
 
     let empty : t = { 
@@ -127,6 +126,20 @@ let rename_type loc (scope : RenameScope.t) original_type =
         | Ref(ty) -> Ref(rename_nonbinding scope ty)
         | Tuple(tys) -> Tuple(Array.map (rename_nonbinding scope) tys)
         | Fun(tys1, ty) -> Fun(List.map (rename_nonbinding scope) tys1, (rename_nonbinding scope) ty)
+        | Constraint({class_name; args}, ty) ->
+            begin match StringMap.find_opt class_name scope.type_classes with
+            | None -> raise (RenameError (ClassNotFound (class_name, loc)))
+            | Some (class_name, arg_count, _) ->
+                if List.compare_length_with args arg_count <> 0 then
+                    raise (RenameError (WrongNumberOfClassArgs {
+                            class_name;
+                            actual = List.length args;
+                            expected = arg_count;
+                            loc
+                        }))
+                else
+                    Constraint({class_name; args = List.map (rename_nonbinding scope) args}, rename_nonbinding scope ty)
+            end
         | RecordClosed tys -> RecordClosed (Array.map (fun (x, ty) -> (x, rename_nonbinding scope ty)) tys)
         | VariantClosed tys -> VariantClosed (Array.map (fun (x, ty) -> (x, List.map (rename_nonbinding scope) ty)) tys)
         | RecordVar (tys, varname) -> 
@@ -318,22 +331,30 @@ let rec rename_mod_expr : (module_exports * Typed.expr list) FilePathMap.t
     | Import (loc, path) -> begin match FilePathMap.find_opt path exports with
         | None -> panic __LOC__ ("import path not found in renamer: '" ^ path ^ "'.\nImports: [" ^ String.concat ", " (List.map fst (FilePathMap.bindings exports)) ^ "]")
         | Some (mod_exports, body) ->
-            let scope = 
-                StringMap.fold 
+            let scope = RenameScope.empty
+                |> StringMap.fold 
                     (fun name renamed r -> RenameScope.insert_var name renamed r) 
                     mod_exports.exported_variables
-                (StringMap.fold
+                |> StringMap.fold
                     (fun name (renamed, arg_count, sort) r ->
                         RenameScope.insert_type_constructor name renamed arg_count sort (
                         match sort with
                         | DataConSort -> RenameScope.insert_data_constructor name renamed NewtypeConSort r
                         | TypeAliasSort -> r))
                     mod_exports.exported_ty_constructors
-                (NameMap.fold
+                |> NameMap.fold
                     (fun name _ r ->
                         RenameScope.insert_data_constructor name.name name ExceptionSort r) 
                     mod_exports.exported_exceptions
-                    RenameScope.empty))
+                |> NameMap.fold
+                    (fun name (params, methods) r ->
+                        RenameScope.insert_type_class 
+                            name.name 
+                            name 
+                            (List.length params) 
+                            (StringMap.of_seq (Seq.map (fun (name, ty) -> (name.name, (name, ty))) (List.to_seq methods)))
+                            r)
+                    mod_exports.exported_type_classes
             in
             Import ((loc, mod_exports, body), path), scope
         end
@@ -612,8 +633,13 @@ and rename_seq_state (exports : (module_exports * Typed.expr list) FilePathMap.t
             (name', ty')) methods
         in
 
-        let method_map = StringMap.of_seq (Seq.map (fun (name, _) -> (name.name, name)) (List.to_seq methods')) in
-        let scope = insert_type_class class_name class_name' (List.length params) method_map scope in
+        let method_map = StringMap.of_seq (Seq.map (fun (name, ty) -> (name.name, (name, ty))) (List.to_seq methods')) in
+        
+        let scope = 
+            Util.compose 
+                (List.map (fun (name, _) scope -> insert_var name.name name scope) methods') 
+                (insert_type_class class_name class_name' (List.length params) method_map scope) 
+        in
 
         let exprs, scope = rename_seq_state exports scope exprs in
         LetClassSeq (loc, class_name', List.map snd renamed_params, methods') :: exprs, scope
@@ -621,7 +647,7 @@ and rename_seq_state (exports : (module_exports * Typed.expr list) FilePathMap.t
         begin match RenameMap.find_opt class_name scope.type_classes with
         | None -> raise (RenameError (ClassNotFound(class_name, loc)))
         | Some (class_name', arg_count, _) when List.compare_length_with args arg_count <> 0 ->
-            raise (RenameError (WrongNumberOfClassArgsInInstance { 
+            raise (RenameError (WrongNumberOfClassArgs { 
                     class_name = class_name';
                     expected = arg_count; 
                     actual = List.length args; 
@@ -632,20 +658,20 @@ and rename_seq_state (exports : (module_exports * Typed.expr list) FilePathMap.t
 
             let (invalid_methods, methods') = 
                 List.partition_map
-                    (fun (name, patterns, body) -> 
+                    (fun ((), name, patterns, body) -> 
                         match StringMap.find_opt name definition_methods with
                         | None -> Left name
-                        | Some name' ->
+                        | Some (name', ty) ->
                             (* We can safely ignore the type transformer, since this is only relevant
                                in non-seq let bindings where the pattern describes what we are defining 
                                (rather than a parameter like in this case) *)
                             let patterns, scope_trans, _type_trans = rename_patterns scope patterns in
                             let body = rename_expr exports (scope_trans scope) body in
-                            Right (name', patterns, body)
+                            Right (ty, name', patterns, body)
                         ) 
                     methods
             in
-            let method_names = List.map (fun (name, _, _) -> name) methods in
+            let method_names = List.map (fun (_, name, _, _) -> name) methods in
             let missing_methods = 
                 List.filter
                     (fun name -> not (List.mem name method_names))

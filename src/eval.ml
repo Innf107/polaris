@@ -1061,6 +1061,10 @@ and eval_primop env op args loc =
               | [ExceptionV (_, _, _, message)] -> StringV (Lazy.force message)
               | _ -> panic __LOC__ (Loc.pretty loc ^ ": exceptionMessage: Non-exception passed at runtime")
               end
+  | "threadId" -> begin match args with
+              | [] -> NumV (float_of_int (Thread.id (Thread.self ())))
+              | _ -> panic __LOC__ (Loc.pretty loc ^ ": threadId: arguments passed")
+              end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
 and progs_of_exprs env = function

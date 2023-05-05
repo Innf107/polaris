@@ -84,6 +84,6 @@ let compose_in_out (env : string array option) progs f =
       f out_chan;
       Out_channel.close out_chan;
       exit 0
-    | pid ->
+    | _ ->
       close out_pipe_write;
       in_channel_of_descr in_pipe_read, pid

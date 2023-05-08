@@ -2,7 +2,6 @@ open Thread
 open Util
 
 type 'a result = Finished of 'a
-                | Failed of exn
                 | Pending
 
 type 'a t = {
@@ -23,7 +22,6 @@ let create f =
       remaining := ThreadMap.remove (Thread.id (Thread.self ())) !remaining
     with
     | ex -> 
-      result := Failed ex;
       remaining := ThreadMap.remove (Thread.id (Thread.self ())) !remaining
   end result in
   remaining := ThreadMap.add (Thread.id t) t !remaining;
@@ -38,7 +36,6 @@ let await (p : 'a t) =
   Thread.join p.thread;
   match !(p.result_ref) with
   | Finished value -> value
-  | Failed ex -> raise ex
   | Pending -> raise (Panic "Pending Promise after thread join during await")
 
 let await_remaining () =

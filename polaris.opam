@@ -15,7 +15,10 @@ depends: [
   "menhir"
   "menhirLib"
   "re"
-  "json-rpc"
+  "yojson"
+  "ppx_deriving"
+  "ppx_yojson_conv"
+  "bestline"
   "odoc" {with-doc}
 ]
 build: [

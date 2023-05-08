@@ -1,6 +1,5 @@
 
 type 'a result = Finished of 'a
-               | Failed of exn
                | Pending
 
 type 'a t

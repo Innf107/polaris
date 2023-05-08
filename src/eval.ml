@@ -113,7 +113,6 @@ module Value = struct
     | PromiseV p ->
       begin match Promise.peek p with
       | Finished value -> "<promise: " ^ pretty value ^ ">"
-      | Failed _ex -> "<promise: <<failure>>>" 
       | Pending -> "<promise: <<pending>>>"
       end
     | DataConV(constructor_name, value) ->
@@ -819,7 +818,7 @@ and eval_seq_cont :
       eval_seq_cont context env exprs cont
 
 and eval_seq context (env : eval_env) (exprs : Typed.expr list) : value = 
-  eval_seq_cont context env exprs 
+  let result = eval_seq_cont context env exprs 
     (fun env expr_or_val -> 
       match expr_or_val with
       | Left expr ->
@@ -831,10 +830,12 @@ and eval_seq context (env : eval_env) (exprs : Typed.expr list) : value =
         end
       | Right value -> value
       )
+  in
+  result
 
 
 and eval_seq_state context (env : eval_env) (exprs : Typed.expr list) : value * eval_env = 
-  eval_seq_cont context env exprs 
+  let result = eval_seq_cont context env exprs 
     (fun env expr_or_val -> 
       match expr_or_val with 
       | Left expr -> 
@@ -845,6 +846,8 @@ and eval_seq_state context (env : eval_env) (exprs : Typed.expr list) : value * 
           (unitV, env)
         end
       | Right value -> (value, env))
+  in
+  result
 
 and eval_list_comp env loc result_expr = function
   | Typed.FilterClause expr :: comps -> 

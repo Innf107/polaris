@@ -19,7 +19,7 @@
  (name polaris)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune menhir menhirLib re json-rpc)
+ (depends ocaml dune menhir menhirLib re yojson ppx_deriving ppx_yojson_conv bestline)
  (tags
   (topics "to describe" your project)))
 

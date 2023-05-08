@@ -77,13 +77,9 @@ let compose_in_out (env : string array option) progs f =
   | pid ->
     close out_pipe_read;
     close in_pipe_write;
-    match fork () with
-    | 0 ->
-      close in_pipe_read;
+    let _ = Thread.create (fun () -> 
       let out_chan = out_channel_of_descr out_pipe_write in
       f out_chan;
       Out_channel.close out_chan;
-      exit 0
-    | _ ->
-      close out_pipe_write;
-      in_channel_of_descr in_pipe_read, pid
+      ) () in
+    in_channel_of_descr in_pipe_read, pid

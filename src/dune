@@ -1,22 +1,15 @@
 (library
  (name polaris)
- (libraries
-  menhirLib
-  trees_that_grow
-  bestline 
-  unix
-  re
-  threads
-  base)
- (preprocess (pps trees_that_grow)))
+ (libraries menhirLib trees_that_grow bestline re eio eio.unix eio_posix base)
+ (preprocess
+  (pps trees_that_grow)))
 
 (menhir
  (modules parser))
 
 (env
-  (dev
-    (flags 
-      (:standard -warn-error -A -w -27 -w -23 -w -33 -w -30 -warn-error +8)
-    )))
+ (dev
+  (flags
+   (:standard -warn-error -A -w -27 -w -23 -w -33 -w -30 -warn-error +8))))
 
 (include_subdirs unqualified)

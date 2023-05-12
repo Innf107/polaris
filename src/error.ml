@@ -1,5 +1,4 @@
 open Syntax
-open Driver
 open Errormessage
 module Value = Eval.Value
 
@@ -7,11 +6,24 @@ type t = Panic of string
        | TODO of string
        | LexError of Lexer.lex_error
        | ParseError of loc * string
-       | SpecificParseError of specific_parse_error 
+       | SpecificParseError of Parserprelude.specific_parse_error 
        | SysError of string
        | RenameError of Rename.rename_error
        | TypeError of loc * Types.type_error
        | EvalError of Eval.eval_error
+
+let as_exn = function
+  | Ok x -> x
+  | Error err -> match err with
+    | Panic msg -> raise (Util.Panic msg)
+    | TODO msg -> raise (Util.TODO msg)
+    | LexError err -> raise (Lexer.LexError err)
+    | ParseError (loc, msg) -> raise (Parserprelude.ParseError (loc, msg))
+    | SpecificParseError err -> raise (Parserprelude.SpecificParseError err)
+    | SysError msg -> raise (Sys_error msg)
+    | RenameError err -> raise (Rename.RenameError err)
+    | TypeError (loc, err) -> raise (Types.TypeError (loc, err))
+    | EvalError err -> raise (Eval.EvalError err)
 
 let handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a =
   fun handler thunk ->
@@ -19,12 +31,13 @@ let handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a =
     | Util.Panic msg -> handler (Panic msg)
     | Util.TODO loc -> handler (TODO loc)
     | Lexer.LexError err -> handler (LexError err)
-    | Driver.ParseError (loc, msg) -> handler (ParseError (loc, msg))
-    | Driver.SpecificParseError err -> handler (SpecificParseError err)
+    | Parserprelude.ParseError (loc, msg) -> handler (ParseError (loc, msg))
+    | Parserprelude.SpecificParseError err -> handler (SpecificParseError err)
     | Sys_error msg -> handler (SysError msg)
     | Rename.RenameError err -> handler (RenameError err)
     | Types.TypeError (loc, err) -> handler (TypeError (loc, err))
     | Eval.EvalError err -> handler (EvalError err)
+
 
 
 let pretty_call_trace (locs : loc list) =

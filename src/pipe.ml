@@ -1,85 +1,103 @@
-open Unix
+open Eio_unix
 
-let wait_to_status pid = 
-  let _, status = waitpid [] pid in
-  match status with
-  (* TODO: This is probably not how WSIGNALED and WSTOPPED should be treated *)
-  | WEXITED status | WSIGNALED status | WSTOPPED status -> status
+module Low_level = Eio_posix.Low_level
+module Process = Low_level.Process
+module Fd = Low_level.Fd
 
-let rec compose_destructive (env : string array option) = function
-| [] -> failwith "unable to compose empty arguments"
-| [(prog, prog_args)] ->
-  begin match env with
-  | None -> execvp prog (Array.of_list (prog::prog_args))
-  | Some env -> execvpe prog (Array.of_list (prog::prog_args)) env
-  end
-| ((prog, prog_args) :: progs) -> 
-  let (pipe_read, pipe_write) = pipe () in
-  match fork () with
-  | 0 ->
-    dup2 pipe_write stdout;
-    close pipe_read;
-    begin match env with
-    | None -> execvp prog (Array.of_list (prog :: prog_args))
-    | Some env -> execvpe prog (Array.of_list (prog :: prog_args)) env
-    end
-  | _ ->
-    dup2 pipe_read stdin;
-    close pipe_write;
-    compose_destructive env progs
+let wait_to_status process =
+  match Eio.Promise.await (Process.exit_status process) with
+  | Unix.WEXITED s | Unix.WSTOPPED s | Unix.WSIGNALED s ->
+     s
 
-let compose (env : string array option) progs =
-  match fork () with
-  | 0 ->
-    compose_destructive env progs
-  | pid ->
-    pid
+let make_execve program arguments env =
+  let program_path =
+    let path_var = Unix.getenv "PATH" in
+    let dir_path = 
+      List.find 
+        begin fun path -> 
+          try
+            Array.mem program (Low_level.readdir path)
+          with
+          | _ -> false
+        end
+        (String.split_on_char ':' path_var)
+    in
+    dir_path ^ "/" ^ program
+  in
+  Process.Fork_action.execve program_path ~argv:(Array.of_list (program_path :: arguments)) ~env
+
+let make_pipe_fd ~sw pipe_end = 
+  let unix_fd = pipe_end#unix_fd `Peek in
+  Unix.set_nonblock unix_fd;
+  Low_level.Fd.of_unix ~sw ~blocking:false ~close_unix:true unix_fd
+
+let rec compose_pipe ~sw ~env (stdin : Fd.t option) (stdout : Fd.t option) = function
+    | [] -> Util.panic __LOC__ "compose_pipe: called on an empty program list"
+    | [(program, arguments)] ->
+      let inherited_fds = 
+        List.filter_map (fun (x, y) -> Option.map (fun y -> (x, y, `Preserve_blocking)) y)
+          [(0, stdin); (1, stdout)]
+      in
+      let proc = Process.spawn ~sw
+        [ Process.Fork_action.inherit_fds inherited_fds
+        ; make_execve program arguments env 
+        ] in
+      proc
+    | (program, arguments) :: rest ->
+      let (pipe_read, pipe_write) = Low_level.pipe ~sw in
+      let inherited_fds = match stdin with
+      | None ->       [ (1, pipe_write, `Preserve_blocking) ]
+      | Some stdin -> [ (0, stdin, `Preserve_blocking); (1, pipe_write, `Preserve_blocking) ]
+      in
+      let _ = Process.spawn ~sw
+        [ Process.Fork_action.inherit_fds inherited_fds
+        ; make_execve program arguments env
+        ] in
+      compose_pipe ~sw ~env (Some pipe_read) stdout rest
+
+let compose ~sw ~env = compose_pipe ~sw ~env None None
+
+let compose_in ~sw ~env progs =
+    let (pipe_read, pipe_write) = Eio_unix.pipe sw in
+
+    let fd = Option.get (pipe_write#probe Low_level.Fd.FD) in
+
+    let process = compose_pipe ~sw ~env None (Some (fd)) progs in
+    Low_level.Fd.close fd;
+
+    (pipe_read :> < Eio.Flow.source; Eio.Flow.close >), process
+
+let compose_out ~sw ~env progs =
+  let pipe_read, pipe_write = Eio_unix.pipe sw in
+
+  let process = compose_pipe ~sw ~env (Some (make_pipe_fd ~sw pipe_read)) None progs in
+
+  (pipe_write :> < Eio.Flow.sink; Eio.Flow.close >), process
 
 
-let compose_in (env : string array option) progs : in_channel * int =
-  let pipe_read, pipe_write = pipe () in
-  match fork () with
-  | 0 ->
-    dup2 pipe_write stdout;
-    close pipe_read;
-    compose_destructive env progs
-  | pid ->
-    close pipe_write;
-    in_channel_of_descr pipe_read, pid
 
-let compose_out (env : string array option) progs : out_channel * int =
-  let pipe_read, pipe_write = pipe () in
-  match fork () with
-  | 0 ->
-    dup2 pipe_read stdin;
-    close pipe_write;
-    compose_destructive env progs
-  | pid ->
-    close pipe_read;
-    out_channel_of_descr pipe_write, pid
+let compose_out_with ~sw ~env progs f =
+  let sink, process = compose_out ~sw ~env progs in
+  f (sink :> Eio.Flow.sink);
+  Eio.Flow.close sink;
+  process
 
-let compose_out_with (env : string array option) progs f : int =
-  let out_chan, pid = compose_out env progs in
-  f out_chan;
-  Out_channel.close out_chan;
-  pid
+let compose_in_out ~sw ~env progs f =
+  let in_pipe_read, in_pipe_write = Eio_unix.pipe sw in
+  let out_pipe_read, out_pipe_write = Eio_unix.pipe sw in
+  
+  let process = 
+    compose_pipe 
+      ~sw 
+      ~env 
+      (Some (make_pipe_fd ~sw in_pipe_read)) 
+      (Some (make_pipe_fd ~sw out_pipe_write)) 
+      progs 
+  in
 
-let compose_in_out (env : string array option) progs f =
-  let in_pipe_read, in_pipe_write = pipe () in
-  let out_pipe_read, out_pipe_write = pipe () in
-  match fork () with
-  | 0 ->
-    dup2 out_pipe_read stdin;
-    dup2 in_pipe_write stdout;
-    close out_pipe_write;
-    close in_pipe_read;
-    compose_destructive env progs
-  | pid ->
-    close out_pipe_read;
-    close in_pipe_write;
-    let _ = Thread.create (fun () -> 
-      let out_chan = out_channel_of_descr out_pipe_write in
-      f out_chan;
-      Out_channel.close out_chan;
-      ) () in
-    in_channel_of_descr in_pipe_read, pid
+  Eio.Fiber.fork ~sw begin fun () ->
+    f (in_pipe_write :> Eio.Flow.sink);
+    Eio.Flow.close in_pipe_write
+  end;
+  (out_pipe_read :> < Eio.Flow.source; Eio.Flow.close >), process
+

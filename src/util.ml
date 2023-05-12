@@ -109,3 +109,14 @@ let abbreviate message =
 let rec replicate count x = match count with
   | count when count <= 0 -> []
   | count -> x :: replicate (count - 1) x
+
+let async_promise : switch:Eio.Switch.t -> (unit -> 'a) -> 'a Eio.Promise.t =
+  fun ~switch cont ->
+    let (promise, resolver) = Eio.Promise.create () in
+    Eio.Fiber.fork 
+      ~sw:switch 
+      (fun () ->
+        let result = cont () in
+        Eio.Promise.resolve resolver result
+        );
+    promise

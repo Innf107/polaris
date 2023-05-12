@@ -105,26 +105,28 @@ let on_hover model_ref (hover_params : Lsp.hover_params) =
     | None -> no_response ()
 
 let () =
-  parse_args (List.tl (Array.to_list Sys.argv));
+  Eio_posix.run begin fun _ ->
+    parse_args (List.tl (Array.to_list Sys.argv));
 
-  let model_ref = ref None in
+    let model_ref = ref None in
 
-  prerr_endline "Running Polaris LSP server";
-  Jsonrpc.run stdin stdout
-    ~handler:(fun ~request_method body -> 
-      match Lsp.parse_client_request request_method body with
-      | Some Initialize -> on_initialize
-      | Some (Hover params) -> on_hover model_ref params
-      | None -> Jsonrpc.unsupported_method ()
-      | exception (Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error(error, json)) -> 
-        Jsonrpc.parse_error (Printexc.to_string error ^ "\nwhile parsing: " ^ Yojson.Safe.pretty_to_string json)
-    )
-    ~notification_handler:(fun ~notification_method body -> 
-      match Lsp.parse_client_notification notification_method body with
-      | Some (DidOpen params) -> on_open model_ref params
-      | Some (DidChange params) -> on_change model_ref params
-      | None -> Jsonrpc.unsupported_method ()  
-      | exception (Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error(error, json)) -> 
-        Jsonrpc.parse_error (Printexc.to_string error ^ "\nwhile parsing: " ^ Yojson.Safe.pretty_to_string json)
-    )
+    prerr_endline "Running Polaris LSP server";
+    Jsonrpc.run stdin stdout
+      ~handler:(fun ~request_method body -> 
+        match Lsp.parse_client_request request_method body with
+        | Some Initialize -> on_initialize
+        | Some (Hover params) -> on_hover model_ref params
+        | None -> Jsonrpc.unsupported_method ()
+        | exception (Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error(error, json)) -> 
+          Jsonrpc.parse_error (Printexc.to_string error ^ "\nwhile parsing: " ^ Yojson.Safe.pretty_to_string json)
+      )
+      ~notification_handler:(fun ~notification_method body -> 
+        match Lsp.parse_client_notification notification_method body with
+        | Some (DidOpen params) -> on_open model_ref params
+        | Some (DidChange params) -> on_change model_ref params
+        | None -> Jsonrpc.unsupported_method ()  
+        | exception (Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error(error, json)) -> 
+          Jsonrpc.parse_error (Printexc.to_string error ^ "\nwhile parsing: " ^ Yojson.Safe.pretty_to_string json)
+      )
+  end
 

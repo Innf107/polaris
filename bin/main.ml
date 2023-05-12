@@ -76,15 +76,15 @@ type run_options = {
 }
 
 
-let handle_errors text_style print_fun f = 
-  Error.handle_errors (fun err ->
-    match err with
-    | EvalError(ArgParseError msg) -> 
-      (* We cannot run the script if there was an error parsing arguments *)
-      print_endline msg; exit 1 
-    | err -> Error.pretty_error text_style print_fun err) f
+let handle_errors text_style print_fun result = 
+  match result with
+  | Ok x -> x
+  | Error (Error.EvalError(ArgParseError msg)) -> 
+    (* We cannot run the script if there was an error parsing arguments *)
+    print_endline msg; exit 1 
+  | Error err -> Error.pretty_error text_style print_fun err
 
-let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.global_env) (env : eval_env) (options : run_options) : unit =
+let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.global_env) (env : eval_env) (options : run_options) : unit =  
   Sys.catch_break true;
   let driver_options = {
       filename = "<interactive>"
@@ -95,9 +95,17 @@ let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.globa
     ; print_renamed = options.print_renamed
     ; print_tokens = options.print_tokens
     } in
+  let text_style = Errormessage.make_text_style ~enable_color:(use_colors ()) in
+
   let env, scope, type_env, continue = match options.eval with
   | Some expr ->
-    let result, env, scope, type_env = Driver.run_env driver_options (Lexing.from_string expr) env scope ?check_or_infer_top_level:(Some `Infer) type_env in
+    let result, env, scope, type_env = 
+      handle_errors 
+        text_style
+        fatal_error
+        (Driver.run_env driver_options (Lexing.from_string expr) env scope ?check_or_infer_top_level:(Some `Infer) type_env)
+    in
+    
     begin match result with
     | v when isUnitV v -> ()
     | _ -> print_endline (Value.pretty result)
@@ -110,25 +118,26 @@ let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.globa
     print_endline "Welcome to Polaris! Press Ctrl+D or type \"exit(0)\" to exit.";
 
     let open Errormessage in
-    let text_style = make_text_style ~enable_color:(use_colors ()) in
 
     let prompt = text_style.custom ~color:"\x1b[31m\x1b[38;5;160m" "λ> " in
-    let rec go env scope type_env =
+    let rec go : 'a. eval_env -> Rename.RenameScope.t -> Types.global_env -> 'a = 
+      fun env scope type_env ->
       try
-        handle_errors text_style (fun mloc msg -> repl_error mloc msg; go env scope type_env)
-          (fun () -> 
-            match Bestline.bestline prompt with
-            | None -> 
-              exit 0
-            | Some input -> 
-              let _ = Bestline.history_add input in
-              let result, new_env, new_scope, new_type_env = Driver.run_env driver_options (Lexing.from_string input) env scope ?check_or_infer_top_level:(Some `Infer) type_env in
+        match Bestline.bestline prompt with
+        | None -> 
+          exit 0
+        | Some input -> 
+          let _ = Bestline.history_add input in
+          let result, new_env, new_scope, new_type_env = 
+            handle_errors text_style (fun mloc msg -> repl_error mloc msg; go env scope type_env)
+            (Driver.run_env driver_options (Lexing.from_string input) env scope ?check_or_infer_top_level:(Some `Infer) type_env) 
+          in
 
-              begin match result with
-              | v when isUnitV v -> ()
-              | _ -> print_endline (" - " ^ Value.pretty result)
-              end;
-              go new_env new_scope new_type_env)
+          begin match result with
+          | v when isUnitV v -> ()
+          | _ -> print_endline (" - " ^ Value.pretty result)
+          end;
+          go new_env new_scope new_type_env
       with
       | Sys.Break -> 
         print_newline ();
@@ -151,23 +160,25 @@ let run_file (options : run_options) (filepath : string) (args : string list) =
   ; print_renamed = options.print_renamed
   ; print_tokens = options.print_tokens
   } in
-  handle_errors text_style fatal_error (fun _ -> 
-    let _, env, scope, type_env = 
-      Driver.run_env 
+
+  let _, env, scope, type_env =
+    handle_errors 
+      text_style 
+      fatal_error 
+      (Driver.run_env 
         driver_options 
         (Lexing.from_channel (open_in filepath))
-        (Eval.empty_eval_env driver_options.argv)
+        (Eval.make_eval_env driver_options.argv)
         Rename.RenameScope.empty
-        Types.empty_env
-    in
-    if options.interactive then
-      run_repl_with scope type_env env options
-    )
-  
+        Types.empty_env)      
+  in
+  if options.interactive then
+    run_repl_with scope type_env env options
+        
 
 let run_repl options = 
   let argv = [""] in
-  run_repl_with Rename.RenameScope.empty (Types.empty_env) (Eval.empty_eval_env argv) options
+  run_repl_with Rename.RenameScope.empty (Types.empty_env) (Eval.make_eval_env argv) options
 
 let parse_args () : run_options * string list =
   let default_options : run_options = {
@@ -215,11 +226,10 @@ let parse_args () : run_options * string list =
 
 
 let () =
+  Eio_posix.run begin fun _ ->
+    let options, args = parse_args () in
 
-  let options, args = parse_args () in
-
-  match args with
-  | [] -> run_repl options
-  | (filepath :: args) -> ignore (run_file options filepath args)
-  ;
-  Promise.await_remaining ()
+    match args with
+    | [] -> run_repl options
+    | (filepath :: args) -> ignore (run_file options filepath args)
+  end

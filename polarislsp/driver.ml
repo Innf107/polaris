@@ -30,11 +30,14 @@ let try_update_model ~filename lexbuf =
       severity = `Error;
       source = "polaris";
       message;
-    }], None in
+    }], None 
+  in
 
-  Polaris.Error.handle_errors on_error (fun () -> 
-    let typed_header, typed_exprs, _rename_scope, _global_type_env = 
-      run_polaris ~filename lexbuf
-    in
-    [], Some (Model.build typed_exprs))
+  match run_polaris ~filename lexbuf with
+  | Error err -> on_error err
+  | Ok (typed_header, typed_exprs, _rename_scope, _global_type_env) -> 
+    [], Some (Model.build typed_exprs)
+    
+      
+    
 

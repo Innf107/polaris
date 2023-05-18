@@ -9,6 +9,7 @@ Then run
 ```bash
 git clone https://github.com/Innf107/polaris
 cd polaris
+opam pin add eio_main --dev-repo
 opam install .
 ```
 

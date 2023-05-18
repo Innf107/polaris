@@ -8,6 +8,7 @@ module RecordVImpl : module type of Multimap.Make (String)
 type eval_capabilities = {
   switch : Eio.Switch.t;
   fs : Eio.Fs.dir Eio.Path.t;
+  mgr : Eio.Process.mgr;
 }
 
 type eval_env = { 

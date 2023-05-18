@@ -38,8 +38,6 @@ let handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a =
     | Types.TypeError (loc, err) -> handler (TypeError (loc, err))
     | Eval.EvalError err -> handler (EvalError err)
 
-
-
 let pretty_call_trace (locs : loc list) =
   match locs with
   | [] -> ""

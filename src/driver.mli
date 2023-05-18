@@ -9,7 +9,7 @@ type driver_options = {
   print_tokens : bool;
 }
 
-val run : driver_options -> Lexing.lexbuf -> fs:Eio.Fs.dir Eio.Path.t -> (Eval.value, Error.t) result
+val run : driver_options -> Lexing.lexbuf -> fs:Eio.Fs.dir Eio.Path.t -> mgr:Eio.Process.mgr -> (Eval.value, Error.t) result
 
 val run_env : driver_options 
            -> Lexing.lexbuf 
@@ -18,6 +18,7 @@ val run_env : driver_options
            -> ?check_or_infer_top_level : [`Check | `Infer]
            -> Types.global_env
            -> fs:Eio.Fs.dir Eio.Path.t
+           -> mgr:Eio.Process.mgr
            -> (Eval.value * Eval.eval_env * Rename.RenameScope.t * Types.global_env, Error.t) result
 
 val parse_rename_typecheck : driver_options 

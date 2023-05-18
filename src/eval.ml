@@ -11,6 +11,7 @@ module RecordVImpl = Multimap.Make (String)
 type eval_capabilities = {
   switch : Eio.Switch.t;
   fs : Eio.Fs.dir Eio.Path.t;
+  mgr : Eio.Process.mgr;
 }
 
 type eval_env = { 
@@ -341,8 +342,8 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
   (* Pipes in statements inherit the parents stdout. *)
   (* Pipes without value inputs also inherit the parents stdin *)
   | Pipe (loc, ((ProgCall _ :: _) as prog_exprs)) -> 
-    let progs = progs_of_exprs ~cap env prog_exprs in
-    let pid = Pipe.compose ~sw:cap.switch ~env:(full_env_vars env) progs in
+    let progs = progs_of_exprs ~cap env prog_exprs in 
+    let pid = Pipe.compose ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs in
     let status = Pipe.wait_to_status pid in
     env.last_status := status;
     if status <> 0 then begin
@@ -355,10 +356,10 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
     
     let progs = progs_of_exprs ~cap env prog_exprs in
     
-    let pid = Pipe.compose_out_with ~sw:cap.switch ~env:(full_env_vars env) progs (fun sink -> 
-        List.iter (fun line -> Eio.Flow.copy_string (line ^ "\n") sink) output_lines
-      ) in
-    let status = Pipe.wait_to_status pid in
+    let output_flow = Eio.Flow.string_source (String.concat "\n" output_lines) in
+
+    let process = Pipe.compose_stdin ~mgr:cap.mgr ~sw:cap.switch ~env:(full_env_vars env) progs output_flow in
+    let status = Pipe.wait_to_status process in
     env.last_status := status;
     if status <> 0 then begin
       let (program, arguments) = Base.List.last_exn progs in
@@ -626,11 +627,14 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
 
   | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
     let progs = progs_of_exprs ~cap env exprs in
-    let source, process = Pipe.compose_in ~sw:cap.switch ~env:(full_env_vars env) progs in
-  
-    let result = trim_output (Eio.Buf_read.take_all (Eio.Buf_read.of_flow ~max_size:max_int source)) in
-    Eio.Flow.close source;
+
+    let buffer = Buffer.create 16 in
+
+    let process = Pipe.compose_stdout ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs (Eio.Flow.buffer_sink buffer) in
+
     let status = Pipe.wait_to_status process in
+    let result = trim_output (String.of_bytes (Buffer.to_bytes buffer)) in
+
     env.last_status := status;
     if status <> 0 then begin
       let (program, arguments) = Base.List.last_exn progs in
@@ -643,17 +647,19 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
 
     let progs = progs_of_exprs ~cap env exprs in
 
-    let source, pid = Pipe.compose_in_out ~sw:cap.switch ~env:(full_env_vars env) progs (fun sink ->
-        List.iter (fun str -> Eio.Flow.copy_string (str ^ "\n") sink) output_lines
-      ) in
-    let result = trim_output (Eio.Buf_read.take_all (Eio.Buf_read.of_flow ~max_size:8192 source)) in
-    Eio.Flow.close source;
-    let status = Pipe.wait_to_status pid in
+    let stdin_source = Eio.Flow.string_source (String.concat "\n" output_lines) in
+
+    let buffer = Buffer.create 16 in
+
+    let process = Pipe.compose_in_out ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs stdin_source (Eio.Flow.buffer_sink buffer) in
+
+    let status = Pipe.wait_to_status process in
+    let result = trim_output (String.of_bytes (Buffer.to_bytes buffer)) in
     env.last_status := status;
     if status <> 0 then begin
       let (program, arguments) = Base.List.last_exn progs in
       raise_command_failure_exception env loc program arguments status result
-    end;      
+    end;
 
     StringV result
   | EnvVar(loc, var) ->

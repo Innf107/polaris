@@ -1,108 +1,32 @@
 open Eio_unix
 
-module Low_level = Eio_posix.Low_level
-module Process = Low_level.Process
-module Fd = Low_level.Fd
-
 let wait_to_status process =
-  match Eio.Promise.await (Process.exit_status process) with
-  | Unix.WEXITED s | Unix.WSTOPPED s | Unix.WSIGNALED s ->
-     s
+  match Eio.Process.await process with
+  | `Exited s | `Signaled s -> s
 
-let make_execve program arguments env =
-  let program_path =
-    let path_var = Unix.getenv "PATH" in
-    let dir_path = 
-      List.find 
-        begin fun path -> 
-          try
-            Array.mem program (Low_level.readdir path)
-          with
-          | _ -> false
-        end
-        (String.split_on_char ':' path_var)
-    in
-    dir_path ^ "/" ^ program
-  in
-  Process.Fork_action.execve program_path ~argv:(Array.of_list (program_path :: arguments)) ~env
   
-
-let rec compose_pipe ~sw ~env (stdin : Fd.t option) (stdout : Fd.t option) = function
+let rec compose_pipe ~mgr ~sw ~env (stdin : #Eio.Flow.source option) (stdout : #Eio.Flow.sink option) = function
     | [] -> Util.panic __LOC__ "compose_pipe: called on an empty program list"
     | [(program, arguments)] ->
-      let inherited_fds = 
-        List.filter_map (fun (x, y) -> Option.map (fun y -> (x, y, `Preserve_blocking)) y)
-          [(0, stdin); (1, stdout)]
-      in
-      let proc = Process.spawn ~sw
-        [ Process.Fork_action.inherit_fds inherited_fds
-        ; make_execve program arguments env 
-        ] in
-      proc
+      Eio.Process.spawn ~sw mgr ?stdin ?stdout ~env (program :: arguments)
     | (program, arguments) :: rest ->
-      let (pipe_read, pipe_write) = Low_level.pipe ~sw in
-      let inherited_fds = match stdin with
-      | None ->       [ (1, pipe_write, `Preserve_blocking) ]
-      | Some stdin -> [ (0, stdin, `Preserve_blocking); (1, pipe_write, `Preserve_blocking) ]
-      in
-      let _ = Process.spawn ~sw
-        [ Process.Fork_action.inherit_fds inherited_fds
-        ; make_execve program arguments env
-        ] in
-      compose_pipe ~sw ~env (Some pipe_read) stdout rest
+      let (pipe_read, pipe_write) = Eio.Process.pipe ~sw mgr in
 
-let compose ~sw ~env = compose_pipe ~sw ~env None None
+      let pipe_read : #Eio.Flow.source = pipe_read in
 
-let compose_in ~sw ~env progs =
-    let (pipe_read, pipe_write) = Eio_unix.pipe sw in
+      let _ = Eio.Process.spawn ~sw mgr ?stdin ~stdout:pipe_write ~env (program :: arguments) in
+      compose_pipe ~mgr ~sw ~env (Some (Obj.magic (pipe_read :> Eio.Flow.source))) stdout rest
 
-    let fd = Option.get (pipe_write#probe Low_level.Fd.FD) in
+let compose ~sw ~mgr ~env progs : Eio.Process.t = compose_pipe ~sw ~mgr ~env None None progs
 
-    let process = compose_pipe ~sw ~env None (Some (fd)) progs in
-    Low_level.Fd.close fd;
+let compose_stdin ~sw ~mgr ~env progs source =
+  compose_pipe ~sw ~mgr ~env (Some source) None progs
 
-    (pipe_read :> < Eio.Flow.source; Eio.Flow.close >), process
 
-let compose_out ~sw ~env progs =
-  let pipe_read, pipe_write = Eio_unix.pipe sw in
-
-  let read_fd = Option.get (pipe_read#probe Low_level.Fd.FD) in
-
-  let process = compose_pipe ~sw ~env (Some read_fd) None progs in
-
-  Low_level.Fd.close read_fd;
-
-  (pipe_write :> < Eio.Flow.sink; Eio.Flow.close >), process
+let compose_stdout ~sw ~mgr ~env progs sink =
+  compose_pipe ~sw ~mgr ~env None (Some sink) progs
 
 
 
-let compose_out_with ~sw ~env progs f =
-  let sink, process = compose_out ~sw ~env progs in
-  f (sink :> Eio.Flow.sink);
-  Eio.Flow.close sink;
-  process
-
-let compose_in_out ~sw ~env progs f =
-  let in_pipe_read, in_pipe_write = Eio_unix.pipe sw in
-  let out_pipe_read, out_pipe_write = Eio_unix.pipe sw in
-  
-  let in_read_fd = Option.get (in_pipe_read#probe Low_level.Fd.FD) in
-  let out_write_fd = Option.get (out_pipe_write#probe Low_level.Fd.FD) in
-
-  let process = 
-    compose_pipe 
-      ~sw 
-      ~env 
-      (Some in_read_fd) 
-      (Some out_write_fd) 
-      progs 
-  in
-  Low_level.Fd.close in_read_fd;
-  Low_level.Fd.close out_write_fd;
-
-  Eio.Fiber.fork ~sw begin fun () ->
-    f (in_pipe_write :> Eio.Flow.sink);
-    Eio.Flow.close in_pipe_write
-  end;
-  (out_pipe_read :> < Eio.Flow.source; Eio.Flow.close >), process
-
+let compose_in_out ~sw ~mgr ~env progs source sink =
+  compose_pipe ~sw ~mgr ~env (Some source) (Some sink) progs

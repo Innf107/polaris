@@ -84,7 +84,7 @@ let handle_errors text_style print_fun result =
     print_endline msg; exit 1 
   | Error err -> Error.pretty_error text_style print_fun err
 
-let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.global_env) (env : eval_env) (options : run_options) : unit =  
+let run_repl_with ~fs (scope : Rename.RenameScope.t) (type_env : Polaris.Types.global_env) (env : eval_env) (options : run_options) : unit =  
   Sys.catch_break true;
   let driver_options = {
       filename = "<interactive>"
@@ -103,7 +103,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.globa
       handle_errors 
         text_style
         fatal_error
-        (Driver.run_env driver_options (Lexing.from_string expr) env scope ?check_or_infer_top_level:(Some `Infer) type_env)
+        (Driver.run_env ~fs driver_options (Lexing.from_string expr) env scope ?check_or_infer_top_level:(Some `Infer) type_env)
     in
     
     begin match result with
@@ -130,7 +130,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.globa
           let _ = Bestline.history_add input in
           let result, new_env, new_scope, new_type_env = 
             handle_errors text_style (fun mloc msg -> repl_error mloc msg; go env scope type_env)
-            (Driver.run_env driver_options (Lexing.from_string input) env scope ?check_or_infer_top_level:(Some `Infer) type_env) 
+            (Driver.run_env ~fs driver_options (Lexing.from_string input) env scope ?check_or_infer_top_level:(Some `Infer) type_env) 
           in
 
           begin match result with
@@ -146,7 +146,7 @@ let run_repl_with (scope : Rename.RenameScope.t) (type_env : Polaris.Types.globa
     go env scope type_env
   end
 
-let run_file (options : run_options) (filepath : string) (args : string list) = 
+let run_file ~fs (options : run_options) (filepath : string) (args : string list) = 
   if Option.is_some options.eval then
     fail_usage "The flags '-c' and '--eval' are invalid when executing a file"
   ;
@@ -166,6 +166,7 @@ let run_file (options : run_options) (filepath : string) (args : string list) =
       text_style 
       fatal_error 
       (Driver.run_env 
+        ~fs
         driver_options 
         (Lexing.from_channel (open_in filepath))
         (Eval.make_eval_env driver_options.argv)
@@ -173,7 +174,7 @@ let run_file (options : run_options) (filepath : string) (args : string list) =
         Types.empty_env)      
   in
   if options.interactive then
-    run_repl_with scope type_env env options
+    run_repl_with ~fs scope type_env env options
         
 
 let run_repl options = 
@@ -226,10 +227,12 @@ let parse_args () : run_options * string list =
 
 
 let () =
-  Eio_posix.run begin fun _ ->
+  Eio_posix.run begin fun env ->
     let options, args = parse_args () in
 
+    let fs = Eio.Stdenv.fs env in
+
     match args with
-    | [] -> run_repl options
-    | (filepath :: args) -> ignore (run_file options filepath args)
+    | [] -> run_repl ~fs options
+    | (filepath :: args) -> ignore (run_file ~fs options filepath args)
   end

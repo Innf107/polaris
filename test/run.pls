@@ -47,13 +47,13 @@ for(files, \file -> {
     let expectation = silent (\ -> !grep "-Po" "(?<=# EXPECT: ).+" file);
     let args = split("|", silent(\ -> !grep "-Po" "(?<=# ARGS: ).+" file));
 
+
     let result = 
         if useDune then 
             # dune produces .exe files, even on linux
             silent (\ -> !_build/default/bin/main.exe file args)
         else
             silent (\ -> !polaris file args)
-
 
     if doesFileExist (stripExtension(file) ~ ".error") then {
         # This is an 'error' test, meaning the program is meant to fail

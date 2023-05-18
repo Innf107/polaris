@@ -25,11 +25,7 @@ let make_execve program arguments env =
     dir_path ^ "/" ^ program
   in
   Process.Fork_action.execve program_path ~argv:(Array.of_list (program_path :: arguments)) ~env
-
-let make_pipe_fd ~sw pipe_end = 
-  let unix_fd = pipe_end#unix_fd `Peek in
-  Unix.set_nonblock unix_fd;
-  Low_level.Fd.of_unix ~sw ~blocking:false ~close_unix:true unix_fd
+  
 
 let rec compose_pipe ~sw ~env (stdin : Fd.t option) (stdout : Fd.t option) = function
     | [] -> Util.panic __LOC__ "compose_pipe: called on an empty program list"
@@ -70,7 +66,11 @@ let compose_in ~sw ~env progs =
 let compose_out ~sw ~env progs =
   let pipe_read, pipe_write = Eio_unix.pipe sw in
 
-  let process = compose_pipe ~sw ~env (Some (make_pipe_fd ~sw pipe_read)) None progs in
+  let read_fd = Option.get (pipe_read#probe Low_level.Fd.FD) in
+
+  let process = compose_pipe ~sw ~env (Some read_fd) None progs in
+
+  Low_level.Fd.close read_fd;
 
   (pipe_write :> < Eio.Flow.sink; Eio.Flow.close >), process
 
@@ -86,14 +86,19 @@ let compose_in_out ~sw ~env progs f =
   let in_pipe_read, in_pipe_write = Eio_unix.pipe sw in
   let out_pipe_read, out_pipe_write = Eio_unix.pipe sw in
   
+  let in_read_fd = Option.get (in_pipe_read#probe Low_level.Fd.FD) in
+  let out_write_fd = Option.get (out_pipe_write#probe Low_level.Fd.FD) in
+
   let process = 
     compose_pipe 
       ~sw 
       ~env 
-      (Some (make_pipe_fd ~sw in_pipe_read)) 
-      (Some (make_pipe_fd ~sw out_pipe_write)) 
+      (Some in_read_fd) 
+      (Some out_write_fd) 
       progs 
   in
+  Low_level.Fd.close in_read_fd;
+  Low_level.Fd.close out_write_fd;
 
   Eio.Fiber.fork ~sw begin fun () ->
     f (in_pipe_write :> Eio.Flow.sink);

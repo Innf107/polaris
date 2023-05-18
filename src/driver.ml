@@ -91,8 +91,9 @@ let run_env : driver_options
             -> RenameScope.t
             -> ?check_or_infer_top_level : [`Check | `Infer]
             -> Types.global_env
+            -> fs:Eio.Fs.dir Eio.Path.t
             -> (value * eval_env * RenameScope.t * Types.global_env, Error.t) result 
-  = fun options lexbuf env scope ?check_or_infer_top_level type_env ->
+  = fun options lexbuf env scope ?check_or_infer_top_level type_env ~fs ->
     Error.handle_errors (fun err -> Error err) begin fun () ->
       let (let*) = Result.bind in
 
@@ -105,13 +106,13 @@ let run_env : driver_options
         | Some `Check | None -> `Statement
         | Some `Infer -> `Expr
       in
-      Eio.Switch.run begin fun sw ->
-        let res, new_env = Eval.eval_seq_state ~sw context env renamed in
+      Eio.Switch.run begin fun switch ->
+        let res, new_env = Eval.eval_seq_state ~cap:{ switch; fs } context env renamed in
         Ok (res, new_env, new_scope, new_type_env)
       end
     end
 
-let run (options : driver_options) (lexbuf : Lexing.lexbuf) : (value, Error.t) result =
-  let result = run_env options lexbuf (Eval.make_eval_env options.argv) RenameScope.empty Types.empty_env in
+let run (options : driver_options) (lexbuf : Lexing.lexbuf) ~fs : (value, Error.t) result =
+  let result = run_env ~fs options lexbuf (Eval.make_eval_env options.argv) RenameScope.empty Types.empty_env in
   Result.map (fun (value, _, _, _) -> value) result
 

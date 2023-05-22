@@ -47,7 +47,6 @@ for(files, \file -> {
     let expectation = silent (\ -> !grep "-Po" "(?<=# EXPECT: ).+" file);
     let args = split("|", silent(\ -> !grep "-Po" "(?<=# ARGS: ).+" file));
 
-
     let result = 
         if not usePolaris then 
             # dune produces .exe files, even on linux

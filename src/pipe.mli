@@ -14,13 +14,11 @@ val compose_stdout : sw:Eio.Switch.t
                   -> mgr:Eio.Process.mgr
                   -> env:string array 
                   -> (string * string list) list
-                  -> #Eio.Flow.sink
-                  -> Eio.Process.t
+                  -> string * int
 
 val compose_in_out : sw:Eio.Switch.t 
                   -> mgr:Eio.Process.mgr
                   -> env:string array
                   -> (string * string list) list 
                   -> #Eio.Flow.source
-                  -> #Eio.Flow.sink
-                  -> Eio.Process.t
+                  -> string * int

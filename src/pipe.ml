@@ -28,10 +28,24 @@ let compose_stdin ~sw ~mgr ~env progs source =
   compose_pipe ~sw ~mgr ~env (Some source) None progs
 
 
-let compose_stdout ~sw ~mgr ~env progs sink =
-  compose_pipe ~sw ~mgr ~env None (Some sink) progs
+let compose_stdout ~sw ~mgr ~env progs =
+  let pipe_read, pipe_write = Eio.Process.pipe ~sw mgr in
+
+  let process = compose_pipe ~sw ~mgr ~env None (Some pipe_write) progs in
+  Eio.Flow.close pipe_write;
+  let result = Eio.Buf_read.parse_exn Eio.Buf_read.take_all ~max_size:max_int pipe_read in
+  Eio.Flow.close pipe_read;
+  let status = wait_to_status process in
+  (result, status)
 
 
 
-let compose_in_out ~sw ~mgr ~env progs source sink =
-  compose_pipe ~sw ~mgr ~env (Some source) (Some sink) progs
+let compose_in_out ~sw ~mgr ~env progs source =
+  let pipe_read, pipe_write = Eio.Process.pipe ~sw mgr in
+
+  let process = compose_pipe ~sw ~mgr ~env (Some source) (Some pipe_write) progs in
+  Eio.Flow.close pipe_write;
+  let result = Eio.Buf_read.parse_exn Eio.Buf_read.take_all ~max_size:max_int pipe_read in
+  Eio.Flow.close pipe_read;
+  let status = wait_to_status process in
+  (result, status)

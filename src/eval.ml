@@ -628,12 +628,8 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
   | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
     let progs = progs_of_exprs ~cap env exprs in
 
-    let buffer = Buffer.create 16 in
-
-    let process = Pipe.compose_stdout ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs (Eio.Flow.buffer_sink buffer) in
-
-    let status = Pipe.wait_to_status process in
-    let result = trim_output (String.of_bytes (Buffer.to_bytes buffer)) in
+    let result, status = Pipe.compose_stdout ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs in
+    let result = trim_output result in
 
     env.last_status := status;
     if status <> 0 then begin
@@ -649,12 +645,9 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
 
     let stdin_source = Eio.Flow.string_source (String.concat "\n" output_lines) in
 
-    let buffer = Buffer.create 16 in
+    let result, status = Pipe.compose_in_out ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs stdin_source in
+    let result = trim_output result in
 
-    let process = Pipe.compose_in_out ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs stdin_source (Eio.Flow.buffer_sink buffer) in
-
-    let status = Pipe.wait_to_status process in
-    let result = trim_output (String.of_bytes (Buffer.to_bytes buffer)) in
     env.last_status := status;
     if status <> 0 then begin
       let (program, arguments) = Base.List.last_exn progs in

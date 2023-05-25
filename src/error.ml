@@ -29,6 +29,7 @@ let handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a =
   fun handler thunk ->
     try thunk () with
     | Util.Panic msg -> handler (Panic msg)
+    | Failure msg -> handler (Panic ("Failure: " ^ msg))
     | Util.TODO loc -> handler (TODO loc)
     | Lexer.LexError err -> handler (LexError err)
     | Parserprelude.ParseError (loc, msg) -> handler (ParseError (loc, msg))

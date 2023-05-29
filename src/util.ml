@@ -120,3 +120,21 @@ let async_promise : switch:Eio.Switch.t -> (unit -> 'a) -> 'a Eio.Promise.t =
         Eio.Promise.resolve resolver result
         );
     promise
+
+let map_array_once f array =
+  let mapped_at = Base.Array.find_mapi array ~f:(fun i x -> Option.map (fun y -> (i, x)) (f x)) in
+  match mapped_at with
+  | None -> None
+  | Some (index, new_value) ->
+    let new_array = Array.copy array in
+    new_array.(index) <- new_value;
+    Some new_array
+
+
+let map_array_at index f array =
+  let new_array = Array.copy array in
+  new_array.(index) <- f (array.(index));
+  new_array
+
+let map_at index f list =
+  List.mapi (fun i x -> if i = index then f x else x) list

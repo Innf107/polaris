@@ -1,0 +1,10 @@
+test/categories/types/refined_higher_order.pls:9:11: ERROR:
+Mismatched variant constructors.
+Missing mutual variant constructors '< A() >'
+                                and '<  >'
+                                respectively.
+    While trying to unify '(< A(), B() | ?r >) -> < B() | ?r >'
+                      and '(< A(), B() | ?r >) -> < A(), B() | ?r >'
+  | 
+9 | let _ = g(f)
+  |           ^

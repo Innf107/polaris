@@ -1552,16 +1552,27 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> local_env -> un
       (* unif, unif *)
       | RecordUnif (fields1, (u1, name1)), RecordUnif (fields2, (u2, name2)) ->
         unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
-          let new_u, new_name = fresh_unif_raw_with env "µ" in
-          bind u1 name1 (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
-          bind u2 name2 (RecordUnif (Array.of_list remaining1, (new_u, new_name)))
+          if Typeref.equal u1 u2 then
+            (* TODO: Maybe this should have a more specific error message? *)
+            raise (TypeError (loc, MissingRecordFields (remaining1, remaining2, unify_context)))
+          else begin
+
+            let new_u, new_name = fresh_unif_raw_with env "µ" in
+            bind u1 name1 (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
+            bind u2 name2 (RecordUnif (Array.of_list remaining1, (new_u, new_name)))
+          end
         end
       | VariantUnif (fields1, (u1, name1)), VariantUnif (fields2, (u2, name2)) ->
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
-          let new_u, new_name = fresh_unif_raw_with env "µ" in
+          if Typeref.equal u1 u2 then
+            (* TODO: Maybe this should have a more specific error message? *)
+            raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, unify_context)))
+          else begin
+            let new_u, new_name = fresh_unif_raw_with env "µ" in
 
-          bind u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
-          bind u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
+            bind u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
+            bind u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
+          end
         end
       (* unif, skolem *)
       (* This is almost exactly like the (unif, closed) case, except that we need to carry the

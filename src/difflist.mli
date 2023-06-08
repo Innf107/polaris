@@ -18,8 +18,11 @@ val append_to_list : 'a t -> 'a list -> 'a list
 (* O(1) *)
 val append : 'a t -> 'a t -> 'a t
 
-(* O(m), where `n` is the number of difflists*)
+(* O(m), where `m` is the number of difflists*)
 val concat : 'a t list -> 'a t
+
+(* O(m) where `m` is the number of difflists *)
+val concat_map : ('a -> 'b t) -> 'a list -> 'b t
 
 (* O(1) Adds a single element to the left *)
 val cons : 'a -> 'a t -> 'a t

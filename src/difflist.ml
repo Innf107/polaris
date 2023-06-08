@@ -15,6 +15,9 @@ let append dl1 dl2 = fun list -> dl1 (dl2 list)
 
 let concat list = List.fold_left append empty list
 
+let concat_map f list =
+  List.fold_left (fun rest x -> append rest (f x)) empty list
+
 let snoc dl x = append dl (of_list [x])
 
 let cons x dl = append (of_list [x]) dl

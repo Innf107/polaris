@@ -285,3 +285,178 @@ let check_variant_refutability : Typed.pattern -> (path * string) option =
     | `Refutable -> None
     | `Irrefutable -> None
     | `Variant (name, path) -> Some (path, name)
+
+
+type pattern_name =
+| Anonymous of Unique.t
+| Var of name
+  
+type guard =
+  | GIsTuple of (pattern_name list) * pattern_name
+  | GIsCons of pattern_name * pattern_name * pattern_name
+  | GIsNil of pattern_name
+  | GIsNum of float * pattern_name
+  | GIsString of string * pattern_name
+  | GIsData of name * pattern_name * pattern_name
+  | GIsExceptionData of name * (pattern_name list) * pattern_name
+  (* TODO: Something something types? *)
+  | GIsVariant of string * (pattern_name list) * pattern_name
+  | GRename of pattern_name * pattern_name
+  (* | GBindExpr of pattern_name * Renamed.expr *) (* This is not necessary until we have actual guards *)
+
+type guard_tree = 
+  | Done of int
+  | Branch of guard_tree * guard_tree
+  | Guard of guard * guard_tree
+
+let rec desugar_pattern input_name = function
+  | Renamed.VarPat (_, name) -> Difflist.of_list [GRename (Var name, input_name)]
+  | AsPat (_, pattern, name) -> Difflist.cons (GRename (Var name, input_name)) (desugar_pattern (Var name) pattern)
+  | ConsPat(_, head_pattern, tail_pattern) ->
+    let head_name = Anonymous (Unique.fresh ()) in
+    let head_guards = desugar_pattern head_name head_pattern in
+
+    let tail_name = Anonymous (Unique.fresh ()) in
+    let tail_guards = desugar_pattern tail_name tail_pattern in
+    Difflist.cons (GIsCons (head_name, tail_name, input_name)) (Difflist.append head_guards tail_guards)
+  | ListPat (_, patterns) ->
+    let guards_and_names = 
+      List.map (fun pattern -> 
+          let name = Anonymous (Unique.fresh ()) in
+          let guards = desugar_pattern name pattern in
+          (guards, name))
+      patterns
+    in
+    
+    let rec go matched_name = function
+      | [] -> Difflist.of_list [GIsNil matched_name]
+      | (guards, name) :: rest ->
+        let tail_name = Anonymous (Unique.fresh ()) in
+        Difflist.cons 
+          (GIsCons (name, tail_name, matched_name))
+          (Difflist.append guards (go tail_name rest))
+    in
+    go input_name guards_and_names
+  | TuplePat (_, patterns) -> 
+    let guards_and_names =
+      List.map (fun pattern ->
+        let name = Anonymous (Unique.fresh ()) in
+        let guards = desugar_pattern name pattern in
+        (guards, name)) patterns
+    in
+
+    Difflist.cons 
+      (GIsTuple (List.map snd guards_and_names, input_name))
+      (Difflist.concat_map fst guards_and_names)
+  | NumPat (_, number) -> Difflist.of_list [GIsNum (number, input_name)]
+  | StringPat (_, str) -> Difflist.of_list [GIsString (str, input_name)]
+  | OrPat _ -> todo __LOC__
+  | TypePat _ -> todo __LOC__
+  | DataPat (_, data_name, inner_pattern) ->
+    let inner_name = Anonymous (Unique.fresh ()) in
+    Difflist.cons 
+      (GIsData (data_name, inner_name, input_name)) 
+      (desugar_pattern inner_name inner_pattern)
+  | ExceptionDataPat (_, name, patterns) ->
+    let guards_and_names =
+      List.map (fun pattern ->
+        let name = Anonymous (Unique.fresh ()) in
+        let guards = desugar_pattern name pattern in
+        (guards, name)) patterns
+    in
+    Difflist.cons 
+      (GIsExceptionData (name, List.map snd guards_and_names, input_name))
+      (Difflist.concat_map fst guards_and_names)
+  | VariantPat (_, variant_name, patterns) ->
+    let guards_and_names =
+      List.map (fun pattern ->
+        let name = Anonymous (Unique.fresh ()) in
+        let guards = desugar_pattern name pattern in
+        (guards, name)) patterns
+    in
+    Difflist.cons 
+      (GIsVariant (variant_name, List.map snd guards_and_names, input_name))
+      (Difflist.concat_map fst guards_and_names)
+
+let build_guard_tree input_name patterns =
+  let pattern_to_tree i pattern = 
+    List.fold_right 
+      (fun guard tree -> Guard (guard, tree)) 
+      (Difflist.to_list (desugar_pattern input_name pattern))
+      (Done i) 
+  in
+  let rec go i = function
+    | [] -> Util.todo __LOC__
+    | [pattern] -> pattern_to_tree i pattern
+    | (pattern :: rest) ->
+      Branch (pattern_to_tree i pattern, go (i + 1) rest)
+  in
+  go 0 patterns
+  
+
+type formula =
+  | Always
+  | Never
+  | Rename of pattern_name * pattern_name
+  | IsNonTuple of pattern_name
+  | TupleDeconstructs of pattern_name list * pattern_name
+  | IsNonCons of pattern_name
+  | ConsDeconstructs of pattern_name * pattern_name * pattern_name
+  | IsNonNil of pattern_name
+  | IsNil of pattern_name
+  | IsNotNum of float * pattern_name
+  | IsNum of float * pattern_name
+  | IsNotString of string * pattern_name
+  | IsString of string * pattern_name
+  | IsNotData of name * pattern_name
+  | DataDeconstructs of name * pattern_name * pattern_name
+  | IsNotException of name * pattern_name
+  | ExceptionDeconstructs of name * pattern_name list * pattern_name
+  | IsNotVariant of string * pattern_name
+  | VariantDeconstructs of string * pattern_name list * pattern_name
+
+type refinements =
+  | And of refinements * refinements
+  | Or of refinements * refinements
+  | Satisfies of formula
+
+let rec uncovered_by_guard_tree refinements = function
+  | Done n -> Satisfies Never
+  | Branch (left, right) ->
+    let further_refinements = uncovered_by_guard_tree refinements left in
+    uncovered_by_guard_tree further_refinements right
+  | Guard (GIsTuple (args, name), rest) -> 
+    let non_tuple_uncovered = And (refinements, Satisfies (IsNonTuple name)) in
+    let further_uncovered = uncovered_by_guard_tree (And (refinements, Satisfies (TupleDeconstructs (args, name)))) rest in
+    Or (non_tuple_uncovered, further_uncovered)
+  | Guard (GIsCons (head, tail, var), rest) ->
+    let non_cons_uncovered = And (refinements, Satisfies (IsNonCons var)) in
+    let further_uncovered = uncovered_by_guard_tree (And (refinements, Satisfies (ConsDeconstructs (head, tail, var)))) rest in
+    Or (non_cons_uncovered, further_uncovered)
+  | Guard (GIsNil var, rest) ->
+    let non_nil_uncovered = And (refinements, Satisfies (IsNonNil var)) in
+    let further_uncovered = uncovered_by_guard_tree (And (refinements, Satisfies (IsNil var))) rest in
+    Or (non_nil_uncovered, further_uncovered)
+  | Guard (GIsNum (num, var), rest) ->
+    let not_num_uncovered = And (refinements, Satisfies (IsNotNum (num, var))) in
+    let further_uncovered = uncovered_by_guard_tree (And (refinements, Satisfies (IsNum (num, var)))) rest in
+    Or (not_num_uncovered, further_uncovered)
+  | Guard (GIsString (str, var), rest) ->
+    let not_string_uncovered = And (refinements, Satisfies (IsNotString (str, var))) in
+    let further_uncovered = uncovered_by_guard_tree (And (refinements, Satisfies (IsString (str, var)))) rest in
+    Or (not_string_uncovered, further_uncovered)
+  | Guard (GIsData (data_name, argument_name, var), rest) ->
+    let not_data_uncovered = And (refinements, Satisfies (IsNotData (data_name, var))) in
+    let further_uncovered = uncovered_by_guard_tree (And (refinements, Satisfies (DataDeconstructs (data_name, argument_name, var)))) rest in
+    Or (not_data_uncovered, further_uncovered)
+  | Guard (GIsExceptionData (exception_name, arguments, var), rest) ->
+    let not_exception_uncovered = And (refinements, Satisfies (IsNotException (exception_name, var))) in
+    let further_uncovered = uncovered_by_guard_tree (And (refinements, Satisfies (ExceptionDeconstructs (exception_name, arguments, var)))) rest in
+    Or (not_exception_uncovered, further_uncovered)
+  | Guard (GIsVariant (variant_name, arguments, var), rest) ->
+    (* TODO: This might need to take arity into account? *)
+    let not_variant_uncovered = And (refinements, Satisfies (IsNotVariant (variant_name, var))) in
+    let further_uncovered = uncovered_by_guard_tree (And (refinements, Satisfies (VariantDeconstructs (variant_name, arguments, var)))) rest in
+    Or (not_variant_uncovered, further_uncovered)
+  | Guard (GRename (new_var, old_var), rest) ->
+    uncovered_by_guard_tree (And (refinements, Satisfies (Rename (new_var, old_var)))) rest

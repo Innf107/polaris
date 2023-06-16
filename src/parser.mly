@@ -373,7 +373,7 @@ ty2:
     | "<" sep_trailing(COMMA, variant_entry) "|" IDENT ">"          { VariantVar(Array.of_list $2, $4) }
 
 record_entry:
-    IDENT ":" ty SEMI* { ($1, $3) }
+    SEMI* IDENT ":" ty SEMI* { ($2, $4) }
 
 variant_entry:
     | CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")" { ($1, $3) }

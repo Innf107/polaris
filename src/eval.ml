@@ -89,6 +89,7 @@ type eval_error =
 
   | EnsureFailed of string * loc list
 
+  | ProgcallArgumentListTooLong of loc list
 
 
 exception EvalError of eval_error
@@ -199,6 +200,12 @@ let trim_output = function
   | '\n' -> String.sub str 0 (String.length str - 1)
   | _ -> str
 
+let handle_arglist_too_long loc env cont =
+  try cont () with
+  (* This needs to match on the failure message until eio
+     raises something more robust *)
+  | Failure "execve: Argument list too long" ->
+    raise_notrace (EvalError (ProgcallArgumentListTooLong (loc :: env.call_trace)))
 
 let rec match_pat_opt (pat : Typed.pattern) (scrut : value) : (eval_env -> eval_env) option =
   let (let*) = Option.bind in
@@ -342,28 +349,31 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
   (* Pipes in statements inherit the parents stdout. *)
   (* Pipes without value inputs also inherit the parents stdin *)
   | Pipe (loc, ((ProgCall _ :: _) as prog_exprs)) -> 
-    let progs = progs_of_exprs ~cap env prog_exprs in 
-    let pid = Pipe.compose ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs in
-    let status = Pipe.wait_to_status pid in
-    env.last_status := status;
-    if status <> 0 then begin
-      let (program, arguments) = Base.List.last_exn progs in
-      raise_command_failure_exception env loc program arguments status ""
+    handle_arglist_too_long loc env begin fun () ->
+      let progs = progs_of_exprs ~cap env prog_exprs in 
+      let pid = Pipe.compose ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs in
+      let status = Pipe.wait_to_status pid in
+      env.last_status := status;
+      if status <> 0 then begin
+        let (program, arguments) = Base.List.last_exn progs in
+        raise_command_failure_exception env loc program arguments status ""
+      end
     end
-    
   | Pipe (loc, (expr :: prog_exprs)) ->
-    let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr ~cap env expr) in
-    
-    let progs = progs_of_exprs ~cap env prog_exprs in
-    
-    let output_flow = Eio.Flow.string_source (String.concat "\n" output_lines) in
+    handle_arglist_too_long loc env begin fun () ->
+      let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr ~cap env expr) in
+      
+      let progs = progs_of_exprs ~cap env prog_exprs in
+      
+      let output_flow = Eio.Flow.string_source (String.concat "\n" output_lines) in
 
-    let process = Pipe.compose_stdin ~mgr:cap.mgr ~sw:cap.switch ~env:(full_env_vars env) progs output_flow in
-    let status = Pipe.wait_to_status process in
-    env.last_status := status;
-    if status <> 0 then begin
-      let (program, arguments) = Base.List.last_exn progs in
-      raise_command_failure_exception env loc program arguments status ""
+      let process = Pipe.compose_stdin ~mgr:cap.mgr ~sw:cap.switch ~env:(full_env_vars env) progs output_flow in
+      let status = Pipe.wait_to_status process in
+      env.last_status := status;
+      if status <> 0 then begin
+        let (program, arguments) = Base.List.last_exn progs in
+        raise_command_failure_exception env loc program arguments status ""
+      end
     end
   | Seq (_, exprs) -> 
     let _ = eval_seq ~cap `Statement env exprs in
@@ -626,35 +636,38 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
   | Pipe (loc, []) -> raise (Panic "empty pipe") 
 
   | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
-    let progs = progs_of_exprs ~cap env exprs in
+    handle_arglist_too_long loc env begin fun () ->
+      let progs = progs_of_exprs ~cap env exprs in
 
-    let result, status = Pipe.compose_stdout ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs in
-    let result = trim_output result in
+      let result, status = Pipe.compose_stdout ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs in
+      let result = trim_output result in
 
-    env.last_status := status;
-    if status <> 0 then begin
-      let (program, arguments) = Base.List.last_exn progs in
-      raise_command_failure_exception env loc program arguments status result
-    end;
-    StringV result
-
+      env.last_status := status;
+      if status <> 0 then begin
+        let (program, arguments) = Base.List.last_exn progs in
+        raise_command_failure_exception env loc program arguments status result
+      end;
+      StringV result
+    end
   | Pipe (loc, (expr :: exprs)) ->
-    let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr ~cap env expr) in
+    handle_arglist_too_long loc env begin fun () ->
+      let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr ~cap env expr) in
 
-    let progs = progs_of_exprs ~cap env exprs in
+      let progs = progs_of_exprs ~cap env exprs in
 
-    let stdin_source = Eio.Flow.string_source (String.concat "\n" output_lines) in
+      let stdin_source = Eio.Flow.string_source (String.concat "\n" output_lines) in
 
-    let result, status = Pipe.compose_in_out ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs stdin_source in
-    let result = trim_output result in
+      let result, status = Pipe.compose_in_out ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs stdin_source in
+      let result = trim_output result in
 
-    env.last_status := status;
-    if status <> 0 then begin
-      let (program, arguments) = Base.List.last_exn progs in
-      raise_command_failure_exception env loc program arguments status result
-    end;
+      env.last_status := status;
+      if status <> 0 then begin
+        let (program, arguments) = Base.List.last_exn progs in
+        raise_command_failure_exception env loc program arguments status result
+      end;
 
-    StringV result
+      StringV result
+    end
   | EnvVar(loc, var) ->
     (* We first check if the env var has been locally overriden by a 
         'let $x = ...' expression. If it has not, we look for actual environment variables *)

@@ -999,7 +999,7 @@ and eval_primop ~cap env op args loc =
                   let path = Eio.Path.(cap.fs / path) in
 
                   let default_permissions = 0b0110100100 in
-                  Eio.Path.save path content ~create:(`If_missing default_permissions);
+                  Eio.Path.save path content ~create:(`Or_truncate default_permissions);
                   unitV
                 | _ -> raise (EvalError (PrimOpArgumentError ("writeFile", args, "Expected two string arguments", loc :: env.call_trace)))
                 end

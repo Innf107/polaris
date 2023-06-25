@@ -89,8 +89,6 @@ type eval_error =
 
   | EnsureFailed of string * loc list
 
-  | ProgcallArgumentListTooLong of loc list
-
 
 exception EvalError of eval_error
 
@@ -200,12 +198,32 @@ let trim_output = function
   | '\n' -> String.sub str 0 (String.length str - 1)
   | _ -> str
 
-let handle_arglist_too_long loc env cont =
+let handle_process_exceptions loc env cont =
   try cont () with
   (* This needs to match on the failure message until eio
      raises something more robust *)
   | Failure "execve: Argument list too long" ->
-    raise_notrace (EvalError (ProgcallArgumentListTooLong (loc :: env.call_trace)))
+    let trace = RaisedPreviously {
+      original_trace = loc :: env.call_trace;
+      reraised = []
+    } in
+    raise_notrace (EvalError (PolarisException 
+      ( Primops.program_args_too_large_exception, [], trace
+      , lazy ("Arguments to program call are to large.\n"
+            ^ "    " ^ "Note: This is about the total size, not the number of arguments")
+      )))
+  | Eio.Io (Eio.Process.(E Executable_not_found executable), _) ->
+    let trace = RaisedPreviously {
+      original_trace = loc :: env.call_trace;
+      reraised = []
+    } in
+    raise_notrace (EvalError (PolarisException 
+      ( Primops.executable_not_found_exception
+      , [Name.{ name = "executable"; index = primop_index }, StringV executable]
+      , trace
+      , lazy ("Executable not found: " ^ executable)
+      )))
+
 
 let rec match_pat_opt (pat : Typed.pattern) (scrut : value) : (eval_env -> eval_env) option =
   let (let*) = Option.bind in
@@ -349,7 +367,7 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
   (* Pipes in statements inherit the parents stdout. *)
   (* Pipes without value inputs also inherit the parents stdin *)
   | Pipe (loc, ((ProgCall _ :: _) as prog_exprs)) -> 
-    handle_arglist_too_long loc env begin fun () ->
+    handle_process_exceptions loc env begin fun () ->
       let progs = progs_of_exprs ~cap env prog_exprs in 
       let pid = Pipe.compose ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs in
       let status = Pipe.wait_to_status pid in
@@ -360,7 +378,7 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
       end
     end
   | Pipe (loc, (expr :: prog_exprs)) ->
-    handle_arglist_too_long loc env begin fun () ->
+    handle_process_exceptions loc env begin fun () ->
       let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr ~cap env expr) in
       
       let progs = progs_of_exprs ~cap env prog_exprs in
@@ -636,7 +654,7 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
   | Pipe (loc, []) -> raise (Panic "empty pipe") 
 
   | Pipe (loc, ((ProgCall _ :: _) as exprs)) -> 
-    handle_arglist_too_long loc env begin fun () ->
+    handle_process_exceptions loc env begin fun () ->
       let progs = progs_of_exprs ~cap env exprs in
 
       let result, status = Pipe.compose_stdout ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env) progs in
@@ -650,7 +668,7 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
       StringV result
     end
   | Pipe (loc, (expr :: exprs)) ->
-    handle_arglist_too_long loc env begin fun () ->
+    handle_process_exceptions loc env begin fun () ->
       let output_lines = Value.as_args (fun value -> panic __LOC__ (Loc.pretty loc ^ ": Invalid process argument at runtime: " ^ Value.pretty value)) (eval_expr ~cap env expr) in
 
       let progs = progs_of_exprs ~cap env exprs in

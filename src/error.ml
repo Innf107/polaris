@@ -134,11 +134,6 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       print_fun (Some loc) ("Required command not installed: " ^ text_style.identifier path
       ^ "\n" ^ pretty_call_trace locs
     )
-    | ProgcallArgumentListTooLong (loc :: locs) ->
-      print_fun (Some loc) ("Arguments to program call are to large.\n"
-      ^ "    " ^ text_style.note "Note: This is about the total size, not the number of arguments"
-      ^ "\n" ^ pretty_call_trace locs
-      )
     | _ -> Util.panic __LOC__ "Invalid eval error"
   end
   | LexError err -> begin match err with

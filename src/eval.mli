@@ -81,7 +81,6 @@ type eval_error =
   | NonExhaustiveMatch of value * loc list
 
   | EnsureFailed of string * loc list
-  | ProgcallArgumentListTooLong of loc list
 
 exception EvalError of eval_error
 

@@ -6,6 +6,7 @@ type pattern_error =
   | ExceptionWithoutWildcard
   | NumWithoutWildcard
   | StringWithoutWildcard
+  | BoolWithout of bool
   | VariantNonExhaustive of string list
 
 exception PatternError of pattern_error

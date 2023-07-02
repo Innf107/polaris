@@ -301,6 +301,8 @@ let rec match_pat_opt (pat : Typed.pattern) (scrut : value) :
   | NumPat (_, f1), NumV f2 when Float.equal f1 f2 -> Some (fun x -> x)
   | StringPat (_, literal), StringV str when String.equal literal str ->
       Some Fun.id
+  | BoolPat (_, expected), BoolV value when Bool.equal expected value ->
+      Some Fun.id
   | OrPat (_, p1, p2), v -> begin
       match match_pat_opt p1 v with
       | Some t -> Some t

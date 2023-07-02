@@ -519,6 +519,7 @@ let rec infer_pattern :
         TuplePat (loc, patterns) )
   | NumPat (loc, number) -> (Number, Fun.id, NumPat (loc, number))
   | StringPat (loc, literal) -> (String, Fun.id, StringPat (loc, literal))
+  | BoolPat (loc, literal) -> (Bool, Fun.id, BoolPat (loc, literal))
   | OrPat (loc, left, right) ->
       let left_ty, left_trans, left = infer_pattern env allow_polytype left in
       (* TODO: Make sure both sides bind the same set of variables with the same types *)
@@ -704,6 +705,7 @@ and check_pattern :
   | NumPat _, _ -> defer_to_inference ()
   | StringPat (loc, literal), String -> (Fun.id, StringPat (loc, literal))
   | StringPat _, _ -> defer_to_inference ()
+  | BoolPat _, _ -> defer_to_inference ()
   | OrPat (loc, left, right), _ ->
       let left_trans, left =
         check_pattern env allow_polytype left expected_ty

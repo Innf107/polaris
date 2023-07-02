@@ -329,6 +329,8 @@ pattern_leaf:
     | INT { NumPat(loc $startpos $endpos, float_of_int $1) }
     | FLOAT { NumPat(loc $startpos $endpos, $1) }
     | STRING { StringPat(loc $startpos $endpos, $1) }
+    | TRUE { BoolPat(loc $startpos $endpos, true) }
+    | FALSE { BoolPat(loc $startpos $endpos, false) }
     | "(" pattern ")" { $2 }
     | "(" pattern COMMA sep_trailing(COMMA, pattern) ")" { TuplePat(loc $startpos $endpos, $2 :: $4) }
 

@@ -155,6 +155,7 @@ module Template = struct
     | TuplePat of loc * pattern list
     | NumPat of loc * float
     | StringPat of loc * string
+    | BoolPat of loc * bool
     | OrPat of loc * pattern * pattern
     | TypePat of loc * pattern * ty
     | DataPat of loc * name * pattern
@@ -493,6 +494,7 @@ module Template = struct
         "(" ^ String.concat ", " (List.map pretty_pattern pats) ^ ")"
     | NumPat (_, f) -> Float.to_string f
     | StringPat (_, literal) -> "\"" ^ literal ^ "\""
+    | BoolPat (_, literal) -> string_of_bool literal
     | OrPat (_, p1, p2) ->
         "(" ^ pretty_pattern p1 ^ " | " ^ pretty_pattern p2 ^ ")"
     | TypePat (_, pat, ty) ->
@@ -698,6 +700,7 @@ module Template = struct
     | TuplePat (loc, _)
     | NumPat (loc, _)
     | StringPat (loc, _)
+    | BoolPat (loc, _)
     | OrPat (loc, _, _)
     | TypePat (loc, _, _)
     | DataPat (loc, _, _)
@@ -1025,6 +1028,7 @@ module Template = struct
               (* Non-recursive *)
               | NumPat (loc, num) -> (NumPat (loc, num), state)
               | StringPat (loc, num) -> (StringPat (loc, num), state)
+              | BoolPat (loc, bool) -> (BoolPat (loc, bool), state)
               (* Recursive *)
               | VarPat (loc, name) ->
                   let name, state = self#traverse_name state name in

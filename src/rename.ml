@@ -266,6 +266,7 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t)
         Util.compose pats_ty_trans )
   | NumPat (loc, f) -> (NumPat (loc, f), (fun x -> x), fun x -> x)
   | StringPat (loc, literal) -> (StringPat (loc, literal), Fun.id, Fun.id)
+  | BoolPat (loc, literal) -> (BoolPat (loc, literal), Fun.id, Fun.id)
   | OrPat (loc, p1, p2) ->
       let p1', p1_trans, p1_ty_trans =
         rename_pattern or_bound_variables scope p1

@@ -1,5 +1,5 @@
-(** Efficient list builder *)
 type 'a t
+(** Efficient list builder *)
 
 val empty : 'a t
 
@@ -38,4 +38,3 @@ val fold_left : ('a -> 'b -> 'a) -> 'a -> 'b t -> 'a
 
 (* O(n) *)
 val fold_right : ('a -> 'b -> 'b) -> 'a t -> 'b -> 'b
- 

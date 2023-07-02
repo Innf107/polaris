@@ -8,6 +8,4 @@ exception LexError of lex_error
 type lex_state
 
 val new_lex_state : unit -> lex_state
-
-val token : lex_state -> Lexing.lexbuf ->  Parser.token
- 
+val token : lex_state -> Lexing.lexbuf -> Parser.token

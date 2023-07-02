@@ -167,6 +167,7 @@ let as_paren state = let open Parser in function
     | [] | [_] -> raise (Panic "Lexer.close_block: More blocks closed than opened")
     | OpeningInterpolation is_single :: lvls
     | FoundInterpolation (is_single, _) :: lvls -> 
+      state.indentation_level <- lvls;
       `ClosedInterpolation is_single
     | _ :: lvls -> 
       state.indentation_level <- lvls;

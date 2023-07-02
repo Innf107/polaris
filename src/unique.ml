@@ -8,7 +8,5 @@ let fresh () =
   value
 
 let equal = Int.equal
-
 let compare = Int.compare
-
 let display = Int.to_string

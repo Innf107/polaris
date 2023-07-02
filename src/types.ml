@@ -67,6 +67,8 @@ type ty_constraint =
   | ProgramArg of loc * ty * local_env
     (* See Note [Env in Constraints] *)
   | RefineVariant of loc * ty * Pattern.path * string * ty * local_env
+    (* See Note [Env in Constraints] *)
+  | Interpolatable of loc * ty * local_env
 
 and global_env = {
   var_types : Typed.ty NameMap.t;
@@ -114,6 +116,11 @@ let prog_arg_constraint : local_env -> loc -> ty -> unit =
   fun env loc ty ->
     trace_emit (lazy ("Arg " ^ Typed.pretty_type ty));
     env.constraints := Difflist.snoc !(env.constraints) (ProgramArg (loc, ty, env))
+
+let interpolatable_constraint : local_env -> loc -> ty -> unit =
+  fun env loc ty ->
+    trace_emit (lazy ("Interpolatable " ^ Typed.pretty_type ty));
+    env.constraints := Difflist.snoc !(env.constraints) (Interpolatable (loc, ty, env))
 
 let fresh_unif_raw_with env raw_name =
   let typeref = Typeref.make env.level in
@@ -292,6 +299,12 @@ let rec is_value : expr -> bool =
     | App _ -> false
     | Lambda _ -> true
     | StringLit _ | NumLit _ | BoolLit _ | UnitLit _ -> true
+    | StringInterpolation (_, components) ->
+      let comp_is_value = function
+      | StringComponent _ -> true
+      | Interpolation (_, exprs) -> List.for_all is_value exprs
+      in
+      List.for_all comp_is_value components
     | ListLit (_, args) | TupleLit (_, args) -> List.for_all is_value args
     | RecordLit (_, args) -> List.for_all (fun (_, expr) -> is_value expr) args
     | Subscript (_, expr, _) -> is_value expr
@@ -742,6 +755,12 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       ( RecordClosed (Array.map (fun (x, (ty, _)) -> (x, ty)) typed_fields)
       , RecordLit (loc, Array.to_list (Array.map (fun (x, (_, expr)) -> (x, expr)) typed_fields))
       )
+
+    | StringInterpolation (loc, components) ->
+      let components = List.map (check_interpolation_component env) components in
+      ( String
+      , StringInterpolation (loc, components)
+      )
     | Subscript (loc, expr, name) -> 
       let val_ty = fresh_unif env in
       let (u, u_name) = fresh_unif_raw env in
@@ -1026,6 +1045,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
        We could check these directly with `subsumes`, but `defer_to_inference` will do this for us and also works for
        cases with parameters *)
     | (StringLit _ | NumLit _ | BoolLit _ | UnitLit _ | ListLit _ | TupleLit _), _ -> defer_to_inference ()
+    | StringInterpolation _, _ -> defer_to_inference ()
     | Subscript(loc, expr, field), expected_ty -> 
       let ext_field = fresh_unif_raw env in
       let record_ty = RecordUnif ([|field, expected_ty|], ext_field) in
@@ -1133,6 +1153,15 @@ and check_list_comp : local_env -> list_comp_clause list -> local_env * Typed.li
       let expr = check env (List ty) expr in
       let env, clauses = check_list_comp (env_trans env) clauses in
       env, DrawClause(pattern, expr) :: clauses
+
+and check_interpolation_component env = function
+    | StringComponent (loc, str) -> StringComponent (loc, str)
+    | Interpolation (loc, exprs) -> 
+      let interpolation_type, exprs = infer_seq env exprs in
+
+      interpolatable_constraint env loc interpolation_type;
+
+      Interpolation (loc, exprs)
 
 and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> local_env) * Typed.expr =
     fun env check_or_infer expr -> match expr with
@@ -1713,6 +1742,18 @@ let solve_refine_variant loc env unify_state ty path variant result_type definit
     in
     solve_unify loc env unify_state result_type (go path ty) definition_env
 
+let solve_interpolatable loc env state ty definition_env =
+  match normalize_unif ty with
+  | String | Number | Bool -> ()
+  | ty ->
+    match state.deferred_constraints with
+    | None ->
+      (* Fall back to matching against strings. This might be a little
+       brittle, but we're going to replace this with type classes in the future anyway. *)
+      solve_unify loc env state ty String definition_env
+    | Some deferred_constraint_ref ->
+      deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (Interpolatable (loc, ty, definition_env))
+
 let solve_constraints : local_env -> ty_constraint list -> unit =
   fun env constraints ->
     let go unify_state constraints = 
@@ -1725,6 +1766,8 @@ let solve_constraints : local_env -> ty_constraint list -> unit =
           solve_program_arg loc env unify_state ty definition_env
         | RefineVariant (loc, ty, path, variant, result_type, definition_env) ->
           solve_refine_variant loc env unify_state ty path variant result_type definition_env
+        | Interpolatable (loc, ty, definition_env) ->
+          solve_interpolatable loc env unify_state ty definition_env
         end constraints;
     in
 

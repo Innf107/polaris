@@ -442,6 +442,19 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
     let kv_vals = List.map (fun (k, e) -> (k, eval_expr ~cap env e)) kvs in
     RecordV (RecordVImpl.of_list kv_vals)
 
+  | StringInterpolation (_, components) ->
+    let eval_component = function
+    | StringComponent (_, str) -> str
+    | Interpolation (_, exprs) ->
+      begin match eval_seq ~cap `Expr env exprs with
+      | StringV str -> str
+      | (NumV _ | BoolV _) as value -> Value.pretty value
+      | value -> panic __LOC__ ("Non-string value in string interpolation: " ^ Value.pretty value)
+      end
+    in
+    let strings = List.map eval_component components in
+    StringV (String.concat "" strings)
+
   | Subscript (({main=loc;_}, _), map_expr, key) ->
     begin match eval_expr ~cap env map_expr with
     | RecordV map -> 

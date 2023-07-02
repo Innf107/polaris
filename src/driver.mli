@@ -1,9 +1,5 @@
 open Syntax
 
-exception ParseError of loc * string
-
-type specific_parse_error = Parserprelude.specific_parse_error
-exception SpecificParseError of specific_parse_error
 
 type driver_options = {
   filename : string;
@@ -13,7 +9,7 @@ type driver_options = {
   print_tokens : bool;
 }
 
-val run : driver_options -> Lexing.lexbuf -> unit
+val run : driver_options -> Lexing.lexbuf -> fs:Eio.Fs.dir Eio.Path.t -> mgr:Eio.Process.mgr -> (Eval.value, Error.t) result
 
 val run_env : driver_options 
            -> Lexing.lexbuf 
@@ -21,13 +17,15 @@ val run_env : driver_options
            -> Rename.RenameScope.t
            -> ?check_or_infer_top_level : [`Check | `Infer]
            -> Types.global_env
-           -> Eval.value * Eval.eval_env * Rename.RenameScope.t * Types.global_env
+           -> fs:Eio.Fs.dir Eio.Path.t
+           -> mgr:Eio.Process.mgr
+           -> (Eval.value * Eval.eval_env * Rename.RenameScope.t * Types.global_env, Error.t) result
 
 val parse_rename_typecheck : driver_options 
                           -> Lexing.lexbuf
                           -> Rename.RenameScope.t
                           -> ?check_or_infer_top_level : [`Check | `Infer]
                           -> Types.global_env
-                          -> Typed.header * Typed.expr list * Rename.RenameScope.t * Types.global_env
+                          -> (Typed.header * Typed.expr list * Rename.RenameScope.t * Types.global_env, Error.t) result
 
 

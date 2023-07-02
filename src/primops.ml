@@ -38,6 +38,8 @@ let primops = PrimOpMap.of_seq (List.to_seq [
 let is_primop name = PrimOpMap.mem name primops
 
 let command_failure_exception = Name.{ name = "CommandFailure"; index = Name.primop_index }
+let program_args_too_large_exception = Name.{ name = "ProgramArgumentsTooLarge"; index = Name.primop_index }
+let executable_not_found_exception = Name.{ name = "ExecutableNotFound"; index = Name.primop_index }
 
 let prim_exceptions = PrimOpMap.of_seq (List.to_seq [
   "CommandFailure", (command_failure_exception, [
@@ -46,5 +48,7 @@ let prim_exceptions = PrimOpMap.of_seq (List.to_seq [
         "arguments", List(String); 
         "exitCode", Number; 
         "stdout", String
-      |]])
+      |]]);
+  "ProgramArgumentsTooLarge", (program_args_too_large_exception, []);
+  "ExecutableNotFound", (executable_not_found_exception, [String])
 ])

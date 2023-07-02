@@ -65,6 +65,10 @@ type ty_constraint =
   | Unwrap of loc * ty * ty * local_env
     (* See Note [Env in Constraints] *)
   | ProgramArg of loc * ty * local_env
+    (* See Note [Env in Constraints] *)
+  | RefineVariant of loc * ty * Pattern.path * string * ty * local_env
+    (* See Note [Env in Constraints] *)
+  | Interpolatable of loc * ty * local_env
 
 and global_env = {
   var_types : Typed.ty NameMap.t;
@@ -117,6 +121,11 @@ let prog_arg_constraint : local_env -> loc -> ty -> unit =
     trace_emit (lazy ("Arg " ^ Typed.pretty_type ty));
     env.constraints := Difflist.snoc !(env.constraints) (ProgramArg (loc, ty, env))
 
+let interpolatable_constraint : local_env -> loc -> ty -> unit =
+  fun env loc ty ->
+    trace_emit (lazy ("Interpolatable " ^ Typed.pretty_type ty));
+    env.constraints := Difflist.snoc !(env.constraints) (Interpolatable (loc, ty, env))
+
 let fresh_unif_raw_with env raw_name =
   let typeref = Typeref.make env.level in
   typeref, Name.{ name = raw_name; index = Typeref.get_unique typeref }
@@ -135,6 +144,14 @@ let fresh_unif_with env name =
 let fresh_skolem_with env name =
   let unique = Unique.fresh () in
   Skol (unique, env.level, name)
+
+let refine_variant : local_env -> loc -> ty -> Pattern.path -> string -> ty =
+  fun env loc ty path name ->
+    let result_type = fresh_unif env in
+    trace_emit (lazy ("RefineVariant (" ^ Typed.pretty_type ty ^ ", _, " ^ name ^ ") ==> " ^ Typed.pretty_type result_type));
+    env.constraints := Difflist.snoc !(env.constraints) (RefineVariant (loc, ty, path, name, result_type, env));
+    result_type
+
 
 let increase_ambient_level env =
   { env with level = Typeref.next_level env.level }
@@ -290,6 +307,12 @@ let rec is_value : expr -> bool =
     | App _ -> false
     | Lambda _ -> true
     | StringLit _ | NumLit _ | BoolLit _ | UnitLit _ -> true
+    | StringInterpolation (_, components) ->
+      let comp_is_value = function
+      | StringComponent _ -> true
+      | Interpolation (_, exprs) -> List.for_all is_value exprs
+      in
+      List.for_all comp_is_value components
     | ListLit (_, args) | TupleLit (_, args) -> List.for_all is_value args
     | RecordLit (_, args) -> List.for_all (fun (_, expr) -> is_value expr) args
     | Subscript (_, expr, _) -> is_value expr
@@ -515,7 +538,7 @@ let rec infer_pattern : local_env -> bool -> pattern -> ty * (local_env -> local
 
   The obvious type for `f` would be `forall r. < A, B | r > -> Number`.
   This leads to the natural conclusion that variant patterns (e.g `A) should always be inferred to 
-  an *open* variant type instead (< A | r0 >).
+  an *open* variant type instead (< A | ?r >).
 
   With this, the example above infers the correct type, but at the cost of breaking correctness!
 
@@ -630,8 +653,7 @@ let rec split_fun_ty : local_env -> loc -> int -> ty -> (ty list * ty) =
     let real_type = instantiate_type_alias env alias_name args in
     (* We continue recursively, unwrapping every layer of type synonym until we hit either a function
        or a non-alias type that we can unify with a function type.
-       This guarantees that type synonyms for functions taking polytypes behave correctly
-       (if rank N types are ever implemented) *)
+       This guarantees that type synonyms for functions taking polytypes behave correctly *)
     split_fun_ty env loc arg_count real_type
   | ty ->
     let argument_types = List.init arg_count (fun _ -> fresh_unif env) in
@@ -693,7 +715,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       (* We infer variant constructors to an open variant type.
         The reasoning behind this is that a constructor A(..) can be used as part of
         any set of constructors as long as that set contains A(..), so its type should be
-        < A(..) | r0 > *)
+        < A(..) | ?r > *)
       let arg_types, args = List.split (List.map (infer env) args) in
       let ext_field = fresh_unif_raw env in
       ( VariantUnif ([|(constructor_name, arg_types)|], ext_field) 
@@ -702,12 +724,9 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
     | ModSubscriptDataCon (void, _, _, _) -> absurd void
     | App (loc, fun_expr, args) ->
       (* We infer the function type and then match the arguments against that.
-         This is more efficient than inferring the arguments first, since most functions
-         are just going to be functions with existing types, so this reduces the amount of
-         unification variables and constraints.
-
-         It also makes it possible to add rank N types later, since polytypes can be checked for
-         but not inferred. *)
+         This is both more efficient than inferring the arguments first, since most functions
+         are just going to be variables with known types, and necessary to check
+         higher rank types, since arguments can be checked against a polytype, but not inferred. *)
       let fun_ty, fun_expr = infer env fun_expr in
       let (param_tys, result_ty) = split_fun_ty env loc (List.length args) fun_ty in
 
@@ -746,6 +765,12 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       ( RecordClosed (Array.map (fun (x, (ty, _)) -> (x, ty)) typed_fields)
       , RecordLit (loc, Array.to_list (Array.map (fun (x, (_, expr)) -> (x, expr)) typed_fields))
       )
+
+    | StringInterpolation (loc, components) ->
+      let components = List.map (check_interpolation_component env) components in
+      ( String
+      , StringInterpolation (loc, components)
+      )
     | Subscript (loc, expr, name) -> 
       let val_ty = fresh_unif env in
       let (u, u_name) = fresh_unif_raw env in
@@ -777,7 +802,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       (* TODO: At the moment, we infer record extensions by checking the underlying field
          against a unification variable and then returning a unification record with the same variable
          as its extension field. It might be more efficient to infer the underlying type properly and
-         then merging directly *)
+         then merge directly *)
       let field_tys = Array.map (fun (x, expr) -> (x, infer env expr)) (Array.of_list field_exts) in
       let (u, u_name) = fresh_unif_raw env in
       let expr = check env (Unif (u, u_name)) expr in
@@ -920,17 +945,14 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       ( expr_ty
       , Await (loc, expr)
       )
-    | Match (loc, scrut, body) ->
+    | Match (loc, scrutinee, branches) ->
       (* TODO: Do exhaustiveness checking. *)
-      let scrut_ty, scrut = infer env scrut in
+      let scrutinee_type, scrutinee = infer env scrutinee in
       let result_ty = fresh_unif env in
-      let body = body |> List.map begin fun (pat, expr) -> 
-        let env_trans, pattern = check_pattern env true pat scrut_ty in
-        let expr = check (env_trans env) result_ty expr in
-        (pattern, expr)
-      end in
+
+      let branches = check_match_patterns env result_ty scrutinee_type branches in
       ( result_ty
-      , Match (loc, scrut, body)
+      , Match (loc, scrutinee, branches)
       )
     | Ascription (loc, expr, ty) ->
       let expr = check env ty expr in
@@ -951,8 +973,8 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       )
     | Assign (loc, ref_expr, expr) ->
       (* We infer and split the type of the reference and then check the expression against that.
-          We could to this in reverse, which would remove the need to split and possibly generate
-          fewer constraints, but this might result in drastically worse error messages. *)
+         We could do this in reverse, which would remove the need to split and possibly generate
+         fewer constraints, but this might result in drastically worse error messages. *)
       let ref_type, ref_expr = infer env ref_expr in
       let ref_value_type = split_ref_ty env loc ref_type in
 
@@ -1030,9 +1052,10 @@ and check : local_env -> ty -> expr -> Typed.expr =
        We could do this manually, but we still need this, since with typeclasses
        there might be actual subtypes for String! (e.g. `forall a. C a => a` where String implements C)
        
-       We could check these directly with subsume, but `defer_to_inference` will do this for us and also works for
+       We could check these directly with `subsumes`, but `defer_to_inference` will do this for us and also works for
        cases with parameters *)
     | (StringLit _ | NumLit _ | BoolLit _ | UnitLit _ | ListLit _ | TupleLit _), _ -> defer_to_inference ()
+    | StringInterpolation _, _ -> defer_to_inference ()
     | Subscript(loc, expr, field), expected_ty -> 
       let ext_field = fresh_unif_raw env in
       let record_ty = RecordUnif ([|field, expected_ty|], ext_field) in
@@ -1086,14 +1109,11 @@ and check : local_env -> ty -> expr -> Typed.expr =
     | Await (loc, expr), expected_ty ->
       let expr = check env (Promise expected_ty) expr in
       Await (loc, expr)
-    | Match (loc, scrut, body), expected_ty ->
-      (* TODO: Do exhaustiveness checking. *)
-      let scrut_ty, scrut = infer env scrut in
-      let body = body |> List.map begin fun (pat, expr) -> 
-        let env_trans, pat = check_pattern env true pat scrut_ty in
-        pat, check (env_trans env) expected_ty expr  
-      end in
-      Match(loc, scrut, body)
+    | Match (loc, scrutinee, branches), expected_ty ->
+      let scrutinee_type, scrutinee = infer env scrutinee in
+
+      let branches = check_match_patterns env expected_ty scrutinee_type branches in
+      Match(loc, scrutinee, branches)
     | Ascription (loc, expr, ty), expected_ty ->
       let expr = check env ty expr in
       subsumes env loc ty expected_ty;
@@ -1124,7 +1144,8 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let handlers = List.map check_handler handlers in
 
       Try(loc, try_expr, handlers)
-    (* Raise returns something of type forall a. a, so we can safely ignore the type it is checked against *)
+    (* Raise returns something of type forall a. a, so we can safely ignore the type it is checked against.
+       This also makes it possible to check a raise expression against a polytype without impredicativity. *)
     | Raise (loc, expr), _ ->
       let expr = check env Exception expr in
       Raise(loc, expr)
@@ -1143,6 +1164,15 @@ and check_list_comp : local_env -> list_comp_clause list -> local_env * Typed.li
       let expr = check env (List ty) expr in
       let env, clauses = check_list_comp (env_trans env) clauses in
       env, DrawClause(pattern, expr) :: clauses
+
+and check_interpolation_component env = function
+    | StringComponent (loc, str) -> StringComponent (loc, str)
+    | Interpolation (loc, exprs) -> 
+      let interpolation_type, exprs = infer_seq env exprs in
+
+      interpolatable_constraint env loc interpolation_type;
+
+      Interpolation (loc, exprs)
 
 and check_seq_expr : local_env -> [`Check | `Infer] -> expr -> (local_env -> local_env) * Typed.expr =
     fun env check_or_infer expr -> match expr with
@@ -1335,6 +1365,23 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
     let env_trans, expr  = check_seq_expr env `Check expr in
     let exprs = check_seq (env_trans env) loc expected_ty exprs in
     expr :: exprs
+
+and check_match_patterns env result_type scrutinee_type =
+    function
+    | [] -> []
+    | (pattern, expr) :: branches ->
+      let pattern_loc = get_pattern_loc pattern in
+      let env_trans, pattern = check_pattern env true pattern scrutinee_type in
+      let expr = check (env_trans env) result_type expr in
+
+      let scrutinee_type = match Pattern.check_variant_refutability pattern with
+        | None -> scrutinee_type
+        | Some (path, name) -> refine_variant env pattern_loc scrutinee_type path name
+      in
+
+      let rest = check_match_patterns env result_type scrutinee_type branches in
+      (pattern, expr) :: rest
+    
 
 let datacon_level : name -> local_env -> Typeref.level =
   fun constructor env ->
@@ -1554,16 +1601,27 @@ let solve_unify : loc -> local_env -> unify_state -> ty -> ty -> local_env -> un
       (* unif, unif *)
       | RecordUnif (fields1, (u1, name1)), RecordUnif (fields2, (u2, name2)) ->
         unify_rows (fun _ -> go) fields1 fields2 begin fun remaining1 remaining2 ->
-          let new_u, new_name = fresh_unif_raw_with env "µ" in
-          bind u1 name1 (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
-          bind u2 name2 (RecordUnif (Array.of_list remaining1, (new_u, new_name)))
+          if Typeref.equal u1 u2 then
+            (* TODO: Maybe this should have a more specific error message? *)
+            raise (TypeError (loc, MissingRecordFields (remaining1, remaining2, unify_context)))
+          else begin
+
+            let new_u, new_name = fresh_unif_raw_with env "µ" in
+            bind u1 name1 (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
+            bind u2 name2 (RecordUnif (Array.of_list remaining1, (new_u, new_name)))
+          end
         end
       | VariantUnif (fields1, (u1, name1)), VariantUnif (fields2, (u2, name2)) ->
         unify_rows go_variant fields1 fields2 begin fun remaining1 remaining2 ->
-          let new_u, new_name = fresh_unif_raw_with env "µ" in
+          if Typeref.equal u1 u2 then
+            (* TODO: Maybe this should have a more specific error message? *)
+            raise (TypeError (loc, MissingVariantConstructors (remaining1, remaining2, unify_context)))
+          else begin
+            let new_u, new_name = fresh_unif_raw_with env "µ" in
 
-          bind u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
-          bind u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
+            bind u1 name1 (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
+            bind u2 name2 (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
+          end
         end
       (* unif, skolem *)
       (* This is almost exactly like the (unif, closed) case, except that we need to carry the
@@ -1666,6 +1724,56 @@ let rec solve_program_arg : loc -> local_env -> unify_state -> ty -> local_env -
     | Some deferred_constraint_ref ->
       deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (ProgramArg (loc, ty, definition_env))
 
+let solve_refine_variant loc env unify_state ty path variant result_type definition_env =
+    let remove_variant constructors =
+      Array.of_list (List.remove_assoc variant (Array.to_list constructors))
+    in
+
+
+    let rec go path ty = 
+      let map_variant name index path constructors =
+        let mapped = Util.map_array_once (fun (variant, tys) -> 
+          if String.equal name variant then begin 
+            
+            let tys = Util.map_at index (go path) tys in
+            Some (variant, tys)
+          end else None
+        ) constructors in
+        begin match mapped with
+        | None -> panic __LOC__ ("Non-tuple at tuple path segment: " ^ Typed.pretty_type ty)
+        | Some mapped -> mapped
+        end
+      in  
+      match path, normalize_unif ty with
+      | [], VariantClosed constructors -> VariantClosed (remove_variant constructors)
+      | [], VariantUnif (constructors, ty) -> VariantUnif (remove_variant constructors, ty)
+      | [], VariantSkol (constructors, ty) -> VariantSkol (remove_variant constructors, ty)
+      | [], VariantVar (constructors, ty) -> VariantVar (remove_variant constructors, ty)
+      | [], _ -> panic __LOC__ ("Non-variant type at the end of a pattern path: " ^ Typed.pretty_type ty)
+      | (Pattern.List :: path, List ty) -> List (go path ty)
+      | (List :: _, ty) -> panic __LOC__ ("Non-list at list path segment: " ^ Typed.pretty_type ty)
+      | (Tuple i :: path, Tuple tys) -> go path tys.(i)
+      | (Tuple _ :: _, ty) -> panic __LOC__ ("Non-tuple at tuple path segment: " ^ Typed.pretty_type ty)
+      | (Variant (name, i) :: path, VariantClosed constructors) -> VariantClosed (map_variant name i path constructors)
+      | (Variant (name, i) :: path, VariantUnif (constructors, ty)) -> VariantUnif (map_variant name i path constructors, ty)
+      | (Variant (name, i) :: path, VariantSkol (constructors, ty)) -> VariantSkol (map_variant name i path constructors, ty)
+      | (Variant (name, i) :: path, VariantVar (constructors, ty)) -> VariantVar (map_variant name i path constructors, ty)
+      | (Variant _ :: path, ty) -> panic __LOC__ ("Non-variant at variant path segment: " ^ Typed.pretty_type ty)
+    in
+    solve_unify loc env unify_state result_type (go path ty) definition_env
+
+let solve_interpolatable loc env state ty definition_env =
+  match normalize_unif ty with
+  | String | Number | Bool -> ()
+  | ty ->
+    match state.deferred_constraints with
+    | None ->
+      (* Fall back to matching against strings. This might be a little
+       brittle, but we're going to replace this with type classes in the future anyway. *)
+      solve_unify loc env state ty String definition_env
+    | Some deferred_constraint_ref ->
+      deferred_constraint_ref := Difflist.snoc !deferred_constraint_ref (Interpolatable (loc, ty, definition_env))
+
 let solve_constraints : local_env -> ty_constraint list -> unit =
   fun env constraints ->
     let go unify_state constraints = 
@@ -1676,6 +1784,10 @@ let solve_constraints : local_env -> ty_constraint list -> unit =
           solve_unwrap loc env unify_state ty1 ty2 definition_env
         | ProgramArg (loc, ty, definition_env) ->
           solve_program_arg loc env unify_state ty definition_env
+        | RefineVariant (loc, ty, path, variant, result_type, definition_env) ->
+          solve_refine_variant loc env unify_state ty path variant result_type definition_env
+        | Interpolatable (loc, ty, definition_env) ->
+          solve_interpolatable loc env unify_state ty definition_env
         end constraints;
     in
 

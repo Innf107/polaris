@@ -13,6 +13,8 @@ type text_style = {
 
   error : string -> string;
   warning : string -> string;
+
+  note : string -> string;
 }
 
 val make_text_style : enable_color:bool -> text_style

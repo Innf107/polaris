@@ -14,3 +14,4 @@ val handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a
 
 val pretty_error : Errormessage.text_style -> (Loc.t option -> string -> 'a) -> t -> 'a
 
+val as_exn : ('a, t) result -> 'a

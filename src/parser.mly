@@ -24,6 +24,11 @@ type expr_or_fun_def_ext =
 %token <float>  FLOAT
 %token <string> PROGCALL
 %token <string> ENVVAR
+%token INTERP_STRING_START
+%token <string> STRING_COMPONENT
+%token INTERPOLATION_START
+%token INTERPOLATION_END
+%token INTERP_STRING_END
 %token BANG "!"
 %token LET
 %token TRUE FALSE
@@ -215,8 +220,14 @@ expr7:
     | expr7 "!" { Unwrap(loc $startpos $endpos, $1) }
     | expr_leaf { $1 }
 
+string_component:
+    | STRING_COMPONENT { StringComponent(loc $startpos $endpos, $1) }
+    | INTERPOLATION_START sep_trailing1(SEMI+, expr) INTERPOLATION_END { Interpolation(loc $startpos $endpos, $2) }
+
 expr_leaf:
     | STRING { StringLit(loc $startpos $endpos, $1) }
+    | INTERP_STRING_START string_component* INTERP_STRING_END { StringInterpolation(loc $startpos $endpos, $2) }
+
     | INT { NumLit(loc $startpos $endpos, float_of_int $1) }
     | FLOAT { NumLit(loc $startpos $endpos, $1) }
     | "(" ")" { UnitLit(loc $startpos $endpos) }
@@ -381,7 +392,7 @@ ty2:
     | "<" sep_trailing(COMMA, variant_entry) "|" IDENT ">"          { VariantVar(Array.of_list $2, $4) }
 
 record_entry:
-    IDENT ":" ty SEMI* { ($1, $3) }
+    SEMI* IDENT ":" ty SEMI* { ($2, $4) }
 
 variant_entry:
     | CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")" { ($1, $3) }

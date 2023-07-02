@@ -1,0 +1,7 @@
+test/categories/progcalls/nonexistent.pls:2:1: ERROR:
+Exception: Executable not found: doesnotexist
+    Caused by 'ExecutableNotFound'
+
+  | 
+2 | !doesnotexist
+  | ^^^^^^^^^^^^^

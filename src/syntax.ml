@@ -197,6 +197,8 @@ module Template = struct
     | UnitLit of loc                        (* () *)
     | ListLit of loc * expr list            (* [e, .., e] *)
     | TupleLit of loc * expr list           (* (e, .., e) *)
+
+    | StringInterpolation of loc * interpolation_component list
     (* Records *)
     | RecordLit of loc * (string * expr) list  (* #{x₁: e₁, .., xₙ: eₙ}*)
     | Subscript of SubscriptExt.t * expr * string      (* e.x *)
@@ -248,6 +250,10 @@ module Template = struct
   and list_comp_clause =
     | DrawClause of pattern * expr (* p <- e *)
     | FilterClause of expr            (* e *)
+
+  and interpolation_component =
+    | StringComponent of loc * string
+    | Interpolation of loc * expr list
 
   module MExpr = struct
       type t = module_expr
@@ -393,6 +399,14 @@ module Template = struct
     | ListLit (_, exprs) -> "[" ^ String.concat ", " (List.map pretty exprs) ^ "]"
     | TupleLit (_, exprs) -> "(" ^ String.concat ", " (List.map pretty exprs) ^ ")"
     | RecordLit (_, kvs) -> "{" ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
+
+    | StringInterpolation (_, components) ->
+      let pretty_component = function
+      | StringComponent (_, str) -> str
+      | Interpolation (_, exprs) -> "${" ^ String.concat "; " (List.map pretty exprs) ^ "}"
+      in
+      "\"" ^ String.concat "" (List.map pretty_component components) ^ "\""
+
     | Subscript (_, expr, key) -> "(" ^ pretty expr ^ ")." ^ key
     | ModSubscript (_, mod_name, key_name) -> pretty_name mod_name ^ "." ^ pretty_name key_name
     | RecordUpdate (_, expr, kvs) -> "#{" ^ pretty expr ^ " with " ^ String.concat ", " (List.map (fun (k, e) -> k ^ " = " ^ pretty e) kvs) ^ "}"
@@ -483,6 +497,7 @@ module Template = struct
     | ModSubscript (ext, _, _) -> ModSubscriptExt.loc ext
     | LetRecSeq(ext, _, _, _, _) -> LetRecExt.loc ext
     | ExceptionConstructor(loc, _) | VariantConstructor(loc, _, _) | ModSubscriptDataCon(_, loc, _, _) | App (loc, _, _) | Lambda (loc, _, _) | StringLit (loc, _) | NumLit (loc, _)
+    | StringInterpolation(loc, _)
     | BoolLit (loc, _) | UnitLit loc | ListLit(loc, _) | TupleLit(loc, _) | RecordLit(loc, _) 
     | RecordUpdate (loc, _, _) | RecordExtension (loc, _, _) | DynLookup(loc, _, _) 
     | BinOp(loc, _, _, _) | Not(loc, _)
@@ -596,6 +611,16 @@ module Template = struct
                 (field, expr), state) state fields 
             in
             RecordLit(loc, fields), state
+          | StringInterpolation (loc, components) ->
+            let components, state = traverse_list
+              (fun state component -> match component with
+                | StringComponent _ -> component, state
+                | Interpolation (loc, exprs) -> 
+                  let exprs, state = traverse_list self#traverse_expr state exprs in
+                  Interpolation (loc, exprs), state
+                ) state components
+            in
+            StringInterpolation (loc, components), state
           | Subscript(loc, expr, field) ->
             let expr, state = self#traverse_expr state expr in
             Subscript(loc, expr, field), state

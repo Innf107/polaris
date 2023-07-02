@@ -2,7 +2,7 @@
 options {
     "-s" "--sync" as sync: "Execute tests synchronously instead of in parallel"
     "-e" "--exclude" (*) as exclude: "Exclude category from tests"
-    "--use-dune" as useDune: "Run tests using 'dune exec polaris' instead of 'polaris'"
+    "--use-polaris" as usePolaris: "Run tests using 'polaris' instead of 'dune exec -- polaris'"
 }
 
 module List = import("../lib/list.pls")
@@ -38,7 +38,7 @@ let files = lines(!find categories "-name" "*.pls")
 
 let errors = ref 0
 
-if useDune then {
+if not usePolaris then {
     let _ = !dune "build"
 }
 else {}
@@ -48,12 +48,11 @@ for(files, \file -> {
     let args = split("|", silent(\ -> !grep "-Po" "(?<=# ARGS: ).+" file));
 
     let result = 
-        if useDune then 
+        if not usePolaris then 
             # dune produces .exe files, even on linux
             silent (\ -> !_build/default/bin/main.exe file args)
         else
             silent (\ -> !polaris file args)
-
 
     if doesFileExist (stripExtension(file) ~ ".error") then {
         # This is an 'error' test, meaning the program is meant to fail

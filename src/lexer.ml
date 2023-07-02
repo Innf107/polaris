@@ -14,7 +14,12 @@ exception LexError of lex_error
    
    'Ignored' is used for map literals, which are also closed with '}', but should not open an indentation block
  *)
-type indentation_state = Opening | Found of int | Ignored
+type indentation_state = 
+  | Opening 
+  | Found of int 
+  | OpeningInterpolation of bool
+  | FoundInterpolation of bool * int
+  | Ignored
 
 type lex_kind = 
   | Default 
@@ -24,8 +29,8 @@ type lex_kind =
   | InIdent of string
   | InConstructor of string
   | InOp of string
-  | InString of string
-  | InSingleString of string
+  | InString of { str : string; is_single : bool; is_interp : bool }
+  | StringDollar of { str : string; is_single : bool; is_interp : bool }
   | InBangStart
   | InProgCall of string
   | InEnv of string
@@ -83,20 +88,19 @@ let get_loc (lexbuf : lexbuf) : Syntax.loc =
 let open_block state = 
   state.indentation_level <- Opening :: state.indentation_level
 
-let open_ignored_block state =
-  state.indentation_level <- Ignored :: state.indentation_level
-
-let close_block state =
-  match state.indentation_level with
-  | [] | [_] -> raise (Panic "Lexer.close_block: More blocks closed than opened")
-  | _ :: lvls -> state.indentation_level <- lvls
+let open_interpolation_block is_single state =
+  state.indentation_level <- OpeningInterpolation is_single :: state.indentation_level
 
 let insert_semi (continue : unit -> Parser.token) state indentation =
   match state.indentation_level with
   | (Opening :: lvls) ->
     state.indentation_level <- Found indentation :: lvls;
     continue ()
-  | (Found block_indentation :: lvls) ->
+  | (OpeningInterpolation is_single :: lvls) ->
+    state.indentation_level <- FoundInterpolation (is_single, indentation) :: lvls;
+    continue ()
+  | (Found block_indentation :: lvls)
+  | (FoundInterpolation (_, block_indentation) :: lvls) ->
     if indentation <= block_indentation then
       SEMI
     else
@@ -151,16 +155,24 @@ let is_paren = function
   | _ -> false
 
 let as_paren state = let open Parser in function
-  | '(' -> LPAREN
-  | ')' -> RPAREN 
-  | '[' -> LBRACKET
-  | ']' -> RBRACKET 
+  | '(' -> `Regular LPAREN
+  | ')' -> `Regular RPAREN 
+  | '[' -> `Regular LBRACKET
+  | ']' -> `Regular RBRACKET 
   | '{' -> 
     open_block state;
-    LBRACE
+    `Regular LBRACE
   | '}' -> 
-    close_block state;
-    RBRACE
+    begin match state.indentation_level with
+    | [] | [_] -> raise (Panic "Lexer.close_block: More blocks closed than opened")
+    | OpeningInterpolation is_single :: lvls
+    | FoundInterpolation (is_single, _) :: lvls -> 
+      state.indentation_level <- lvls;
+      `ClosedInterpolation is_single
+    | _ :: lvls -> 
+      state.indentation_level <- lvls;
+      `Regular RBRACE
+    end
   | c -> raise (Panic ("Lexer.as_paren: Invalid paren: '" ^ string_of_char c ^ "'"))
 
 let ident_token = let open Parser in function
@@ -239,10 +251,10 @@ let token (state : lex_state) (lexbuf : lexbuf): Parser.token =
         skip_location lexbuf;
         continue ()
       | Some('"') ->
-        set_state (InString "") state lexbuf;
+        set_state (InString { str = ""; is_single = false; is_interp = false }) state lexbuf;
         continue ()
       | Some('\'') ->
-        set_state (InSingleString "") state lexbuf;
+        set_state (InString { str = ""; is_single = true; is_interp = false }) state lexbuf;
         continue ()
       | Some('`') ->
         Parser.BACKTICK
@@ -268,7 +280,12 @@ let token (state : lex_state) (lexbuf : lexbuf): Parser.token =
         set_state (InOp (string_of_char c)) state lexbuf;
         continue ()
       | Some(c) when is_paren c ->
-        as_paren state c
+        begin match as_paren state c with
+        | `Regular paren -> paren
+        | `ClosedInterpolation is_single ->
+          set_state (InString { str = ""; is_single; is_interp = true }) state lexbuf;
+          INTERPOLATION_END
+        end 
       | None -> Parser.EOF
       | Some(c) -> raise (LexError (InvalidChar (get_loc lexbuf, c)))
       end
@@ -334,26 +351,59 @@ let token (state : lex_state) (lexbuf : lexbuf): Parser.token =
         set_state Default state lexbuf;
         CONSTRUCTOR ident
       end
-    | InString str -> begin match next_char lexbuf with
-      | Some('"') ->
-        set_state (Default) state lexbuf;
-        STRING str
+    | InString { str; is_single; is_interp } -> begin match next_char lexbuf with
+      | Some('"') when not is_single ->
+        if is_interp then begin 
+          match str with
+          | "" -> 
+            set_state Default state lexbuf;
+            INTERP_STRING_END
+          | _ ->
+            set_state (Defer [INTERP_STRING_END]) state lexbuf;
+            STRING_COMPONENT str
+        end else begin
+          set_state Default state lexbuf;
+          STRING str;
+        end
+      | Some('\'') when is_single ->
+        if is_interp then begin 
+          match str with
+          | "" -> 
+            set_state Default state lexbuf;
+            INTERP_STRING_END
+          | _ ->
+            set_state (Defer [INTERP_STRING_END]) state lexbuf;
+            STRING_COMPONENT str
+        end else begin
+          set_state Default state lexbuf;
+          STRING str;
+        end
+      | Some '$' ->
+        (* This *might* be string interpolation but we don't know for sure yet *)
+        set_state (StringDollar { str; is_single; is_interp }) state lexbuf;
+        continue ()  
       | Some(c) ->
-        set_state (InString (str ^ string_of_char c)) state lexbuf;
+        (* TODO: This is quadratic wtf *)
+        set_state (InString { str = str ^ string_of_char c; is_single; is_interp }) state lexbuf;
         continue ()
       | None ->
         raise (LexError UnterminatedString)
       end
-    | InSingleString str -> 
-      begin match next_char lexbuf with
-      | Some('\'') ->
-        set_state (Default) state lexbuf;
-        STRING str
-      | Some(c) ->
-        set_state (InSingleString (str ^ string_of_char c)) state lexbuf;
+    | StringDollar { str; is_single; is_interp } -> begin match peek_char lexbuf with
+      | Some('{') ->
+        let _ = next_char lexbuf in
+        open_interpolation_block is_single state;
+
+        let next_state = match str with
+        | "" -> Defer [INTERPOLATION_START]
+        | _ -> Defer [STRING_COMPONENT str; INTERPOLATION_START]
+        in
+        set_state next_state state lexbuf;
+        INTERP_STRING_START
+      (* It's not string interpolation so we defer to regular string handling *)
+      | _ -> 
+        set_state (InString { str = (str ^ "$"); is_single; is_interp }) state lexbuf;
         continue ()
-      | None ->
-        raise (LexError UnterminatedString)
       end
     | InBangStart -> begin match peek_char lexbuf with
       | Some('=') ->

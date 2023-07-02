@@ -436,6 +436,14 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
     | TupleLit (loc, exprs) -> TupleLit (loc, List.map (rename_expr exports scope) exprs)
     | RecordLit (loc, kvs) -> RecordLit (loc, List.map (fun (k, e) -> (k, rename_expr exports scope e)) kvs)
 
+    | StringInterpolation (loc, components) ->
+        let rename_component = function
+            | Parsed.StringComponent(loc, str) -> Renamed.StringComponent(loc, str)
+            | Interpolation (loc, exprs) -> Interpolation(loc, rename_seq exports scope exprs)
+        in
+        let components = List.map rename_component components in
+        StringInterpolation(loc, components)
+
     (* TODO: What about nested module subscripts? *)
     | ModSubscript (loc, mod_name, key) ->
         let mod_name, module_export_scope = RenameScope.lookup_mod_var scope loc mod_name in

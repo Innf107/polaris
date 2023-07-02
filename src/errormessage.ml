@@ -14,6 +14,8 @@ type text_style = {
 
   error : string -> string;
   warning : string -> string;
+
+  note : string -> string
 }
    
 let make_text_style ~enable_color =
@@ -34,7 +36,9 @@ let make_text_style ~enable_color =
        sequence for red and then override that with our fancy 24-bit full red, if available. *)
     error = (fun message -> "\x1b[20m\x1b[31m\x1b[38;2;255;0;0m" ^ message ^ "\x1b[0m");
 
-    warning = (fun message -> "\x1b[35m\x1b[38;2;192;0;192m" ^ message ^ "\x1b[0m")
+    warning = (fun message -> "\x1b[35m\x1b[38;2;192;0;192m" ^ message ^ "\x1b[0m");
+
+    note = (fun message -> "\x1b[38;5;8m" ^ message ^ "\x1b[0m");
   } else {
     custom = (fun ~color message -> message);
     bold = Fun.id;
@@ -48,7 +52,9 @@ let make_text_style ~enable_color =
     emphasis = Fun.id;
 
     error = Fun.id;
-    warning = Fun.id
+    warning = Fun.id;
+
+    note = Fun.id;
   }
    
 

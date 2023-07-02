@@ -205,3 +205,83 @@ let check_exhaustiveness_and_close_variants ~close_variant patterns =
       
     in
   process_matrix matrix
+
+
+type path_segment =
+    | List
+    | Tuple of int
+    | Variant of string * int
+
+type path = path_segment list
+
+let check_variant_refutability : Typed.pattern -> (path * string) option =
+  let rec try_all f = function
+    | [] -> `Irrefutable
+    | (x :: xs) ->
+      match f x with
+      | `Irrefutable -> try_all f xs
+      | `Refutable -> `Refutable
+      | `Variant _ as variant ->
+        match try_all f xs with
+        | `Refutable -> `Refutable
+        | `Irrefutable -> variant
+        (* If more than one variant pattern is refutable, we need to treat the entire
+           pattern as irrefutable *)
+        | `Variant _ -> `Refutable
+  in  
+
+  (* TODO: Closed variants with a single constructor are also irrefutable, but we don't necessarily *know* which ones should 
+   be closed yet. This *should* at least work for patterns with explicit type signatures for now though *)
+  let rec go path = function
+    (* The interesting bit *)
+    | Typed.VariantPat ((_, variant_ty), name, patterns) -> 
+      let inner_refutability = 
+        try_all 
+          (fun (i, pattern) -> go (Variant (name, i) :: path) pattern)
+          (List.mapi (fun i pattern -> (i, pattern)) patterns)
+      in
+      begin match inner_refutability, variant_ty with
+      (* If the type of the outer pattern is closed  and only contains single variant constructor,
+         we can treat it as irrefutable and focus on the inner pattern instead.
+         Note that this may not always fire, since we don't necessarily know if the variant is closed at this point *)
+      | (`Variant _, VariantClosed [| _ |]) -> inner_refutability
+      | (`Irrefutable, _) -> `Variant (name, path)
+      | ((`Refutable | `Variant _), _) -> `Refutable
+      end
+    | VarPat _ -> `Irrefutable
+    | ConsPat _
+    | ListPat _
+    | NumPat _ 
+    | StringPat _
+    | ExceptionDataPat _ -> `Refutable
+    | OrPat (_, left, right) ->
+      begin match go path left, go path right with
+      (* If the first branch is irrefutable, the entire or-pattern is irrefutable.
+         TODO: This should probably emit a warning since the second branch will never match *)
+      | (`Irrefutable, _) -> `Irrefutable
+      (* This is the only case that is technically fine. It's pretty weird though. *)
+      | (`Variant _ as variant, `Irrefutable) -> variant
+      (* TODO: Technically, (`Variant _, `Variant _) could be fine as well if the paths and names are equivalent right? *)
+      | (`Refutable, _) | (`Variant _, _) -> `Refutable
+      end
+    | AsPat (_, inner, _) -> go path inner
+    | TuplePat (_, patterns) -> 
+      try_all 
+        (fun (index, pattern) -> go (Tuple index :: path) pattern) 
+        (List.mapi (fun index pattern -> (index, pattern)) patterns)
+    | TypePat (_, inner, _) -> go path inner
+    | DataPat (_, _, inner) ->
+      (* We cannot refine inside a data pattern, so we need to treat returned `Variant refutabilities
+         as irrefutable.
+         TODO: It might be possible to refine data patterns in the next pattern *)
+      begin match go path inner with
+      (* TODO: This should be fine if the inner Variant pattern is itself irrefutable *)
+      | `Variant _ -> `Refutable
+      | x -> x
+      end
+  in
+  fun pattern -> 
+    match go [] pattern with
+    | `Refutable -> None
+    | `Irrefutable -> None
+    | `Variant (name, path) -> Some (path, name)

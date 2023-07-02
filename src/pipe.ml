@@ -1,89 +1,51 @@
-open Unix
+open Eio_unix
 
-let wait_to_status pid = 
-  let _, status = waitpid [] pid in
-  match status with
-  (* TODO: This is probably not how WSIGNALED and WSTOPPED should be treated *)
-  | WEXITED status | WSIGNALED status | WSTOPPED status -> status
+let wait_to_status process =
+  match Eio.Process.await process with
+  | `Exited s | `Signaled s -> s
 
-let rec compose_destructive (env : string array option) = function
-| [] -> failwith "unable to compose empty arguments"
-| [(prog, prog_args)] ->
-  begin match env with
-  | None -> execvp prog (Array.of_list (prog::prog_args))
-  | Some env -> execvpe prog (Array.of_list (prog::prog_args)) env
-  end
-| ((prog, prog_args) :: progs) -> 
-  let (pipe_read, pipe_write) = pipe () in
-  match fork () with
-  | 0 ->
-    dup2 pipe_write stdout;
-    close pipe_read;
-    begin match env with
-    | None -> execvp prog (Array.of_list (prog :: prog_args))
-    | Some env -> execvpe prog (Array.of_list (prog :: prog_args)) env
-    end
-  | _ ->
-    dup2 pipe_read stdin;
-    close pipe_write;
-    compose_destructive env progs
+let program_or_local program =
+  if String.contains program '/' then
+    "./" ^ program
+  else 
+    program
 
-let compose (env : string array option) progs =
-  match fork () with
-  | 0 ->
-    compose_destructive env progs
-  | pid ->
-    pid
+let rec compose_pipe ~mgr ~sw ~env (stdin : #Eio.Flow.source option) (stdout : #Eio.Flow.sink option) = function
+    | [] -> Util.panic __LOC__ "compose_pipe: called on an empty program list"
+    | [(program, arguments)] ->
+      Eio.Process.spawn ~sw mgr ?stdin ?stdout ~env (program_or_local program :: arguments)
+    | (program, arguments) :: rest ->
+      let (pipe_read, pipe_write) = Eio.Process.pipe ~sw mgr in
+
+      let pipe_read : #Eio.Flow.source = pipe_read in
+
+      let _ = Eio.Process.spawn ~sw mgr ?stdin ~stdout:pipe_write ~env (program_or_local program :: arguments) in
+      compose_pipe ~mgr ~sw ~env (Some (Obj.magic (pipe_read :> Eio.Flow.source))) stdout rest
+
+let compose ~sw ~mgr ~env progs : Eio.Process.t = compose_pipe ~sw ~mgr ~env None None progs
+
+let compose_stdin ~sw ~mgr ~env progs source =
+  compose_pipe ~sw ~mgr ~env (Some source) None progs
 
 
-let compose_in (env : string array option) progs : in_channel * int =
-  let pipe_read, pipe_write = pipe () in
-  match fork () with
-  | 0 ->
-    dup2 pipe_write stdout;
-    close pipe_read;
-    compose_destructive env progs
-  | pid ->
-    close pipe_write;
-    in_channel_of_descr pipe_read, pid
+let compose_stdout ~sw ~mgr ~env progs =
+  let pipe_read, pipe_write = Eio.Process.pipe ~sw mgr in
 
-let compose_out (env : string array option) progs : out_channel * int =
-  let pipe_read, pipe_write = pipe () in
-  match fork () with
-  | 0 ->
-    dup2 pipe_read stdin;
-    close pipe_write;
-    compose_destructive env progs
-  | pid ->
-    close pipe_read;
-    out_channel_of_descr pipe_write, pid
+  let process = compose_pipe ~sw ~mgr ~env None (Some pipe_write) progs in
+  Eio.Flow.close pipe_write;
+  let result = Eio.Buf_read.parse_exn Eio.Buf_read.take_all ~max_size:max_int pipe_read in
+  Eio.Flow.close pipe_read;
+  let status = wait_to_status process in
+  (result, status)
 
-let compose_out_with (env : string array option) progs f : int =
-  let out_chan, pid = compose_out env progs in
-  f out_chan;
-  Out_channel.close out_chan;
-  pid
 
-let compose_in_out (env : string array option) progs f =
-  let in_pipe_read, in_pipe_write = pipe () in
-  let out_pipe_read, out_pipe_write = pipe () in
-  match fork () with
-  | 0 ->
-    dup2 out_pipe_read stdin;
-    dup2 in_pipe_write stdout;
-    close out_pipe_write;
-    close in_pipe_read;
-    compose_destructive env progs
-  | pid ->
-    close out_pipe_read;
-    close in_pipe_write;
-    match fork () with
-    | 0 ->
-      close in_pipe_read;
-      let out_chan = out_channel_of_descr out_pipe_write in
-      f out_chan;
-      Out_channel.close out_chan;
-      exit 0
-    | pid ->
-      close out_pipe_write;
-      in_channel_of_descr in_pipe_read, pid
+
+let compose_in_out ~sw ~mgr ~env progs source =
+  let pipe_read, pipe_write = Eio.Process.pipe ~sw mgr in
+
+  let process = compose_pipe ~sw ~mgr ~env (Some source) (Some pipe_write) progs in
+  Eio.Flow.close pipe_write;
+  let result = Eio.Buf_read.parse_exn Eio.Buf_read.take_all ~max_size:max_int pipe_read in
+  Eio.Flow.close pipe_read;
+  let status = wait_to_status process in
+  (result, status)

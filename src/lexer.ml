@@ -503,6 +503,7 @@ let token (state : lex_state) (lexbuf : lexbuf) : Parser.token =
                 | '\'' -> "'"
                 | '"' -> "\""
                 | '$' -> "$"
+                | '\\' -> "\\"
                 | _ ->
                     raise
                       (LexError

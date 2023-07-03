@@ -392,8 +392,9 @@ let raise_command_failure_exception env loc program program_args exit_code
                   (List.map
                      (fun arg -> Value.pretty (StringV arg))
                      program_args)
-              ^ if stdout <> "" then "\n\nOutput: " ^ Util.abbreviate stdout else ""
-              ) )))
+              ^
+              if stdout <> "" then "\n\nOutput: " ^ Util.abbreviate stdout
+              else "") )))
 
 (* This returns a runtime module *as well as a transformation for the ambient environment*.
    This is necessary since exceptions are flattened by the renamer so this needs to know about

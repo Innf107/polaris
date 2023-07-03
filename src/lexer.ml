@@ -402,7 +402,7 @@ let token (state : lex_state) (lexbuf : lexbuf) : Parser.token =
       end
     | InConstructor ident -> begin
         match peek_char lexbuf with
-        | Some c when is_ident c ->
+        | Some c when is_constructor c ->
             let _ = next_char lexbuf in
             set_state (InConstructor (ident ^ string_of_char c)) state lexbuf;
             continue ()
@@ -504,7 +504,10 @@ let token (state : lex_state) (lexbuf : lexbuf) : Parser.token =
                 | '"' -> "\""
                 | '$' -> "$"
                 | _ ->
-                    raise (LexError (InvalidStringEscape (get_loc lexbuf, string_of_char char)))
+                    raise
+                      (LexError
+                         (InvalidStringEscape
+                            (get_loc lexbuf, string_of_char char)))
               end
             in
             Buffer.add_string str escaped;
@@ -550,7 +553,9 @@ let token (state : lex_state) (lexbuf : lexbuf) : Parser.token =
             let uchar =
               try Uchar.of_int (parse_hex escape) with
               | Invalid_argument _ ->
-                  raise_notrace (LexError (InvalidStringEscape (get_loc lexbuf, "x" ^ escape)))
+                  raise_notrace
+                    (LexError
+                       (InvalidStringEscape (get_loc lexbuf, "x" ^ escape)))
             in
             Buffer.add_utf_8_uchar str uchar;
             set_state (InString { str; is_single; is_interp }) state lexbuf;

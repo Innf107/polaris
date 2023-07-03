@@ -36,7 +36,7 @@ let on_initialize =
     "capabilities": {
       "hoverProvider": true,
       "textDocumentSync": {
-        "openClose": 1,
+        "openClose": true,
         "change": 1
       }
     }, 

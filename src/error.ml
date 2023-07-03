@@ -189,6 +189,9 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
           print_fun (Some loc)
             ("Unexpected character "
             ^ text_style.identifier (Base.String.of_char char))
+      | InvalidStringEscape (loc, str) ->
+        print_fun (Some loc)
+          ("Invalid string escape code: " ^ text_style.emphasis ("\\" ^ str))
     end
   | TypeError (loc, err) ->
       print_fun (Some loc)

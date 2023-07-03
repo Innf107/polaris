@@ -2,6 +2,7 @@ type lex_error =
   | InvalidOperator of Syntax.loc * string
   | InvalidChar of Syntax.loc * char
   | UnterminatedString
+  | InvalidStringEscape of Syntax.loc * string
 
 exception LexError of lex_error
 

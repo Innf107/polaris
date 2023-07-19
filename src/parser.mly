@@ -220,7 +220,7 @@ expr7:
 
 string_component:
     | STRING_COMPONENT { StringComponent(loc $startpos $endpos, $1) }
-    | INTERPOLATION_START sep_trailing1(SEMI+, expr) INTERPOLATION_END { Interpolation(loc $startpos $endpos, $2) }
+    | INTERP_STRING_START? INTERPOLATION_START sep_trailing1(SEMI+, expr) INTERPOLATION_END { Interpolation(loc $startpos $endpos, $3) }
 
 expr_leaf:
     | STRING { StringLit(loc $startpos $endpos, $1) }

@@ -15,8 +15,8 @@ let extract_import_paths =
 
 let build_export_map header exprs rename_scope global_env =
   let export_entry = function
-    | Typed.ExportVal (_, name) ->
-        let name_entry = (Name.original_name name, name) in
+    | Typed.ExportVal (loc, name) ->
+        let name_entry = (Name.original_name name, (name, loc)) in
         let ty_entry =
           match NameMap.find_opt name Types.(global_env.var_types) with
           | Some ty -> (name, ty)

@@ -786,11 +786,11 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
   trace_tc
     (lazy (level_prefix env ^ "inferring expression '" ^ pretty expr ^ "'"));
   match expr with
-  | Var (loc, x) -> begin
+  | Var ((loc, definition_loc), x) -> begin
       match NameMap.find_opt x env.local_types with
       | Some ty ->
           let instantiated_type = instantiate env ty in
-          (instantiated_type, Var ((loc, ty), x))
+          (instantiated_type, Var (((loc, ty), definition_loc), x))
       | None ->
           panic __LOC__
             ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")

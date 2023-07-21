@@ -510,7 +510,7 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
 and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
   let open Typed in
   match expr with
-  | Var ((loc, _ty), x) ->
+  | Var (((loc, _ty), _), x) ->
       if x.index = Name.primop_index then PrimOpV x.name
       else lookup_var env loc x
   | DataConstructor (loc, name) -> PartialDataConV name

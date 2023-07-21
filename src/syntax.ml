@@ -163,7 +163,7 @@ module Template = struct
     | VariantPat of VariantPatExt.t * string * pattern list
 
   type module_exports = {
-    exported_variables : name StringMap.t;
+    exported_variables : (name * loc) StringMap.t;
     exported_variable_types : ty NameMap.t;
     exported_ty_constructors : (name * int * type_constructor_sort) StringMap.t;
     exported_data_definitions : (name list * ty) NameMap.t;
@@ -1324,6 +1324,18 @@ module FullTypeDefinition = MakeTy (struct
   type mod_subscript_tycon_ext = void
 end)
 
+module type Ext = sig
+  type t
+
+  val loc : t -> loc
+
+  val traverse_ty :
+    'state ->
+    ('state -> FullTypeDefinition.ty -> FullTypeDefinition.ty * 'state) ->
+    t ->
+    t * 'state
+end
+
 module LocOnly = struct
   type t = loc
 
@@ -1359,6 +1371,16 @@ module WithType = struct
   let traverse_ty state f (loc, ty) =
     let ty, state = f state ty in
     ((loc, ty), state)
+end
+
+module WithDefinitionLoc (M : Ext) = struct
+  type t = M.t * loc
+
+  let loc (t, _) = M.loc t
+
+  let traverse_ty state f (t, definition_loc) =
+    let t, state = M.traverse_ty state f t in
+    ((t, definition_loc), state)
 end
 
 module SubLocationWithType = struct
@@ -1408,7 +1430,7 @@ module Typed = Template (struct
 
   type mod_subscript_tycon_ext = void
 
-  module VarExt = WithType
+  module VarExt = WithDefinitionLoc(WithType)
   module VarPatExt = WithType
   module VariantPatExt = WithType
   module DataConExt = WithType
@@ -1442,7 +1464,7 @@ module Renamed = Template (struct
 
   type mod_subscript_tycon_ext = void
 
-  module VarExt = LocOnly
+  module VarExt = WithDefinitionLoc(LocOnly)
   module VarPatExt = LocOnly
   module VariantPatExt = LocOnly
   module DataConExt = LocOnly

@@ -12,6 +12,12 @@ type range = {
 
 type document_uri = string [@@deriving yojson]
 
+type location = {
+  uri : document_uri;
+  range : range;
+}
+[@@deriving yojson]
+
 type text_document_item = {
   uri : document_uri;
   languageId : string;
@@ -39,6 +45,14 @@ type hover_params = {
   textDocument : text_document_identifier;
   position : position;
   workDoneToken : progress_token option; [@yojson.option]
+}
+[@@deriving yojson]
+
+type definition_params = {
+  textDocument : text_document_identifier;
+  position : position;
+  workDoneToken : progress_token option; [@yojson.option]
+  partialResultToken : progress_token option; [@yojson.option]
 }
 [@@deriving yojson]
 
@@ -70,12 +84,15 @@ type client_notification =
 type client_request =
   | Initialize (* TODO: Missing initialize_params *)
   | Hover of hover_params
+  | Definition of definition_params
 
 let parse_client_request : string -> Yojson.Safe.t -> client_request option =
  fun req_method json ->
   match req_method with
   | "initialize" -> Some Initialize
   | "textDocument/hover" -> Some (Hover (hover_params_of_yojson json))
+  | "textDocument/definition" ->
+      Some (Definition (definition_params_of_yojson json))
   | _ -> None
 
 let parse_client_notification :

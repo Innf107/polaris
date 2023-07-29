@@ -13,6 +13,7 @@ type name = {
 type type_constructor_sort =
   | DataConSort
   | TypeAliasSort
+  | ClassSort
 
 type data_constructor_sort =
   | NewtypeConSort
@@ -55,7 +56,8 @@ struct
   type ty =
     | Forall of Ext.name * ty
     | Fun of ty list * ty
-    | Constraint of class_constraint * ty
+    (* This *doesn't* validate kinds yet *)
+    | Constraint of ty * ty
     | TyVar of Ext.name
     | TyConstructor of Ext.name * ty list
     (* Type aliases are kept around as long as possible to improve error messages, but we need to differentiate
@@ -355,10 +357,8 @@ module Template = struct
         "("
         ^ String.concat ", " (List.map pretty_type args)
         ^ ") -> " ^ pretty_type res
-    | Constraint ({ class_name; args }, ty) ->
-        pretty_name class_name ^ "("
-        ^ String.concat ", " (List.map pretty_type args)
-        ^ ") => " ^ pretty_type ty
+    | Constraint (constraint_, ty) ->
+        "(" ^ pretty_type constraint_ ^ ") => " ^ pretty_type ty
     | TyConstructor (name, []) -> pretty_name name
     | TyConstructor (name, args) ->
         pretty_name name ^ "("
@@ -1185,13 +1185,10 @@ module Template = struct
                   in
                   let cod_type, state = self#traverse_type state cod_type in
                   (Fun (dom_types, cod_type), state)
-              | Constraint ({ class_name; args }, ty) ->
-                  let class_name, state = self#traverse_name state class_name in
-                  let args, state =
-                    traverse_list self#traverse_type state args
-                  in
+              | Constraint (class_constraint, ty) ->
+                  let class_constraint, state = self#traverse_type state class_constraint in
                   let ty, state = self#traverse_type state ty in
-                  (Constraint ({ class_name; args }, ty), state)
+                  (Constraint (class_constraint, ty), state)
               | TyVar name ->
                   let name, state = self#traverse_name state name in
                   (TyVar name, state)

@@ -250,6 +250,7 @@ let op_token lexbuf =
   function
   | "->" -> ARROW
   | "<-" -> LARROW
+  | "=>" -> DOUBLEARROW
   | "," -> COMMA
   | ";" -> SEMI
   | "::" -> DOUBLECOLON

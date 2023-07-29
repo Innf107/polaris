@@ -140,8 +140,14 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       | DuplicateKeyInRecordUpdate (key, loc) ->
           print_fun (Some loc)
             ("Duplicate key in record update: " ^ text_style.identifier key)
-      | ClassNotFound (name, loc) ->
-          print_fun (Some loc) ("Type class not found: " ^ text_style.ty name)
+      | NonClassInConstraint (class_constraint_type, loc) ->
+          print_fun (Some loc)
+            ("Non class type in constraint: "
+            ^ text_style.ty (Renamed.pretty_type class_constraint_type))
+      | NonClassInInstance (name, loc) ->
+          print_fun (Some loc)
+            ("Non class type in instance declaration: "
+            ^ text_style.identifier (Name.pretty name))
       | WrongNumberOfClassArgs { class_name; expected; actual; loc } ->
           print_fun (Some loc)
             ("Invalid number of arguments to type class "

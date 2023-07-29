@@ -14,7 +14,8 @@ type rename_error =
   | NonExceptionInTry of name * loc
   | UnboundExportConstructor of string * loc
   | DuplicateKeyInRecordUpdate of string * loc
-  | ClassNotFound of string * loc
+  | NonClassInConstraint of Renamed.ty * loc
+  | NonClassInInstance of name * loc
   | ClassMethodMismatch of {
       class_name : name;
       missing : string list;

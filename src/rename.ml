@@ -18,7 +18,8 @@ type rename_error =
   | NonExceptionInTry of name * loc
   | UnboundExportConstructor of string * loc
   | DuplicateKeyInRecordUpdate of string * loc
-  | ClassNotFound of string * loc
+  | NonClassInConstraint of Renamed.ty * loc
+  | NonClassInInstance of name * loc
   | ClassMethodMismatch of {
       class_name : name;
       missing : string list;
@@ -45,7 +46,7 @@ module RenameScope = struct
        just check that type constructors are always fully applied in the renamer. *)
     ty_constructors : (name * int * type_constructor_sort) RenameMap.t;
     data_constructors : (name * data_constructor_sort) RenameMap.t;
-    type_classes : (name * int * (name * Renamed.ty) StringMap.t) RenameMap.t;
+    type_classes : (name * Renamed.ty) StringMap.t NameMap.t;
   }
 
   let empty : t =
@@ -61,7 +62,7 @@ module RenameScope = struct
         RenameMap.map
           (fun (name, _) -> (name, ExceptionSort))
           Primops.prim_exceptions;
-      type_classes = RenameMap.empty;
+      type_classes = NameMap.empty;
     }
 
   let insert_var (old : string) (renamed : name) (scope : t) : t =
@@ -86,14 +87,10 @@ module RenameScope = struct
       data_constructors = add old (renamed, sort) scope.data_constructors;
     }
 
-  let insert_type_class unqualified_name class_name parameter_count method_names
-      scope =
+  let insert_type_class class_name method_names scope =
     {
       scope with
-      type_classes =
-        add unqualified_name
-          (class_name, parameter_count, method_names)
-          scope.type_classes;
+      type_classes = NameMap.add class_name method_names scope.type_classes;
     }
 
   let lookup_var (scope : t) (loc : loc) (var : string) : name =
@@ -133,6 +130,7 @@ let rename_type_constructor :
     match sort with
     | TypeAliasSort -> TypeAlias (name, args)
     | DataConSort -> TyConstructor (name, args)
+    | ClassSort -> TyConstructor (name, args)
   end
 
 let rename_type loc (scope : RenameScope.t) original_type =
@@ -150,28 +148,24 @@ let rename_type loc (scope : RenameScope.t) original_type =
           Fun
             ( List.map (rename_nonbinding scope) tys1,
               (rename_nonbinding scope) ty )
-      | Constraint ({ class_name; args }, ty) -> begin
-          match StringMap.find_opt class_name scope.type_classes with
-          | None -> raise (RenameError (ClassNotFound (class_name, loc)))
-          | Some (class_name, arg_count, _) ->
-              if List.compare_length_with args arg_count <> 0 then
+      | Constraint (class_constraint, ty) ->
+          let class_constraint = rename_nonbinding scope class_constraint in
+
+          let class_name, args =
+            match class_constraint with
+            | TyConstructor (class_name, args) -> (class_name, args)
+            | _ ->
                 raise
-                  (RenameError
-                     (WrongNumberOfClassArgs
-                        {
-                          class_name;
-                          actual = List.length args;
-                          expected = arg_count;
-                          loc;
-                        }))
-              else
-                Constraint
-                  ( {
-                      class_name;
-                      args = List.map (rename_nonbinding scope) args;
-                    },
-                    rename_nonbinding scope ty )
-        end
+                  (RenameError (NonClassInConstraint (class_constraint, loc)))
+          in
+
+          begin
+            match NameMap.find_opt class_name scope.type_classes with
+            | None ->
+                raise
+                  (RenameError (NonClassInConstraint (class_constraint, loc)))
+            | Some _ -> Constraint (class_constraint, rename_nonbinding scope ty)
+          end
       | RecordClosed tys ->
           RecordClosed
             (Array.map (fun (x, ty) -> (x, rename_nonbinding scope ty)) tys)
@@ -422,7 +416,8 @@ let rec rename_mod_expr :
                      | DataConSort ->
                          RenameScope.insert_data_constructor name renamed
                            NewtypeConSort r
-                     | TypeAliasSort -> r))
+                     | TypeAliasSort -> r
+                     | ClassSort -> r))
                  mod_exports.exported_ty_constructors
             |> NameMap.fold
                  (fun name _ r ->
@@ -431,13 +426,14 @@ let rec rename_mod_expr :
                  mod_exports.exported_exceptions
             |> NameMap.fold
                  (fun name (params, methods) r ->
-                   RenameScope.insert_type_class name.name name
-                     (List.length params)
-                     (StringMap.of_seq
-                        (Seq.map
-                           (fun (name, ty) -> (name.name, (name, ty)))
-                           (List.to_seq methods)))
-                     r)
+                   RenameScope.insert_type_constructor name.name name
+                     (List.length params) ClassSort
+                     (RenameScope.insert_type_class name
+                        (StringMap.of_seq
+                           (Seq.map
+                              (fun (name, ty) -> (name.name, (name, ty)))
+                              (List.to_seq methods)))
+                        r))
                  mod_exports.exported_type_classes
           in
           (Import ((loc, mod_exports, body), path), scope)
@@ -833,8 +829,9 @@ and rename_seq_state
           (List.map
              (fun (name, _) scope -> insert_var name.name name scope)
              methods')
-          (insert_type_class class_name class_name' (List.length params)
-             method_map scope)
+          (insert_type_constructor class_name class_name' (List.length params)
+             ClassSort
+             (insert_type_class class_name' method_map scope))
       in
 
       let exprs, scope = rename_seq_state exports scope exprs in
@@ -842,20 +839,32 @@ and rename_seq_state
         :: exprs,
         scope )
   | LetInstanceSeq (loc, class_name, args, methods) :: exprs -> begin
-      match RenameMap.find_opt class_name scope.type_classes with
-      | None -> raise (RenameError (ClassNotFound (class_name, loc)))
-      | Some (class_name', arg_count, _)
-        when List.compare_length_with args arg_count <> 0 ->
-          raise
-            (RenameError
-               (WrongNumberOfClassArgs
-                  {
-                    class_name = class_name';
-                    expected = arg_count;
-                    actual = List.length args;
-                    loc;
-                  }))
-      | Some (class_name', arg_count, definition_methods) -> (
+      let class_name', arg_count =
+        match RenameMap.find_opt class_name scope.ty_constructors with
+        | Some (class_name', arg_count, ClassSort)
+          when List.compare_length_with args arg_count <> 0 ->
+            raise
+              (RenameError
+                 (WrongNumberOfClassArgs
+                    {
+                      class_name = class_name';
+                      expected = arg_count;
+                      actual = List.length args;
+                      loc;
+                    }))
+        | Some (class_name', arg_count, ClassSort) -> (class_name', arg_count)
+        | Some (class_name', _, _) ->
+            raise (RenameError (NonClassInInstance (class_name', loc)))
+        | None ->
+            raise_notrace (RenameError (DataConNotFound (class_name, loc)))
+      in
+
+      match NameMap.find_opt class_name' scope.type_classes with
+      | None ->
+          panic __LOC__
+            "Type constructor with ClassSort but without entry in \
+             scope.type_classes"
+      | Some definition_methods -> (
           let args = List.map (fst << rename_type loc scope) args in
 
           let invalid_methods, methods' =

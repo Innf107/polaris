@@ -17,6 +17,7 @@ let pretty_token = function
   | LAMBDA -> "LAMBDA"
   | ARROW -> "ARROW"
   | LARROW -> "LARROW"
+  | DOUBLEARROW -> "DOUBLEARROW"
   | DOT -> "DOT"
   | COMMA -> "COMMA"
   | SEMI -> "SEMI"

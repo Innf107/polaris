@@ -35,6 +35,7 @@ type expr_or_fun_def_ext =
 %token LAMBDA "\\"
 %token ARROW "->"
 %token LARROW "<-"
+%token DOUBLEARROW "=>"
 %token DOT "."
 %token COMMA ","
 %token SEMI ";"
@@ -348,15 +349,19 @@ mod_expr:
     | CONSTRUCTOR { ModVar(loc $startpos $endpos, $1) }
     | mod_expr "." CONSTRUCTOR { SubModule(loc $startpos $endpos, $1, $3) }
 
+arrow:
+    | "->" { `Function }
+    | "=>" { `Constraint }
+
 ty:
-    | "(" ty COMMA sep_trailing(COMMA, ty) ")" "->" ty      { Fun ($2 :: $4, $7) }
-    | "(" ty ")" "->" ty                                    { Fun ([$2], $5) }
-    | "(" ")" "->" ty                                       { Fun ([], $4)}
-    | ty2 "->" ty                                           { Fun ([$1], $3) }
-    | "(" ty COMMA sep_trailing(COMMA, ty) ")"              { Tuple(Array.of_list ($2 :: $4)) }
-    | FORALL IDENT* "." ty                                  { List.fold_right (fun a r -> Forall(a, r)) $2 $4 }
-    | "(" ty ")"                                            { $2 }
-    | ty1                                                   { $1 }
+    | "(" ty "," sep_trailing(",", ty) ")" arrow ty                 { make_function $6 ($2 :: $4) $7 }
+    | "(" ty ")" arrow ty                                           { make_function $4 [$2] $5 }
+    | "(" ")" arrow ty                                              { make_function $3 [] $4}
+    | ty2 arrow ty                                                  { make_function $2 [$1] $3 }
+    | "(" ty "," sep_trailing(",", ty) ")"                          { Tuple(Array.of_list ($2 :: $4)) }
+    | FORALL IDENT* "." ty                                          { List.fold_right (fun a r -> Forall(a, r)) $2 $4 }
+    | "(" ty ")"                                                    { $2 }
+    | ty1                                                           { $1 }
 
 ty1:
     | "(" ")"                                               { Ty.unit }

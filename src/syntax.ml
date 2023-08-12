@@ -88,11 +88,6 @@ struct
        where mod_subscript_tycon_ext is instantiated to void *)
     | ModSubscriptTyCon of
         Ext.mod_subscript_tycon_ext * Ext.name * Ext.name * ty list
-
-  and class_constraint = {
-    class_name : Ext.name;
-    args : ty list;
-  }
 end
 
 module Template = struct

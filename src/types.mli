@@ -3,6 +3,12 @@ open Syntax.Renamed
 
 type unify_context = ty * ty
 
+type class_constraint = {
+  variables : name list;
+  class_name : name;
+  arguments : ty list;
+}
+
 type type_error =
   | UnableToUnify of (ty * ty) * unify_context option
   (* ^           ^ full original types (None if there is no difference) *)
@@ -30,6 +36,7 @@ type type_error =
   | DataConUnifyEscape of ty * name * ty * unify_context option
   | IncorrectNumberOfExceptionArgs of name * int * ty list
   | PatternError of Pattern.pattern_error
+  | MissingInstance of class_constraint
 
 exception TypeError of loc * type_error
 

@@ -9,6 +9,12 @@ let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix:"Subst"
 
 type unify_context = ty * ty
 
+type class_constraint = {
+  variables : name list;
+  class_name : name;
+  arguments : ty list;
+}
+
 type type_error =
   | UnableToUnify of (ty * ty) * unify_context option
   (* ^           ^ full original types (None if there is no difference) *)
@@ -36,15 +42,19 @@ type type_error =
   | DataConUnifyEscape of ty * name * ty * unify_context option
   | IncorrectNumberOfExceptionArgs of name * int * ty list
   | PatternError of Pattern.pattern_error
+  | MissingInstance of class_constraint
 
 exception TypeError of loc * type_error
 
-module TyperefSet = Set.Make (struct
+module TyperefOrd = struct
   type t = ty Typeref.t * name
 
   let compare (ref1, _) (ref2, _) =
     Unique.compare (Typeref.get_unique ref1) (Typeref.get_unique ref2)
-end)
+end
+
+module TyperefSet = Set.Make (TyperefOrd)
+module TyperefMap = Map.Make (TyperefOrd)
 
 (* Note [Env in Constraints]
    During unification, we need to check for escaping type constructors.
@@ -70,7 +80,11 @@ type ty_constraint =
   | RefineVariant of loc * ty * Pattern.path * string * ty * local_env
     (* See Note [Env in Constraints] *)
   | Interpolatable of loc * ty * local_env
+  | WantedClass of loc * class_constraint * given_constraint list * local_env
 
+and given_constraint = GivenClass of loc * class_constraint
+
+(* forall a. Eq(List(a)) *)
 and global_env = {
   var_types : Typed.ty NameMap.t;
   module_var_contents : global_env NameMap.t;
@@ -84,6 +98,7 @@ and global_env = {
 and local_env = {
   local_types : ty NameMap.t;
   constraints : ty_constraint Difflist.t ref;
+  given_constraints : given_constraint list;
   module_var_contents : global_env NameMap.t;
   data_definitions : (Typeref.level * name list * ty) NameMap.t;
   type_aliases : (name list * ty) NameMap.t;
@@ -137,6 +152,21 @@ let interpolatable_constraint : local_env -> loc -> ty -> unit =
   trace_emit (lazy ("Interpolatable " ^ Typed.pretty_type ty));
   env.constraints :=
     Difflist.snoc !(env.constraints) (Interpolatable (loc, ty, env))
+
+let wanted_class : local_env -> loc -> class_constraint -> unit =
+ fun env loc class_constraint ->
+  trace_emit
+    (lazy
+      ("[W] ∀"
+      ^ String.concat " " (List.map Name.pretty class_constraint.variables)
+      ^ ". "
+      ^ Name.pretty class_constraint.class_name
+      ^ "("
+      ^ String.concat ", " (List.map pretty_type class_constraint.arguments)
+      ^ ")"));
+  env.constraints :=
+    Difflist.snoc !(env.constraints)
+      (WantedClass (loc, class_constraint, env.given_constraints, env))
 
 let fresh_unif_raw_with env raw_name =
   let typeref = Typeref.make env.level in
@@ -295,29 +325,45 @@ let instantiate_type_alias : local_env -> name -> ty list -> ty =
     (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args)))
     underlying_type
 
-let rec instantiate_with_function : local_env -> ty -> ty * (ty -> ty) =
- fun env ty ->
+let rec collect_atomic_constraints : local_env -> ty -> class_constraint list =
+ fun env -> function
+  | TyConstructor (name, arguments) ->
+      [ { variables = []; class_name = name; arguments } ]
+  | TypeAlias (name, arguments) ->
+      collect_atomic_constraints env (instantiate_type_alias env name arguments)
+  | ty ->
+      panic __LOC__
+        ("Non type constructor in constraint: " ^ Typed.pretty_type ty)
+
+let rec instantiate_with_function : loc -> local_env -> ty -> ty * (ty -> ty) =
+ fun loc env ty ->
   match normalize_unif ty with
   | Forall (tv, ty) ->
       let unif = Unif (Typeref.make env.level, tv) in
       (* TODO: Collect all tyvars first to avoid multiple traversals *)
       let replacement_fun = replace_tvar tv unif in
       let instantiated, inner_replacement_fun =
-        instantiate_with_function env (replacement_fun ty)
+        instantiate_with_function loc env (replacement_fun ty)
       in
       (instantiated, fun ty -> inner_replacement_fun (replacement_fun ty))
+  | Constraint (class_constraint, ty) ->
+      let wanteds = collect_atomic_constraints env class_constraint in
+      List.iter
+        (fun class_constraint -> wanted_class env loc class_constraint)
+        wanteds;
+      instantiate_with_function loc env ty
   | TypeAlias (name, args) ->
-      instantiate_with_function env (instantiate_type_alias env name args)
+      instantiate_with_function loc env (instantiate_type_alias env name args)
   | ty -> (ty, Fun.id)
 
-let instantiate : local_env -> ty -> ty =
- fun env ty ->
-  let instaniated, _ = instantiate_with_function env ty in
+let instantiate : loc -> local_env -> ty -> ty =
+ fun loc env ty ->
+  let instaniated, _ = instantiate_with_function loc env ty in
   instaniated
 
 let rec skolemize_with_function :
-    local_env -> ty -> ty * (ty -> ty) * (local_env -> local_env) =
- fun env ty ->
+    loc -> local_env -> ty -> ty * (ty -> ty) * (local_env -> local_env) =
+ fun loc env ty ->
   match normalize_unif ty with
   | Forall (tv, ty) ->
       enter_level env
@@ -326,19 +372,33 @@ let rec skolemize_with_function :
             let skol = Skol (Unique.fresh (), env.level, tv) in
             let replacement_fun = replace_tvar tv skol in
             let skolemized, inner_replacement_fun, inner_trans =
-              skolemize_with_function env (replacement_fun ty)
+              skolemize_with_function loc env (replacement_fun ty)
             in
             ( skolemized,
               (fun ty -> inner_replacement_fun (replacement_fun ty)),
               increase_ambient_level << inner_trans )
         end
+  | Constraint (class_constraint, ty) ->
+      let givens = collect_atomic_constraints env class_constraint in
+      let skolemized, skolemizer, env_transformer =
+        skolemize_with_function loc env ty
+      in
+      let emit_givens env =
+        {
+          env with
+          given_constraints =
+            List.map (fun x -> GivenClass (loc, x)) givens
+            @ env.given_constraints;
+        }
+      in
+      (skolemized, skolemizer, emit_givens << env_transformer)
   | TypeAlias (name, args) ->
-      skolemize_with_function env (instantiate_type_alias env name args)
+      skolemize_with_function loc env (instantiate_type_alias env name args)
   | ty -> (ty, Fun.id, Fun.id)
 
-let skolemize : local_env -> ty -> ty =
- fun env ty ->
-  let skolemized, _, _ = skolemize_with_function env ty in
+let skolemize : loc -> local_env -> ty -> ty =
+ fun loc env ty ->
+  let skolemized, _, _ = skolemize_with_function loc env ty in
   skolemized
 
 (* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2.
@@ -349,7 +409,7 @@ let subsumes : local_env -> loc -> ty -> ty -> unit =
  fun env loc sub_type super_type ->
   trace_emit
     (lazy (Typed.pretty_type sub_type ^ " <= " ^ Typed.pretty_type super_type));
-  unify env loc (instantiate env sub_type) (skolemize env super_type)
+  unify env loc (instantiate loc env sub_type) (skolemize loc env super_type)
 
 (* Check that an expression is syntactically a value and can be generalized.
    We might be able to extend this in the future, similar to OCaml's relaxed value restriction *)
@@ -804,7 +864,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
   | Var (loc, x) -> begin
       match NameMap.find_opt x env.local_types with
       | Some ty ->
-          let instantiated_type = instantiate env ty in
+          let instantiated_type = instantiate loc env ty in
           (instantiated_type, Var ((loc, ty), x))
       | None ->
           panic __LOC__
@@ -822,7 +882,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
                    TyConstructor (data_name, List.map (fun x -> TyVar x) params)
                  ))
           in
-          ( instantiate env data_constructor_type,
+          ( instantiate loc env data_constructor_type,
             DataConstructor ((loc, data_constructor_type), data_name) )
       | None ->
           panic __LOC__
@@ -925,7 +985,8 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
                 ("Module does not contain variable: '" ^ Name.pretty key_name
                ^ "'. This should have been caught earlier!")
           | Some ty ->
-              (instantiate env ty, ModSubscript ((loc, ty), mod_name, key_name))
+              ( instantiate loc env ty,
+                ModSubscript ((loc, ty), mod_name, key_name) )
         end
     end
   | RecordUpdate (loc, expr, field_updates) ->
@@ -1135,7 +1196,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
       (level_prefix env ^ "checking expression '" ^ pretty expr ^ "' : "
       ^ pretty_type polymorphic_expected_ty));
   let expected_ty, _, env_trans =
-    skolemize_with_function env polymorphic_expected_ty
+    skolemize_with_function (get_loc expr) env polymorphic_expected_ty
   in
 
   let env = env_trans env in
@@ -1337,7 +1398,9 @@ and check_seq_expr :
   | LetSeq (loc, pat, body) ->
       let generalizable = is_value body in
       let ty, env_trans, pat = infer_pattern env generalizable pat in
-      let ty, skolemizer, skolem_env_trans = skolemize_with_function env ty in
+      let ty, skolemizer, skolem_env_trans =
+        skolemize_with_function loc env ty
+      in
       let env = skolem_env_trans env in
 
       let traversal =
@@ -1365,7 +1428,7 @@ and check_seq_expr :
       (env_trans, LetSeq (loc, pat, body))
   | LetRecSeq (loc, mty, fun_name, patterns, body) ->
       let arg_tys, transformers, patterns, result_ty, ty_skolemizer, env_trans =
-        match Option.map (skolemize_with_function env) mty with
+        match Option.map (skolemize_with_function loc.main env) mty with
         | None ->
             let arg_tys, transformers, patterns =
               Util.split3 (List.map (infer_pattern env true) patterns)
@@ -1410,9 +1473,7 @@ and check_seq_expr :
 
       let env_trans = insert_var fun_name fun_ty in
 
-      let inner_env =
-        Util.compose transformers (env_trans env)
-      in
+      let inner_env = Util.compose transformers (env_trans env) in
 
       let skolemizer_traversal =
         object (self)
@@ -1476,7 +1537,20 @@ and check_seq_expr :
       ( insert_type_alias alias_name params ty,
         LetTypeSeq (loc, alias_name, params, ty) )
   | LetClassSeq (loc, class_name, params, methods) ->
-      ( insert_type_class class_name params,
+      let insert_method (name, ty) env =
+        let class_constraint =
+          TyConstructor (class_name, List.map (fun x -> TyVar x) params)
+        in
+        let type_with_class =
+          List.fold_right
+            (fun name rest -> Forall (name, rest))
+            params
+            (Constraint (class_constraint, ty))
+        in
+        insert_var name type_with_class env
+      in
+      let insert_methods env = List.fold_right insert_method methods env in
+      ( insert_methods << insert_type_class class_name params,
         LetClassSeq (loc, class_name, params, methods) )
   | LetInstanceSeq (loc, class_name, arguments, methods) ->
       (* TODO: Does this really need to be part of the environment? Can't we just
@@ -1507,7 +1581,7 @@ and check_seq_expr :
         in
 
         (* Methods can be recursive, but recursive calls should use the *class* method (which is already in scope),
-          rather than the one in this specific instance! *)
+           rather than the one in this specific instance! *)
         let inner_env = Util.compose env_transformers env in
 
         let body = check inner_env body_type body in
@@ -2253,6 +2327,78 @@ let solve_interpolatable loc env state ty definition_env =
             Difflist.snoc !deferred_constraint_ref
               (Interpolatable (loc, ty, definition_env)))
 
+let solve_wanted_class loc env unify_state wanted givens local_env =
+  let lock_traversal =
+    object
+      inherit [ty TyperefMap.t] Traversal.traversal
+
+      method! ty subst ty =
+        match normalize_unif ty with
+        | Unif (ref, name) -> begin
+            match TyperefMap.find_opt (ref, name) subst with
+            | None ->
+                (* TODO: This might need to use the environment in which the constraint originated
+                   to get the correct level *)
+                let replacement = fresh_skolem_with env name in
+                (replacement, TyperefMap.add (ref, name) replacement subst)
+            | Some replacement -> (replacement, subst)
+          end
+        | _ -> (ty, subst)
+    end
+  in
+
+  let locked_arguments, _ =
+    Traversal.traverse_list lock_traversal#traverse_type TyperefMap.empty
+      wanted.arguments
+  in
+
+  let find_matching_given = function
+    | GivenClass (loc, given) ->
+        if not (Name.equal wanted.class_name given.class_name) then begin
+          None
+        end
+        else begin
+          let instantiate_traversal =
+            object
+              inherit [ty NameMap.t] Traversal.traversal
+
+              method! ty subst ty =
+                match normalize_unif ty with
+                | TyVar name -> begin
+                    match NameMap.find_opt name subst with
+                    | None ->
+                        let replacement = fresh_unif_with env name.name in
+                        (replacement, NameMap.add name replacement subst)
+                    | Some replacement -> (replacement, subst)
+                  end
+                | _ -> (ty, subst)
+            end
+          in
+
+          let instantiated_arguments, _ =
+            Traversal.traverse_list instantiate_traversal#traverse_type
+              NameMap.empty given.arguments
+          in
+
+          match
+            List.iter2
+              (fun x y -> solve_unify loc env unify_state x y local_env)
+              locked_arguments instantiated_arguments
+          with
+          | () -> Some ()
+          | exception TypeError _ -> None
+        end
+  in
+  match List.find_map find_matching_given givens with
+  | Some () -> ()
+  | None -> (
+      match unify_state.deferred_constraints with
+      | None -> raise (TypeError (loc, MissingInstance wanted))
+      | Some deferred_constraint_ref ->
+          deferred_constraint_ref :=
+            Difflist.snoc !deferred_constraint_ref
+              (WantedClass (loc, wanted, givens, local_env)))
+
 let solve_constraints : local_env -> ty_constraint list -> unit =
  fun env constraints ->
   let go unify_state constraints =
@@ -2270,6 +2416,9 @@ let solve_constraints : local_env -> ty_constraint list -> unit =
               definition_env
         | Interpolatable (loc, ty, definition_env) ->
             solve_interpolatable loc env unify_state ty definition_env
+        | WantedClass (loc, wanted_constraint, givens, local_env) ->
+            solve_wanted_class loc env unify_state wanted_constraint givens
+              local_env
       end
       constraints
   in
@@ -2394,6 +2543,7 @@ let typecheck_top_level :
       local_types = global_env.var_types;
       module_var_contents = global_env.module_var_contents;
       constraints = ref Difflist.empty;
+      given_constraints = [];
       data_definitions = data_definitions_with_levels;
       exception_definitions = global_env.exception_definitions;
       type_aliases = global_env.type_aliases;
@@ -2417,6 +2567,7 @@ let typecheck_top_level :
         local_types = NameMap.empty;
         module_var_contents = NameMap.empty;
         constraints = local_env.constraints;
+        given_constraints = [];
         data_definitions = NameMap.empty;
         exception_definitions = NameMap.empty;
         type_aliases = NameMap.empty;

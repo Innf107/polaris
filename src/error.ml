@@ -518,4 +518,16 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
                       ^ String.concat "\n"
                           (List.map (fun x -> "    - " ^ x) constructors)
                 end
+          | MissingInstance { variables; class_name; arguments } ->
+              let pretty_type =
+                Disambiguate.builder
+                |> Disambiguate.types arguments
+                |> Disambiguate.pretty_type
+              in
+
+              "Missing instance "
+              ^ text_style.ty
+                  (Name.pretty class_name ^ "("
+                  ^ String.concat ", " (List.map pretty_type arguments)
+                  ^ ")")
         end

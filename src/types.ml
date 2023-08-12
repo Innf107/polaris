@@ -757,6 +757,9 @@ and check_pattern :
 (** Split a function type into its components.
     If the type is not statically known to be a function, this is achieved by unifying
     with a function type consisting of type variables (This is why the number of arguments has to be known beforehand). *)
+
+(* TODO: Also split off constraints here *)
+
 let rec split_fun_ty : local_env -> loc -> int -> ty -> ty list * ty =
  fun env loc arg_count ty ->
   match normalize_unif ty with
@@ -1408,7 +1411,7 @@ and check_seq_expr :
       let env_trans = insert_var fun_name fun_ty in
 
       let inner_env =
-        List.fold_left ( << ) Fun.id transformers (env_trans env)
+        Util.compose transformers (env_trans env)
       in
 
       let skolemizer_traversal =
@@ -1472,8 +1475,12 @@ and check_seq_expr :
   | LetTypeSeq (loc, alias_name, params, ty) ->
       ( insert_type_alias alias_name params ty,
         LetTypeSeq (loc, alias_name, params, ty) )
-  | LetClassSeq (loc, class_name, params, methods) -> todo __LOC__
+  | LetClassSeq (loc, class_name, params, methods) ->
+      ( insert_type_class class_name params,
+        LetClassSeq (loc, class_name, params, methods) )
   | LetInstanceSeq (loc, class_name, arguments, methods) ->
+      (* TODO: Does this really need to be part of the environment? Can't we just
+         annotate this with the parameters in the renamer? *)
       let parameter_names =
         match NameMap.find_opt class_name env.type_classes with
         | None ->
@@ -1482,7 +1489,34 @@ and check_seq_expr :
              ^ Name.pretty class_name)
         | Some parameters -> parameters
       in
-      todo __LOC__
+
+      let check_method (expected_type_raw, name, parameters, body) =
+        let expected_type =
+          replace_tvars
+            (NameMap.of_seq
+               (List.to_seq (List.combine parameter_names arguments)))
+            expected_type_raw
+        in
+        let argument_types, body_type =
+          split_fun_ty env loc (List.length arguments) expected_type
+        in
+
+        let env_transformers, parameters =
+          List.split
+            (List.map2 (check_pattern env true) parameters argument_types)
+        in
+
+        (* Methods can be recursive, but recursive calls should use the *class* method (which is already in scope),
+          rather than the one in this specific instance! *)
+        let inner_env = Util.compose env_transformers env in
+
+        let body = check inner_env body_type body in
+
+        (* TODO: Skolemize the body. This should really be able to reuse the code from LetRec statements *)
+        todo __LOC__
+      in
+      let methods = List.map check_method methods in
+      Util.todo __LOC__
   | LetExceptionSeq (loc, exception_name, params, message_expr) ->
       let message_env =
         List.fold_right (fun (param, ty) r -> insert_var param ty r) params env

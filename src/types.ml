@@ -6,6 +6,7 @@ let _tc_category, trace_tc = Trace.make ~flag:"types" ~prefix:"Types"
 let _emit_category, trace_emit = Trace.make ~flag:"emit" ~prefix:"Emit"
 let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
 let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix:"Subst"
+let _class_category, trace_class = Trace.make ~flag:"class" ~prefix:"Class"
 
 type unify_context = ty * ty
 
@@ -93,6 +94,7 @@ and global_env = {
   ambient_level : Typeref.level;
   exception_definitions : ty list NameMap.t;
   type_classes : name list NameMap.t;
+  given_constraints : given_constraint list;
 }
 
 and local_env = {
@@ -163,7 +165,7 @@ let wanted_class : local_env -> loc -> class_constraint -> unit =
       ^ Name.pretty class_constraint.class_name
       ^ "("
       ^ String.concat ", " (List.map pretty_type class_constraint.arguments)
-      ^ ")"));
+      ^ ")" ^ " #[G] = " ^ string_of_int (List.length env.given_constraints)));
   env.constraints :=
     Difflist.snoc !(env.constraints)
       (WantedClass (loc, class_constraint, env.given_constraints, env))
@@ -272,6 +274,25 @@ let insert_type_class : name -> name list -> local_env -> local_env =
     type_classes = NameMap.add class_name parameter_names env.type_classes;
   }
 
+let emit_givens loc givens (env : local_env) =
+  List.iter
+    (fun given ->
+      trace_emit
+        (lazy
+          ("[G] ∀"
+          ^ String.concat " " (List.map Name.pretty given.variables)
+          ^ ". "
+          ^ Name.pretty given.class_name
+          ^ "("
+          ^ String.concat ", " (List.map pretty_type given.arguments)
+          ^ ")")))
+    givens;
+  {
+    env with
+    given_constraints =
+      List.map (fun x -> GivenClass (loc, x)) givens @ env.given_constraints;
+  }
+
 let insert_exception_definition : name -> ty list -> local_env -> local_env =
  fun name params env ->
   {
@@ -349,7 +370,7 @@ let rec instantiate_with_function : loc -> local_env -> ty -> ty * (ty -> ty) =
   | Constraint (class_constraint, ty) ->
       let wanteds = collect_atomic_constraints env class_constraint in
       List.iter
-        (fun class_constraint -> wanted_class env loc class_constraint)
+        (wanted_class env loc)
         wanteds;
       instantiate_with_function loc env ty
   | TypeAlias (name, args) ->
@@ -383,15 +404,7 @@ let rec skolemize_with_function :
       let skolemized, skolemizer, env_transformer =
         skolemize_with_function loc env ty
       in
-      let emit_givens env =
-        {
-          env with
-          given_constraints =
-            List.map (fun x -> GivenClass (loc, x)) givens
-            @ env.given_constraints;
-        }
-      in
-      (skolemized, skolemizer, emit_givens << env_transformer)
+      (skolemized, skolemizer, emit_givens loc givens << env_transformer)
   | TypeAlias (name, args) ->
       skolemize_with_function loc env (instantiate_type_alias env name args)
   | ty -> (ty, Fun.id, Fun.id)
@@ -528,6 +541,7 @@ let rec eval_module_env :
           type_aliases = mod_exports.exported_type_aliases;
           type_classes = NameMap.map fst mod_exports.exported_type_classes;
           ambient_level = Typeref.initial_top_level;
+          given_constraints = todo __LOC__
         },
         Import ((loc, mod_exports, exprs), path) )
   | SubModule (loc, mod_expr, name) -> (
@@ -1586,11 +1600,12 @@ and check_seq_expr :
 
         let body = check inner_env body_type body in
 
-        (* TODO: Skolemize the body. This should really be able to reuse the code from LetRec statements *)
-        todo __LOC__
+        (expected_type, name, parameters, body)
       in
       let methods = List.map check_method methods in
-      Util.todo __LOC__
+
+      ( emit_givens loc [ { class_name; variables = []; arguments } ],
+        LetInstanceSeq (loc, class_name, arguments, methods) )
   | LetExceptionSeq (loc, exception_name, params, message_expr) ->
       let message_env =
         List.fold_right (fun (param, ty) r -> insert_var param ty r) params env
@@ -2380,13 +2395,32 @@ let solve_wanted_class loc env unify_state wanted givens local_env =
               NameMap.empty given.arguments
           in
 
+          let class_trace_diagnostic () =
+            "[W] ∀"
+            ^ String.concat "" (List.map pretty_name given.variables)
+            ^ ". "
+            ^ Name.pretty wanted.class_name
+            ^ "("
+            ^ String.concat ", " (List.map pretty_type wanted.arguments)
+            ^ ") <-> [G] ∀"
+            ^ String.concat "" (List.map pretty_name given.variables)
+            ^ ". "
+            ^ Name.pretty given.class_name
+            ^ "("
+            ^ String.concat "," (List.map pretty_type given.arguments)
+            ^ ")"
+          in
           match
             List.iter2
               (fun x y -> solve_unify loc env unify_state x y local_env)
               locked_arguments instantiated_arguments
           with
-          | () -> Some ()
-          | exception TypeError _ -> None
+          | () ->
+              trace_class (lazy (class_trace_diagnostic () ^ " -> Success"));
+              Some ()
+          | exception TypeError _ ->
+              trace_class (lazy (class_trace_diagnostic () ^ " -> Failure"));
+              None
         end
   in
   match List.find_map find_matching_given givens with
@@ -2543,7 +2577,7 @@ let typecheck_top_level :
       local_types = global_env.var_types;
       module_var_contents = global_env.module_var_contents;
       constraints = ref Difflist.empty;
-      given_constraints = [];
+      given_constraints = global_env.given_constraints;
       data_definitions = data_definitions_with_levels;
       exception_definitions = global_env.exception_definitions;
       type_aliases = global_env.type_aliases;
@@ -2616,6 +2650,7 @@ let typecheck_top_level :
           (fun _ _ x -> Some x)
           global_env.type_classes temp_local_env.type_classes;
       ambient_level = temp_local_env.level;
+      given_constraints = temp_local_env.given_constraints;
     }
   in
   (global_env, typed_expr)
@@ -2696,4 +2731,5 @@ let empty_env =
     type_aliases = NameMap.empty;
     type_classes = NameMap.empty;
     ambient_level = Typeref.initial_top_level;
+    given_constraints = []
   }

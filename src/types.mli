@@ -9,6 +9,8 @@ type class_constraint = {
   arguments : ty list;
 }
 
+type given_constraint
+
 type type_error =
   | UnableToUnify of (ty * ty) * unify_context option
   (* ^           ^ full original types (None if there is no difference) *)
@@ -48,6 +50,7 @@ type global_env = {
   ambient_level : Typeref.level;
   exception_definitions : ty list NameMap.t;
   type_classes : name list NameMap.t;
+  given_constraints : given_constraint list;
 }
 
 (* Might throw 'TypeError' *)

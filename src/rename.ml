@@ -682,6 +682,8 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
   | Raise (loc, expr) ->
       let expr = rename_expr exports scope expr in
       Raise (loc, expr)
+  (* Not sure why we cannot just refute the pattern here *)
+  | ExprExt (_, void) -> absurd void
 
 and rename_seq_state
     (exports : (module_exports * Typed.expr list) FilePathMap.t)

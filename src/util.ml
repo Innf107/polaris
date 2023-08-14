@@ -31,9 +31,16 @@ let max z list = List.fold_left (fun r x -> if x > r then x else r) z list
 let pad_right count padding str =
   str ^ String.make (count - String.length str) padding
 
-type void
+type unreachable
 
-let absurd (_ : void) = raise (Panic "absurd: impossible argument")
+type 'a _void =
+  | UnreachableVoid : unreachable _void
+
+type void = unit _void
+
+let absurd : void -> 'a 
+  = function
+  | _ -> .
 
 let rec sequence_options = function
   | None :: _ -> None

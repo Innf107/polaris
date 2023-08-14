@@ -530,4 +530,13 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
                   (Name.pretty class_name ^ "("
                   ^ String.concat ", " (List.map pretty_type arguments)
                   ^ ")")
+          | TupleLiteralOfWrongLength (expected, actual) ->
+              let pretty_type = 
+                Disambiguate.builder
+                |> Disambiguate.types (Array.to_list actual)
+                |> Disambiguate.pretty_type
+              in
+              "Tuple literal has " ^ text_style.number expected ^ " elements\n"
+            ^ "But its type expects it to have " ^ text_style.number (Array.length actual) ^ ".\n"
+            ^ "    Expected type: " ^ text_style.ty (pretty_type (Typed.Tuple actual))
         end

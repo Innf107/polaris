@@ -10,6 +10,7 @@ type driver_options = {
   argv : string list;
   print_ast : bool;
   print_renamed : bool;
+  print_typed : bool;
   print_tokens : bool;
 }
 
@@ -103,14 +104,19 @@ let rec parse_rename_typecheck :
           print_endline "~~~~~~~~Renamed AST~~~~~~~";
           print_endline (Renamed.pretty_list renamed);
           print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~"
-        end
-        else ();
+        end;
 
         trace_driver (lazy "Typechecking...");
         let type_env, typed_header, typed_exprs =
           Types.typecheck check_or_infer_top_level renamed_header renamed
             type_env
         in
+
+        if options.print_typed then begin 
+          print_endline "~~~~~~~~Typed AST~~~~~~~";
+          print_endline (Typed.pretty_list typed_exprs);
+          print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        end;
 
         Ok (typed_header, typed_exprs, new_scope, type_env)
     end

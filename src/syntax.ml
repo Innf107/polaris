@@ -254,7 +254,7 @@ module Template = struct
         * name list
         * (name * ty) list (* class X(x, .., x) { x : t } *)
     | LetInstanceSeq of
-        loc
+        InstanceExt.t
         * name
         * ty list
         * (InstanceMethodExt.t * name * pattern list * expr) list
@@ -285,6 +285,7 @@ module Template = struct
     | Try of
         loc * expr * (pattern * expr) list (* try expr with {p -> e, .. } *)
     | Raise of loc * expr (* raise e *)
+    | ExprExt of loc * expr expr_ext
 
   and list_comp_clause =
     | DrawClause of pattern * expr (* p <- e *)
@@ -602,9 +603,9 @@ module Template = struct
         "let " ^ pretty_name x ^ "("
         ^ String.concat ", " (List.map pretty_pattern xs)
         ^ ") = " ^ pretty e
-    | LetRecSeq (_, Some ty, x, xs, e) ->
-        "let " ^ pretty_name x ^ " : " ^ pretty_type ty ^ "; let "
-        ^ pretty_name x ^ "("
+    | LetRecSeq (ext, Some ty, x, xs, e) ->
+        "let " ^ pretty_name x ^ " : "
+        ^ pretty_type ty ^ "\nlet" ^ LetRecExt.pretty ext ^ " " ^ pretty_name x ^ "("
         ^ String.concat ", " (List.map pretty_pattern xs)
         ^ ") = " ^ pretty e
     | LetEnvSeq (_, x, e) -> "let $" ^ x ^ " = " ^ pretty e
@@ -640,6 +641,7 @@ module Template = struct
                  ^ String.concat ", " (List.map pretty_pattern patterns)
                  ^ ") = " ^ pretty body)
                methods)
+        ^ "\n}"
     | ProgCall (_, prog, args) ->
         "!" ^ prog ^ " " ^ String.concat " " (List.map pretty args)
     | Pipe (_, exprs) -> String.concat " | " (List.map pretty exprs)
@@ -674,6 +676,7 @@ module Template = struct
                branches)
         ^ "\n}"
     | Raise (_, expr) -> "raise " ^ pretty expr
+    | ExprExt (_, expr) -> pretty_expr_ext pretty expr
 
   let pretty_list (exprs : expr list) : string =
     List.fold_right (fun x r -> pretty x ^ "\n" ^ r) exprs ""
@@ -684,6 +687,7 @@ module Template = struct
     | Subscript (ext, _, _) -> SubscriptExt.loc ext
     | ModSubscript (ext, _, _) -> ModSubscriptExt.loc ext
     | LetRecSeq (ext, _, _, _, _) -> LetRecExt.loc ext
+    | LetInstanceSeq (ext, _, _, _) -> InstanceExt.loc ext
     | ExceptionConstructor (loc, _)
     | VariantConstructor (loc, _, _)
     | ModSubscriptDataCon (_, loc, _, _)
@@ -711,7 +715,6 @@ module Template = struct
     | LetDataSeq (loc, _, _, _)
     | LetTypeSeq (loc, _, _, _)
     | LetClassSeq (loc, _, _, _)
-    | LetInstanceSeq (loc, _, _, _)
     | Assign (loc, _, _)
     | ProgCall (loc, _, _)
     | Pipe (loc, _)
@@ -727,6 +730,7 @@ module Template = struct
     | Try (loc, _, _)
     | Raise (loc, _) ->
         loc
+    | ExprExt (loc, _) -> loc
 
   let get_pattern_loc = function
     | VarPat (ext, _) -> VarPatExt.loc ext
@@ -1091,6 +1095,9 @@ module Template = struct
               | Raise (loc, expr) ->
                   let expr, state = self#traverse_expr state expr in
                   (Raise (loc, expr), state)
+              | ExprExt (loc, ext) ->
+                  let ext, state = traverse_expr_ext self state ext in
+                  (ExprExt (loc, ext), state)
             in
             self#expr state transformed
 
@@ -1181,7 +1188,9 @@ module Template = struct
                   let cod_type, state = self#traverse_type state cod_type in
                   (Fun (dom_types, cod_type), state)
               | Constraint (class_constraint, ty) ->
-                  let class_constraint, state = self#traverse_type state class_constraint in
+                  let class_constraint, state =
+                    self#traverse_type state class_constraint
+                  in
                   let ty, state = self#traverse_type state ty in
                   (Constraint (class_constraint, ty), state)
               | TyVar name ->
@@ -1453,6 +1462,19 @@ module SubLocationWithType = struct
     ((loc, ty), state)
 end
 
+module SubLocationWithTypeAnd (NonTy : sig
+  type t
+end) =
+struct
+  type t = SubLocation.t * FullTypeDefinition.ty * NonTy.t
+
+  let loc (({ main; _ } : SubLocation.t), _, _) = main
+
+  let traverse_ty state f (loc, ty, nonty) =
+    let ty, state = f state ty in
+    ((loc, ty, nonty), state)
+end
+
 module Parsed = Template (struct
   module TypeDefinition = ParsedTypeDefinition
 
@@ -1472,9 +1494,21 @@ module Parsed = Template (struct
   module DataConExt = LocOnly
   module SubscriptExt = SubLocation
   module ModSubscriptExt = LocOnly
-  module LetRecExt = SubLocation
+
+  module LetRecExt = struct
+    include SubLocation
+
+    let pretty _ = ""
+  end
+
   module ExportConstructorExt = LocOnly
+  module InstanceExt = LocOnly
   module InstanceMethodExt = EmptyExt
+
+  type expr_ext = void
+
+  let traverse_expr_ext _ _ void = absurd void
+  let pretty_expr_ext _ void = absurd void
 end)
 [@@ttg_pass]
 
@@ -1497,7 +1531,15 @@ module Typed = Template (struct
   module DataConExt = WithType
   module SubscriptExt = SubLocationWithType
   module ModSubscriptExt = WithType
-  module LetRecExt = SubLocationWithType
+
+  module LetRecExt = struct
+    include SubLocationWithTypeAnd (struct
+      type t = Evidence.source list
+    end)
+
+    let pretty (_, _, evidence) =
+      "[" ^ String.concat ", " (List.map Evidence.display_source evidence) ^ "]"
+  end
 
   module ExportConstructorExt = LocWithNonTy (struct
     type t =
@@ -1506,11 +1548,38 @@ module Typed = Template (struct
       ]
   end)
 
+  module InstanceExt = LocWithNonTy (struct
+    type t = Evidence.source
+  end)
+
   module InstanceMethodExt = struct
     type t = FullTypeDefinition.ty
 
     let traverse_ty state f ty = f state ty
   end
+
+  type 'expr expr_ext =
+    | DictLambda of Evidence.source list * 'expr
+    | DictApp of 'expr * Evidence.target list
+
+  let traverse_expr_ext self state ext =
+    match ext with
+    | DictLambda (evidence_sources, expr) ->
+        let expr, state = self#traverse_expr state expr in
+        (DictLambda (evidence_sources, expr), state)
+    | DictApp (expr, evidence_targets) ->
+        let expr, state = self#traverse_expr state expr in
+        (DictApp (expr, evidence_targets), state)
+
+  let pretty_expr_ext pretty_expr = function
+    | DictLambda (uniques, expr) ->
+        "λ#d["
+        ^ String.concat ", " (List.map Evidence.display_source uniques)
+        ^ "). " ^ pretty_expr expr
+    | DictApp (expr, uniques) ->
+        "(" ^ pretty_expr expr ^ ")@#d("
+        ^ String.concat ", " (List.map Evidence.display_target uniques)
+        ^ ")"
 end)
 [@@ttg_pass]
 
@@ -1537,7 +1606,12 @@ module Renamed = Template (struct
   module DataConExt = LocOnly
   module SubscriptExt = SubLocation
   module ModSubscriptExt = LocOnly
-  module LetRecExt = SubLocation
+
+  module LetRecExt = struct
+    include SubLocation
+
+    let pretty _ = ""
+  end
 
   module ExportConstructorExt = LocWithNonTy (struct
     type t =
@@ -1546,6 +1620,8 @@ module Renamed = Template (struct
       ]
   end)
 
+  module InstanceExt = LocOnly
+
   (* Renamed instance methods contain the type that was declared in their class definition.
      Notably this *does not* contain the type class constraint yet. *)
   module InstanceMethodExt = struct
@@ -1553,6 +1629,11 @@ module Renamed = Template (struct
 
     let traverse_ty state f ty = f state ty
   end
+
+  type expr_ext = void
+
+  let traverse_expr_ext _ _ void = absurd void
+  let pretty_expr_ext _ void = absurd void
 end)
 [@@ttg_pass]
 

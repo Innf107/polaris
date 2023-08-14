@@ -21,7 +21,7 @@ let instantiate_ttg : structure -> structure -> structure =
                ] );
         } ->
             (items, LabelMap.add ptype_name.txt ty types)
-        | item -> (item :: items, types)
+        | item -> (items @ [item], types)
     end
   in
 

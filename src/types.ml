@@ -44,6 +44,7 @@ type type_error =
   | IncorrectNumberOfExceptionArgs of name * int * ty list
   | PatternError of Pattern.pattern_error
   | MissingInstance of class_constraint
+  | TupleLiteralOfWrongLength of int * ty array
 
 exception TypeError of loc * type_error
 
@@ -81,9 +82,20 @@ type ty_constraint =
   | RefineVariant of loc * ty * Pattern.path * string * ty * local_env
     (* See Note [Env in Constraints] *)
   | Interpolatable of loc * ty * local_env
-  | WantedClass of loc * class_constraint * given_constraint list * local_env
+  | WantedClass of {
+      loc : loc;
+      wanted : class_constraint;
+      givens : given_constraint list;
+      local_env : local_env;
+      evidence_target : Evidence.target;
+    }
 
-and given_constraint = GivenClass of loc * class_constraint
+and given_constraint =
+  | GivenClass of {
+      loc : loc;
+      given : class_constraint;
+      evidence : Evidence.source;
+    }
 
 (* forall a. Eq(List(a)) *)
 and global_env = {
@@ -155,8 +167,9 @@ let interpolatable_constraint : local_env -> loc -> ty -> unit =
   env.constraints :=
     Difflist.snoc !(env.constraints) (Interpolatable (loc, ty, env))
 
-let wanted_class : local_env -> loc -> class_constraint -> unit =
- fun env loc class_constraint ->
+let wanted_class :
+    local_env -> loc -> class_constraint -> Evidence.target -> unit =
+ fun env loc class_constraint target ->
   trace_emit
     (lazy
       ("[W] ∀"
@@ -165,10 +178,18 @@ let wanted_class : local_env -> loc -> class_constraint -> unit =
       ^ Name.pretty class_constraint.class_name
       ^ "("
       ^ String.concat ", " (List.map pretty_type class_constraint.arguments)
-      ^ ")" ^ " #[G] = " ^ string_of_int (List.length env.given_constraints)));
+      ^ ")" ^ " #[G] = "
+      ^ string_of_int (List.length env.given_constraints)));
   env.constraints :=
     Difflist.snoc !(env.constraints)
-      (WantedClass (loc, class_constraint, env.given_constraints, env))
+      (WantedClass
+         {
+           loc;
+           wanted = class_constraint;
+           givens = env.given_constraints;
+           local_env = env;
+           evidence_target = target;
+         })
 
 let fresh_unif_raw_with env raw_name =
   let typeref = Typeref.make env.level in
@@ -276,7 +297,7 @@ let insert_type_class : name -> name list -> local_env -> local_env =
 
 let emit_givens loc givens (env : local_env) =
   List.iter
-    (fun given ->
+    (fun (given, evidence) ->
       trace_emit
         (lazy
           ("[G] ∀"
@@ -285,12 +306,16 @@ let emit_givens loc givens (env : local_env) =
           ^ Name.pretty given.class_name
           ^ "("
           ^ String.concat ", " (List.map pretty_type given.arguments)
-          ^ ")")))
+          ^ ") #d = "
+          ^ Evidence.display_source evidence)))
     givens;
   {
     env with
     given_constraints =
-      List.map (fun x -> GivenClass (loc, x)) givens @ env.given_constraints;
+      List.map
+        (fun (given, evidence) -> GivenClass { loc; given; evidence })
+        givens
+      @ env.given_constraints;
   }
 
 let insert_exception_definition : name -> ty list -> local_env -> local_env =
@@ -346,44 +371,84 @@ let instantiate_type_alias : local_env -> name -> ty list -> ty =
     (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args)))
     underlying_type
 
-let rec collect_atomic_constraints : local_env -> ty -> class_constraint list =
+(* This needs to collect a list of *atomic* sources and a separate list
+   of sources *to be abstracted*, since compound sources might need to be split and rebuilt *)
+let rec collect_atomic_given_constraints :
+    local_env ->
+    ty ->
+    (class_constraint * Evidence.source) list * Evidence.source list =
  fun env -> function
   | TyConstructor (name, arguments) ->
-      [ { variables = []; class_name = name; arguments } ]
+      let source = Evidence.make_source () in
+      ( [ ({ variables = []; class_name = name; arguments }, source) ],
+        [ source ] )
   | TypeAlias (name, arguments) ->
-      collect_atomic_constraints env (instantiate_type_alias env name arguments)
+      collect_atomic_given_constraints env
+        (instantiate_type_alias env name arguments)
   | ty ->
       panic __LOC__
         ("Non type constructor in constraint: " ^ Typed.pretty_type ty)
 
-let rec instantiate_with_function : loc -> local_env -> ty -> ty * (ty -> ty) =
+(* This needs to collect a list of *atomic* targets and a separate list
+   of targets *to be applied*, since compound targets might need to be split and rebuilt *)
+let rec collect_atomic_wanted_constraints :
+    local_env ->
+    ty ->
+    (class_constraint * Evidence.target) list * Evidence.target list =
+ fun env -> function
+  | TyConstructor (name, arguments) ->
+      let target = Evidence.make_empty_target () in
+
+      ( [ ({ variables = []; class_name = name; arguments }, target) ],
+        [ target ] )
+  | TypeAlias (name, arguments) ->
+      collect_atomic_wanted_constraints env
+        (instantiate_type_alias env name arguments)
+  | ty ->
+      panic __LOC__
+        ("Non type constructor in constraint: " ^ Typed.pretty_type ty)
+
+let rec instantiate_with_function :
+    loc -> local_env -> ty -> ty * (ty -> ty) * Evidence.target list list =
  fun loc env ty ->
   match normalize_unif ty with
   | Forall (tv, ty) ->
       let unif = Unif (Typeref.make env.level, tv) in
       (* TODO: Collect all tyvars first to avoid multiple traversals *)
       let replacement_fun = replace_tvar tv unif in
-      let instantiated, inner_replacement_fun =
+      let instantiated, inner_replacement_fun, evidence =
         instantiate_with_function loc env (replacement_fun ty)
       in
-      (instantiated, fun ty -> inner_replacement_fun (replacement_fun ty))
+      ( instantiated,
+        (fun ty -> inner_replacement_fun (replacement_fun ty)),
+        evidence )
   | Constraint (class_constraint, ty) ->
-      let wanteds = collect_atomic_constraints env class_constraint in
+      let wanteds, targets_to_apply =
+        collect_atomic_wanted_constraints env class_constraint
+      in
       List.iter
-        (wanted_class env loc)
+        (fun (wanted, target) -> wanted_class env loc wanted target)
         wanteds;
-      instantiate_with_function loc env ty
+
+      let instantiated, inner_replacement_fun, evidence =
+        instantiate_with_function loc env ty
+      in
+      (* TODO: Let's hope the order of expressions is correct here *)
+      (instantiated, inner_replacement_fun, targets_to_apply :: evidence)
   | TypeAlias (name, args) ->
       instantiate_with_function loc env (instantiate_type_alias env name args)
-  | ty -> (ty, Fun.id)
+  | ty -> (ty, Fun.id, [])
 
-let instantiate : loc -> local_env -> ty -> ty =
+let instantiate : loc -> local_env -> ty -> ty * Evidence.target list list =
  fun loc env ty ->
-  let instaniated, _ = instantiate_with_function loc env ty in
-  instaniated
+  let instaniated, _, evidence = instantiate_with_function loc env ty in
+  (instaniated, evidence)
 
 let rec skolemize_with_function :
-    loc -> local_env -> ty -> ty * (ty -> ty) * (local_env -> local_env) =
+    loc ->
+    local_env ->
+    ty ->
+    ty * (ty -> ty) * (local_env -> local_env) * Evidence.source list list =
  fun loc env ty ->
   match normalize_unif ty with
   | Forall (tv, ty) ->
@@ -392,37 +457,52 @@ let rec skolemize_with_function :
           fun env ->
             let skol = Skol (Unique.fresh (), env.level, tv) in
             let replacement_fun = replace_tvar tv skol in
-            let skolemized, inner_replacement_fun, inner_trans =
+            let skolemized, inner_replacement_fun, inner_trans, evidence =
               skolemize_with_function loc env (replacement_fun ty)
             in
             ( skolemized,
               (fun ty -> inner_replacement_fun (replacement_fun ty)),
-              increase_ambient_level << inner_trans )
+              increase_ambient_level << inner_trans,
+              evidence )
         end
   | Constraint (class_constraint, ty) ->
-      let givens = collect_atomic_constraints env class_constraint in
-      let skolemized, skolemizer, env_transformer =
+      let givens, sources_to_abstract =
+        collect_atomic_given_constraints env class_constraint
+      in
+      let skolemized, skolemizer, env_transformer, evidence =
         skolemize_with_function loc env ty
       in
-      (skolemized, skolemizer, emit_givens loc givens << env_transformer)
+      ( skolemized,
+        skolemizer,
+        emit_givens loc givens << env_transformer,
+        sources_to_abstract :: evidence )
   | TypeAlias (name, args) ->
       skolemize_with_function loc env (instantiate_type_alias env name args)
-  | ty -> (ty, Fun.id, Fun.id)
+  | ty -> (ty, Fun.id, Fun.id, [])
 
-let skolemize : loc -> local_env -> ty -> ty =
+let skolemize : loc -> local_env -> ty -> ty * Evidence.source list list =
  fun loc env ty ->
-  let skolemized, _, _ = skolemize_with_function loc env ty in
-  skolemized
+  let skolemized, _, _, evidence = skolemize_with_function loc env ty in
+  (skolemized, evidence)
 
 (* `subsumes env loc ty1 ty2` asserts that ty1 is meant to be a subtype of ty2.
    Unlike, say, most object oriented languages, Polaris only has one notion of
    subtyping: polytypes are subtypes of more specific types.
    For example, forall a. a -> a is a subtype of Number -> Number *)
-let subsumes : local_env -> loc -> ty -> ty -> unit =
+let subsumes :
+    local_env ->
+    loc ->
+    ty ->
+    ty ->
+    Evidence.source list list * Evidence.target list list =
  fun env loc sub_type super_type ->
   trace_emit
     (lazy (Typed.pretty_type sub_type ^ " <= " ^ Typed.pretty_type super_type));
-  unify env loc (instantiate loc env sub_type) (skolemize loc env super_type)
+
+  let super_type, source_evidence = skolemize loc env super_type in
+  let sub_type, target_evidence = instantiate loc env sub_type in
+  unify env loc sub_type super_type;
+  (source_evidence, target_evidence)
 
 (* Check that an expression is syntactically a value and can be generalized.
    We might be able to extend this in the future, similar to OCaml's relaxed value restriction *)
@@ -507,6 +587,7 @@ let rec is_value : expr -> bool = function
      If we are, do we need to check that the raised value is a value?
      It's never going to be returned anyway. *)
   | Raise (_, _expr) -> true
+  | ExprExt (_, void) -> absurd void
 
 let binds_value : expr -> bool = function
   | LetSeq (_, _, expr) -> is_value expr
@@ -541,7 +622,7 @@ let rec eval_module_env :
           type_aliases = mod_exports.exported_type_aliases;
           type_classes = NameMap.map fst mod_exports.exported_type_classes;
           ambient_level = Typeref.initial_top_level;
-          given_constraints = todo __LOC__
+          given_constraints = todo __LOC__;
         },
         Import ((loc, mod_exports, exprs), path) )
   | SubModule (loc, mod_expr, name) -> (
@@ -748,7 +829,12 @@ and check_pattern :
 
   let defer_to_inference () =
     let ty, trans, pattern = infer_pattern env allow_polytype pattern in
-    subsumes env (Typed.get_pattern_loc pattern) ty expected_ty;
+    let sources, targets =
+      subsumes env (Typed.get_pattern_loc pattern) ty expected_ty
+    in
+    (* infer_pattern only infers monotypes (TODO: does it?!)*)
+    assert (targets = []);
+    todo __LOC__;
     (trans, pattern)
   in
   match (pattern, expected_ty) with
@@ -805,7 +891,7 @@ and check_pattern :
         raise (TypeError (loc, ValueRestriction ty))
       end;
 
-      subsumes env loc ty expected_ty;
+      let sources, targets = subsumes env loc ty expected_ty in
       check_pattern env allow_polytype pattern ty
   | ( DataPat (loc, data_name, underlying_pattern),
       TyConstructor (constr_name, args) )
@@ -853,7 +939,10 @@ let rec split_fun_ty : local_env -> loc -> int -> ty -> ty list * ty =
          If this is known to be a function (or function alias), we handle it separately
          anyways, so this case should only be triggered (and not fail no matter what we do)
          if the function is a unification variable *)
-      subsumes env loc ty (Fun (argument_types, result_type));
+      let sources, targets =
+        subsumes env loc ty (Fun (argument_types, result_type))
+      in
+      todo __LOC__;
       (argument_types, result_type)
 
 (** Find the type under a reference. This will match on the type directly if possible or
@@ -867,7 +956,8 @@ let rec split_ref_ty : local_env -> loc -> ty -> ty =
       split_ref_ty env loc real_type
   | ty ->
       let inner_type = fresh_unif env in
-      subsumes env loc ty (Ref inner_type);
+      let sources, targets = subsumes env loc ty (Ref inner_type) in
+      todo __LOC__;
       inner_type
 
 let rec infer : local_env -> expr -> ty * Typed.expr =
@@ -878,8 +968,9 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
   | Var (loc, x) -> begin
       match NameMap.find_opt x env.local_types with
       | Some ty ->
-          let instantiated_type = instantiate loc env ty in
-          (instantiated_type, Var ((loc, ty), x))
+          let instantiated_type, targets = instantiate loc env ty in
+          ( instantiated_type,
+            apply_targets loc targets (Typed.Var ((loc, ty), x)) )
       | None ->
           panic __LOC__
             ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")
@@ -896,8 +987,17 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
                    TyConstructor (data_name, List.map (fun x -> TyVar x) params)
                  ))
           in
-          ( instantiate loc env data_constructor_type,
-            DataConstructor ((loc, data_constructor_type), data_name) )
+          (* Sources should *currently* always be empty since data constructors cannot contain
+             constraints (We are not going to copy that mistake from old Haskell).
+             However, this might change if we ever get GADTs so let's make sure this already
+             handles that case correctly *)
+          let instantiated, targets =
+            instantiate loc env data_constructor_type
+          in
+          ( instantiated,
+            apply_targets loc targets
+              (Typed.DataConstructor ((loc, data_constructor_type), data_name))
+          )
       | None ->
           panic __LOC__
             ("Unbound data constructor in type checker: '"
@@ -999,8 +1099,10 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
                 ("Module does not contain variable: '" ^ Name.pretty key_name
                ^ "'. This should have been caught earlier!")
           | Some ty ->
-              ( instantiate loc env ty,
-                ModSubscript ((loc, ty), mod_name, key_name) )
+              let instantiated, targets = instantiate loc env ty in
+              ( instantiated,
+                apply_targets loc targets
+                  (ModSubscript ((loc, ty), mod_name, key_name)) )
         end
     end
   | RecordUpdate (loc, expr, field_updates) ->
@@ -1043,9 +1145,8 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
             Array.to_list
               (Array.map (fun (x, (_, expr)) -> (x, expr)) field_tys) ) )
   | DynLookup (loc, list_expr, index_expr) ->
-      let list_type, list_expr = infer env list_expr in
       let element_type = fresh_unif env in
-      subsumes env loc list_type (List element_type);
+      let list_expr = check env (List element_type) list_expr in
       let index_expr = check env Number index_expr in
       (element_type, DynLookup (loc, list_expr, index_expr))
   | BinOp (loc, expr1, ((Add | Sub | Mul | Div) as op), expr2) ->
@@ -1097,8 +1198,8 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
          This way, no type is more general than the other, so it doesn't matter which one we
          assign to the if expression as a whole. We arbitrarily pick the type of the then branch.
       *)
-      subsumes env loc then_ty else_ty;
-      subsumes env loc else_ty then_ty;
+      let sources1, targets1 = subsumes env loc then_ty else_ty in
+      let sources2, targets2 = subsumes env loc else_ty then_ty in
 
       (then_ty, If (loc, cond, then_branch, else_branch))
   | Seq (loc, exprs) ->
@@ -1202,6 +1303,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let expr = check env Exception expr in
       let result_type = fresh_unif env in
       (result_type, Raise (loc, expr))
+  | ExprExt (_, void) -> absurd void
 
 and check : local_env -> ty -> expr -> Typed.expr =
  fun env polymorphic_expected_ty expr ->
@@ -1209,7 +1311,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
     (lazy
       (level_prefix env ^ "checking expression '" ^ pretty expr ^ "' : "
       ^ pretty_type polymorphic_expected_ty));
-  let expected_ty, _, env_trans =
+  let expected_ty, _, env_trans, sources =
     skolemize_with_function (get_loc expr) env polymorphic_expected_ty
   in
 
@@ -1217,163 +1319,194 @@ and check : local_env -> ty -> expr -> Typed.expr =
 
   let defer_to_inference () =
     let ty, expr = infer env expr in
-    subsumes env (Typed.get_loc expr) ty expected_ty;
-    expr
+    let sources, targets = subsumes env (Typed.get_loc expr) ty expected_ty in
+    (* infer infers a monotype, so targets shoulda always be empty here *)
+    assert (targets = []);
+    abstract_sources (Typed.get_loc expr) sources expr
   in
-  match (expr, expected_ty) with
-  | Var _, _ -> defer_to_inference ()
-  | DataConstructor _, _ -> defer_to_inference ()
-  | ExceptionConstructor _, _ -> defer_to_inference ()
-  (* Variant constructors would be a bit complicated to check directly
-     and we wouldn't gain much, so we just defer to inference. *)
-  | VariantConstructor _, _ -> defer_to_inference ()
-  | ModSubscriptDataCon (void, _, _, _), _ -> absurd void
-  | App _, _ -> defer_to_inference ()
-  | Lambda (loc, param_patterns, body), expected_ty ->
-      let param_tys, result_ty =
-        split_fun_ty env loc (List.length param_patterns) expected_ty
-      in
 
-      let transformers, param_patterns =
-        match
-          Base.List.map2 param_patterns param_tys ~f:(check_pattern env true)
-        with
-        | Ok typed_pats -> List.split typed_pats
-        | Unequal_lengths ->
-            raise
-              (TypeError
-                 ( loc,
-                   IncorrectNumberOfArgsInLambda
-                     (List.length param_patterns, param_tys, result_ty) ))
-      in
-      let env_transformer = Util.compose transformers in
-      let body = check (env_transformer env) result_ty body in
-      Lambda (loc, param_patterns, body)
-  | StringLit (loc, literal), String -> StringLit (loc, literal)
-  | NumLit (loc, literal), Number -> NumLit (loc, literal)
-  | UnitLit loc, RecordClosed [||] -> UnitLit loc
-  | ListLit (loc, elems), List elem_ty ->
-      let elems = List.map (check env elem_ty) elems in
-      ListLit (loc, elems)
-  | TupleLit (loc, elems), Tuple elem_tys ->
-      let elems =
-        match Base.List.map2 (Array.to_list elem_tys) elems ~f:(check env) with
-        | Ok elems -> elems
-        | Unequal_lengths -> todo __LOC__
-      in
-      TupleLit (loc, elems)
-      (* Record literals would be hard to check directly since the fields are order independent,
-         so we just defer to inference and let the unifier deal with this. *)
-  | RecordLit _, _ -> defer_to_inference ()
-  (* Right now, this case is necessary to match type aliases for literal types (e.g. String).
-     We could do this manually, but we still need this, since with typeclasses
-     there might be actual subtypes for String! (e.g. `forall a. C a => a` where String implements C)
+  abstract_sources (get_loc expr) sources
+    begin
+      match (expr, expected_ty) with
+      | Var _, _ -> defer_to_inference ()
+      | DataConstructor _, _ -> defer_to_inference ()
+      | ExceptionConstructor _, _ -> defer_to_inference ()
+      (* Variant constructors would be a bit complicated to check directly
+         and we wouldn't gain much, so we just defer to inference. *)
+      | VariantConstructor _, _ -> defer_to_inference ()
+      | ModSubscriptDataCon (void, _, _, _), _ -> absurd void
+      | App _, _ -> defer_to_inference ()
+      | Lambda (loc, param_patterns, body), expected_ty ->
+          let param_tys, result_ty =
+            split_fun_ty env loc (List.length param_patterns) expected_ty
+          in
 
-     We could check these directly with `subsumes`, but `defer_to_inference` will do this for us and also works for
-     cases with parameters *)
-  | (StringLit _ | NumLit _ | BoolLit _ | UnitLit _ | ListLit _ | TupleLit _), _
-    ->
-      defer_to_inference ()
-  | StringInterpolation _, _ -> defer_to_inference ()
-  | Subscript (loc, expr, field), expected_ty ->
-      let ext_field = fresh_unif_raw env in
-      let record_ty = RecordUnif ([| (field, expected_ty) |], ext_field) in
-      let expr = check env record_ty expr in
-      Subscript ((loc, expected_ty), expr, field)
-  | ModSubscript _, _ -> defer_to_inference ()
-  (* TODO: I'm not sure if we can do this more intelligently / efficiently in check mode *)
-  | RecordUpdate _, _ -> defer_to_inference ()
-  (* TODO: This can probably be done more efficiently *)
-  | RecordExtension _, _ -> defer_to_inference ()
-  | DynLookup (loc, list_expr, index_expr), element_type ->
-      let list_expr = check env (List element_type) list_expr in
-      let index_expr = check env Number index_expr in
-      DynLookup (loc, list_expr, index_expr)
-  | BinOp (loc, expr1, Cons, expr2), List elem_ty ->
-      let expr1 = check env elem_ty expr1 in
-      let expr2 = check env (List elem_ty) expr2 in
-      BinOp (loc, expr1, Cons, expr2)
-  | BinOp _, _ -> defer_to_inference ()
-  | Not (loc, expr), Bool ->
-      let expr = check env Bool expr in
-      Not (loc, expr)
-  | Not _, _ -> defer_to_inference ()
-  | Range (loc, first, last), List Number ->
-      let first = check env Number first in
-      let last = check env Number last in
-      Range (loc, first, last)
-  | Range _, _ -> defer_to_inference ()
-  | ListComp (loc, result, clauses), List elem_ty ->
-      let env, clauses = check_list_comp env clauses in
-      let result = check env elem_ty result in
-      ListComp (loc, result, clauses)
-  | ListComp _, _ -> defer_to_inference ()
-  | If (loc, cond, then_branch, else_branch), expected_ty ->
-      let cond = check env Bool cond in
-      let then_branch = check env expected_ty then_branch in
-      let else_branch = check env expected_ty else_branch in
-      If (loc, cond, then_branch, else_branch)
-  | Seq (loc, exprs), expected_ty ->
-      let exprs = check_seq env loc expected_ty exprs in
-      Seq (loc, exprs)
-  | ( ( LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _
-      | LetTypeSeq _ | LetExceptionSeq _ | LetClassSeq _ | LetInstanceSeq _ ),
-      _ ) ->
-      panic __LOC__
-        "Found LetSeq expression outside of expression block during \
-         typechecking"
-  | ProgCall _, _ -> defer_to_inference ()
-  | Pipe _, _ -> defer_to_inference ()
-  | EnvVar _, _ -> defer_to_inference ()
-  | Async (loc, expr), Promise elem_ty ->
-      let expr = check env elem_ty expr in
-      Async (loc, expr)
-  | Async _, _ -> defer_to_inference ()
-  | Await (loc, expr), expected_ty ->
-      let expr = check env (Promise expected_ty) expr in
-      Await (loc, expr)
-  | Match (loc, scrutinee, branches), expected_ty ->
-      let scrutinee_type, scrutinee = infer env scrutinee in
+          let transformers, param_patterns =
+            match
+              Base.List.map2 param_patterns param_tys
+                ~f:(check_pattern env true)
+            with
+            | Ok typed_pats -> List.split typed_pats
+            | Unequal_lengths ->
+                raise
+                  (TypeError
+                     ( loc,
+                       IncorrectNumberOfArgsInLambda
+                         (List.length param_patterns, param_tys, result_ty) ))
+          in
+          let env_transformer = Util.compose transformers in
+          let body = check (env_transformer env) result_ty body in
+          Lambda (loc, param_patterns, body)
+      | StringLit (loc, literal), String -> StringLit (loc, literal)
+      | NumLit (loc, literal), Number -> NumLit (loc, literal)
+      | UnitLit loc, RecordClosed [||] -> UnitLit loc
+      | ListLit (loc, elems), List elem_ty ->
+          let elems = List.map (check env elem_ty) elems in
+          ListLit (loc, elems)
+      | TupleLit (loc, elems), Tuple elem_tys ->
+          let elems =
+            match
+              Base.List.map2 (Array.to_list elem_tys) elems ~f:(check env)
+            with
+            | Ok elems -> elems
+            | Unequal_lengths ->
+                raise
+                  (TypeError
+                     ( loc,
+                       TupleLiteralOfWrongLength (List.length elems, elem_tys)
+                     ))
+          in
+          TupleLit (loc, elems)
+          (* Record literals would be hard to check directly since the fields are order independent,
+             so we just defer to inference and let the unifier deal with this. *)
+      | RecordLit _, _ -> defer_to_inference ()
+      (* Right now, this case is necessary to match type aliases for literal types (e.g. String).
+         We could do this manually, but we still need this, since with typeclasses
+         there might be actual subtypes for String! (e.g. `forall a. C a => a` where String implements C)
 
-      let branches =
-        check_match_patterns env expected_ty scrutinee_type branches
-      in
-      Match (loc, scrutinee, branches)
-  | Ascription (loc, expr, ty), expected_ty ->
-      let expr = check env ty expr in
-      subsumes env loc ty expected_ty;
-      Ascription (loc, expr, ty)
-  | Unwrap (loc, expr), expected_ty ->
-      let ty, expr = infer env expr in
-      unwrap_constraint env loc ty expected_ty;
-      Unwrap (loc, expr)
-  | MakeRef (loc, expr), Ref inner_type ->
-      let expr = check env inner_type expr in
-      MakeRef (loc, expr)
-  | MakeRef _, _ -> defer_to_inference ()
-  | Assign (loc, ref_expr, expr), Ref inner_type ->
-      let ref_expr = check env (Ref inner_type) ref_expr in
-      let expr = check env inner_type expr in
-      Assign (loc, ref_expr, expr)
-  | Assign _, _ -> defer_to_inference ()
-  | Try (loc, try_expr, handlers), expected_ty ->
-      let try_expr = check env expected_ty try_expr in
+         We could check these directly with `subsumes`, but `defer_to_inference` will do this for us and also works for
+         cases with parameters *)
+      | ( ( StringLit _ | NumLit _ | BoolLit _ | UnitLit _ | ListLit _
+          | TupleLit _ ),
+          _ ) ->
+          defer_to_inference ()
+      | StringInterpolation _, _ -> defer_to_inference ()
+      | Subscript (loc, expr, field), expected_ty ->
+          let ext_field = fresh_unif_raw env in
+          let record_ty = RecordUnif ([| (field, expected_ty) |], ext_field) in
+          let expr = check env record_ty expr in
+          Subscript ((loc, expected_ty), expr, field)
+      | ModSubscript _, _ -> defer_to_inference ()
+      (* TODO: I'm not sure if we can do this more intelligently / efficiently in check mode *)
+      | RecordUpdate _, _ -> defer_to_inference ()
+      (* TODO: This can probably be done more efficiently *)
+      | RecordExtension _, _ -> defer_to_inference ()
+      | DynLookup (loc, list_expr, index_expr), element_type ->
+          let list_expr = check env (List element_type) list_expr in
+          let index_expr = check env Number index_expr in
+          DynLookup (loc, list_expr, index_expr)
+      | BinOp (loc, expr1, Cons, expr2), List elem_ty ->
+          let expr1 = check env elem_ty expr1 in
+          let expr2 = check env (List elem_ty) expr2 in
+          BinOp (loc, expr1, Cons, expr2)
+      | BinOp _, _ -> defer_to_inference ()
+      | Not (loc, expr), Bool ->
+          let expr = check env Bool expr in
+          Not (loc, expr)
+      | Not _, _ -> defer_to_inference ()
+      | Range (loc, first, last), List Number ->
+          let first = check env Number first in
+          let last = check env Number last in
+          Range (loc, first, last)
+      | Range _, _ -> defer_to_inference ()
+      | ListComp (loc, result, clauses), List elem_ty ->
+          let env, clauses = check_list_comp env clauses in
+          let result = check env elem_ty result in
+          ListComp (loc, result, clauses)
+      | ListComp _, _ -> defer_to_inference ()
+      | If (loc, cond, then_branch, else_branch), expected_ty ->
+          let cond = check env Bool cond in
+          let then_branch = check env expected_ty then_branch in
+          let else_branch = check env expected_ty else_branch in
+          If (loc, cond, then_branch, else_branch)
+      | Seq (loc, exprs), expected_ty ->
+          let exprs = check_seq env loc expected_ty exprs in
+          Seq (loc, exprs)
+      | ( ( LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _
+          | LetTypeSeq _ | LetExceptionSeq _ | LetClassSeq _ | LetInstanceSeq _
+            ),
+          _ ) ->
+          panic __LOC__
+            "Found LetSeq expression outside of expression block during \
+             typechecking"
+      | ProgCall _, _ -> defer_to_inference ()
+      | Pipe _, _ -> defer_to_inference ()
+      | EnvVar _, _ -> defer_to_inference ()
+      | Async (loc, expr), Promise elem_ty ->
+          let expr = check env elem_ty expr in
+          Async (loc, expr)
+      | Async _, _ -> defer_to_inference ()
+      | Await (loc, expr), expected_ty ->
+          let expr = check env (Promise expected_ty) expr in
+          Await (loc, expr)
+      | Match (loc, scrutinee, branches), expected_ty ->
+          let scrutinee_type, scrutinee = infer env scrutinee in
 
-      let check_handler (pattern, body) =
-        let env_trans, pattern = check_pattern env true pattern Exception in
-        let body = check (env_trans env) expected_ty body in
+          let branches =
+            check_match_patterns env expected_ty scrutinee_type branches
+          in
+          Match (loc, scrutinee, branches)
+      | Ascription (loc, expr, ty), expected_ty ->
+          let expr = check env ty expr in
+          let sources, targets = subsumes env loc ty expected_ty in
+          Ascription (loc, expr, ty)
+      | Unwrap (loc, expr), expected_ty ->
+          let ty, expr = infer env expr in
+          unwrap_constraint env loc ty expected_ty;
+          Unwrap (loc, expr)
+      | MakeRef (loc, expr), Ref inner_type ->
+          let expr = check env inner_type expr in
+          MakeRef (loc, expr)
+      | MakeRef _, _ -> defer_to_inference ()
+      | Assign (loc, ref_expr, expr), Ref inner_type ->
+          let ref_expr = check env (Ref inner_type) ref_expr in
+          let expr = check env inner_type expr in
+          Assign (loc, ref_expr, expr)
+      | Assign _, _ -> defer_to_inference ()
+      | Try (loc, try_expr, handlers), expected_ty ->
+          let try_expr = check env expected_ty try_expr in
 
-        (pattern, body)
-      in
+          let check_handler (pattern, body) =
+            let env_trans, pattern = check_pattern env true pattern Exception in
+            let body = check (env_trans env) expected_ty body in
 
-      let handlers = List.map check_handler handlers in
+            (pattern, body)
+          in
 
-      Try (loc, try_expr, handlers)
-  (* Raise returns something of type forall a. a, so we can safely ignore the type it is checked against.
-     This also makes it possible to check a raise expression against a polytype without impredicativity. *)
-  | Raise (loc, expr), _ ->
-      let expr = check env Exception expr in
-      Raise (loc, expr)
+          let handlers = List.map check_handler handlers in
+
+          Try (loc, try_expr, handlers)
+      (* Raise returns something of type forall a. a, so we can safely ignore the type it is checked against.
+         This also makes it possible to check a raise expression against a polytype without impredicativity. *)
+      | Raise (loc, expr), _ ->
+          let expr = check env Exception expr in
+          Raise (loc, expr)
+      | ExprExt (_, void), _ -> absurd void
+    end
+
+and abstract_sources :
+    loc -> Evidence.source list list -> Typed.expr -> Typed.expr =
+ fun loc sources expr ->
+  List.fold_right
+    (fun sources expr -> Typed.ExprExt (loc, DictLambda (sources, expr)))
+    sources expr
+
+and apply_targets : loc -> Evidence.target list list -> Typed.expr -> Typed.expr
+    =
+ fun loc targets (expr : Typed.expr) ->
+  List.fold_left
+    (fun expr targets -> Typed.ExprExt (loc, DictApp (expr, targets)))
+    expr targets
 
 and check_list_comp :
     local_env ->
@@ -1412,7 +1545,7 @@ and check_seq_expr :
   | LetSeq (loc, pat, body) ->
       let generalizable = is_value body in
       let ty, env_trans, pat = infer_pattern env generalizable pat in
-      let ty, skolemizer, skolem_env_trans =
+      let ty, skolemizer, skolem_env_trans, expr_trans =
         skolemize_with_function loc env ty
       in
       let env = skolem_env_trans env in
@@ -1441,14 +1574,22 @@ and check_seq_expr :
       in
       (env_trans, LetSeq (loc, pat, body))
   | LetRecSeq (loc, mty, fun_name, patterns, body) ->
-      let arg_tys, transformers, patterns, result_ty, ty_skolemizer, env_trans =
+      let ( arg_tys,
+            transformers,
+            patterns,
+            result_ty,
+            ty_skolemizer,
+            env_trans,
+            sources ) =
         match Option.map (skolemize_with_function loc.main env) mty with
         | None ->
             let arg_tys, transformers, patterns =
               Util.split3 (List.map (infer_pattern env true) patterns)
             in
-            (arg_tys, transformers, patterns, fresh_unif env, Fun.id, Fun.id)
-        | Some (Fun (arg_tys, result_ty), ty_skolemizer, env_transformer) ->
+            (arg_tys, transformers, patterns, fresh_unif env, Fun.id, Fun.id, [])
+        | Some
+            (Fun (arg_tys, result_ty), ty_skolemizer, env_transformer, sources)
+          ->
             let transformers, patterns =
               match
                 Base.List.map2 patterns arg_tys
@@ -1468,8 +1609,9 @@ and check_seq_expr :
               patterns,
               result_ty,
               ty_skolemizer,
-              env_transformer )
-        | Some (ty, _, _) ->
+              env_transformer,
+              sources )
+        | Some (ty, _, _, _) ->
             raise (TypeError (loc.main, NonFunTypeInLetRec (fun_name, ty)))
       in
       let env = env_trans env in
@@ -1509,7 +1651,10 @@ and check_seq_expr :
             fun inner_env -> check inner_env result_ty body
           end
       in
-      (env_trans, LetRecSeq ((loc, fun_ty), mty, fun_name, patterns, body))
+      ( env_trans,
+        (* TODO: I don't think this concat is correct :/ It doesn't make a difference *yet* though
+           since all constraints are atomic for now *)
+        LetRecSeq ((loc, fun_ty, List.concat sources), mty, fun_name, patterns, body) )
   | LetEnvSeq (loc, envvar, expr) ->
       (* TODO: Once typeclasses are implemented, the expr should really just have to implement
          some kind of 'ToString' typeclass. For now we require the expr to be an exact string though *)
@@ -1604,8 +1749,12 @@ and check_seq_expr :
       in
       let methods = List.map check_method methods in
 
-      ( emit_givens loc [ { class_name; variables = []; arguments } ],
-        LetInstanceSeq (loc, class_name, arguments, methods) )
+      let given_source = Evidence.make_source () in
+
+      (* TODO: Annotate the instance with its given source here *)
+      ( emit_givens loc
+          [ ({ class_name; variables = []; arguments }, given_source) ],
+        LetInstanceSeq ((loc, given_source), class_name, arguments, methods) )
   | LetExceptionSeq (loc, exception_name, params, message_expr) ->
       let message_env =
         List.fold_right (fun (param, ty) r -> insert_var param ty r) params env
@@ -1665,7 +1814,9 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
  fun env loc expected_ty exprs ->
   match exprs with
   | [] ->
-      subsumes env loc expected_ty Ty.unit;
+      let sources, targets = subsumes env loc Ty.unit expected_ty in
+      assert (targets = []);
+      todo __LOC__ sources;
       []
   | [
    (( LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _
@@ -1678,8 +1829,11 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
       *)
       let _, expr = check_seq_expr env `Check expr in
       (* In tail position, these should return unit *)
-      subsumes env (Typed.get_loc expr) expected_ty Ty.unit;
-      [ expr ]
+      let sources, targets =
+        subsumes env (Typed.get_loc expr) expected_ty Ty.unit
+      in
+      assert (sources = []);
+      [ apply_targets loc targets expr ]
   | [ expr ] -> [ check env expected_ty expr ]
   | expr :: exprs ->
       let env_trans, expr = check_seq_expr env `Check expr in
@@ -2342,7 +2496,8 @@ let solve_interpolatable loc env state ty definition_env =
             Difflist.snoc !deferred_constraint_ref
               (Interpolatable (loc, ty, definition_env)))
 
-let solve_wanted_class loc env unify_state wanted givens local_env =
+let solve_wanted_class loc env unify_state wanted givens local_env
+    evidence_target =
   let lock_traversal =
     object
       inherit [ty TyperefMap.t] Traversal.traversal
@@ -2368,7 +2523,7 @@ let solve_wanted_class loc env unify_state wanted givens local_env =
   in
 
   let find_matching_given = function
-    | GivenClass (loc, given) ->
+    | GivenClass { loc; given; evidence } ->
         if not (Name.equal wanted.class_name given.class_name) then begin
           None
         end
@@ -2417,6 +2572,7 @@ let solve_wanted_class loc env unify_state wanted givens local_env =
           with
           | () ->
               trace_class (lazy (class_trace_diagnostic () ^ " -> Success"));
+              Evidence.fill_target evidence_target evidence;
               Some ()
           | exception TypeError _ ->
               trace_class (lazy (class_trace_diagnostic () ^ " -> Failure"));
@@ -2431,7 +2587,7 @@ let solve_wanted_class loc env unify_state wanted givens local_env =
       | Some deferred_constraint_ref ->
           deferred_constraint_ref :=
             Difflist.snoc !deferred_constraint_ref
-              (WantedClass (loc, wanted, givens, local_env)))
+              (WantedClass { loc; wanted; givens; local_env; evidence_target }))
 
 let solve_constraints : local_env -> ty_constraint list -> unit =
  fun env constraints ->
@@ -2450,9 +2606,9 @@ let solve_constraints : local_env -> ty_constraint list -> unit =
               definition_env
         | Interpolatable (loc, ty, definition_env) ->
             solve_interpolatable loc env unify_state ty definition_env
-        | WantedClass (loc, wanted_constraint, givens, local_env) ->
-            solve_wanted_class loc env unify_state wanted_constraint givens
-              local_env
+        | WantedClass { loc; wanted; givens; local_env; evidence_target } ->
+            solve_wanted_class loc env unify_state wanted givens local_env
+              evidence_target
       end
       constraints
   in
@@ -2601,7 +2757,7 @@ let typecheck_top_level :
         local_types = NameMap.empty;
         module_var_contents = NameMap.empty;
         constraints = local_env.constraints;
-        given_constraints = [];
+        given_constraints = local_env.given_constraints;
         data_definitions = NameMap.empty;
         exception_definitions = NameMap.empty;
         type_aliases = NameMap.empty;
@@ -2731,5 +2887,5 @@ let empty_env =
     type_aliases = NameMap.empty;
     type_classes = NameMap.empty;
     ambient_level = Typeref.initial_top_level;
-    given_constraints = []
+    given_constraints = [];
   }

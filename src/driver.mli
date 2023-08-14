@@ -5,6 +5,7 @@ type driver_options = {
   argv : string list;
   print_ast : bool;
   print_renamed : bool;
+  print_typed : bool;
   print_tokens : bool;
 }
 

@@ -39,6 +39,7 @@ type type_error =
   | IncorrectNumberOfExceptionArgs of name * int * ty list
   | PatternError of Pattern.pattern_error
   | MissingInstance of class_constraint
+  | TupleLiteralOfWrongLength of int * ty array
 
 exception TypeError of loc * type_error
 

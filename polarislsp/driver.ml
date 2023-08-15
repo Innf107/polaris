@@ -6,6 +6,7 @@ let run_polaris ~filename lexbuf =
         argv = [];
         print_ast = false;
         print_renamed = false;
+        print_typed = false;
         print_tokens = false;
       }
   in

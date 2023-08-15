@@ -52,7 +52,7 @@ let build exprs =
             ( expr,
               Difflist.snoc hover_entries
                 (loc.subloc, (loc.subloc, Subscript (key, ty))) )
-        | Typed.LetRecSeq ((loc, ty), _, name, _, _) ->
+        | Typed.LetRecSeq ((loc, ty, _), _, name, _, _) ->
             ( expr,
               Difflist.snoc hover_entries
                 (loc.subloc, (loc.subloc, VarLike (name, ty))) )

@@ -694,6 +694,7 @@ let rec infer_pattern :
       let right_trans, right = check_pattern env allow_polytype right left_ty in
       (left_ty, left_trans << right_trans, OrPat (loc, left, right))
   | TypePat (loc, pattern, ty) ->
+      (* TODO: Should this skolemize ty? *)
       let env_trans, pattern = check_pattern env allow_polytype pattern ty in
       (ty, env_trans, TypePat (loc, pattern, ty))
   | DataPat (loc, constructor_name, pattern) ->
@@ -834,6 +835,8 @@ and check_pattern :
     in
     (* infer_pattern only infers monotypes (TODO: does it?!)*)
     assert (targets = []);
+    (* TODO: No idea how we are going to abstract the sources here.
+       Concretely, how are we going to desugar `let (x : forall a. Eq a => a -> a, y) = (\x -> x, 5)` *)
     todo __LOC__;
     (trans, pattern)
   in
@@ -1459,6 +1462,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
       | Ascription (loc, expr, ty), expected_ty ->
           let expr = check env ty expr in
           let sources, targets = subsumes env loc ty expected_ty in
+          todo __LOC__;
           Ascription (loc, expr, ty)
       | Unwrap (loc, expr), expected_ty ->
           let ty, expr = infer env expr in

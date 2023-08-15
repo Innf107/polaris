@@ -31,12 +31,7 @@ let max z list = List.fold_left (fun r x -> if x > r then x else r) z list
 let pad_right count padding str =
   str ^ String.make (count - String.length str) padding
 
-type unreachable
-
-type 'a _void =
-  | UnreachableVoid : unreachable _void
-
-type void = unit _void
+type void = |
 
 let absurd : void -> 'a 
   = function

@@ -137,14 +137,46 @@ module Value = struct
         ^ ")"
     | RefV value -> "<ref: " ^ pretty !value ^ ">"
 
-  let rec as_args (fail : t -> 'a) (x : t) : string list =
+  let set_up_closure_argument ~cap env patterns body =
+    let random_suffix () = Int.to_string (Int.abs (Base.Random.bits ())) in
+
+    let tempdir =
+      Filename.get_temp_dir_name () ^ Filename.dir_sep ^ random_suffix ()
+    in
+    Eio.Path.mkdir ~perm:0o700 Eio.Path.(cap.fs / tempdir);
+
+    let child_file_path = tempdir ^ Filename.dir_sep ^ "closure" in
+
+    let child_init_channel_path = tempdir ^ Filename.dir_sep ^ "init" in
+    Unix.mkfifo child_init_channel_path 0o600;
+
+    let file_content = "#!/usr/bin/bash\necho AAA" in
+    Eio.Path.save ~append:false
+      Eio.Path.(cap.fs / child_file_path)
+      file_content
+      ~create:Eio.Fs.(`Or_truncate 0o700);
+
+    (* We spawn a fiber in the background, which in turn spawns new fibers for every
+       initialization from the child.
+       TODO: Kill this fiber when the parent switch (try block) finishes *)
+    Eio.Fiber.fork ~sw:cap.switch
+      begin
+        fun () -> 
+          (* TODO: spawn a new fiber and pipes that evaluates the closure with 
+             the correct stdin and stdout every time something is sent through init  *)
+          ()
+      end;
+    [ child_file_path ]
+
+  let rec as_args ~cap (fail : t -> 'a) (x : t) : string list =
     match x with
     | StringV v -> [ v ]
     | NumV _
     | BoolV _ ->
         [ pretty x ]
+    | ClosureV (env, patterns, body) ->
+        set_up_closure_argument ~cap env patterns body
     (* TODO: Should records/maps be converted to JSON? *)
-    | ClosureV _
     | PrimOpV _
     | TupleV _
     | RecordV _
@@ -156,7 +188,7 @@ module Value = struct
     | PartialExceptionV _
     | ExceptionV _ ->
         fail x
-    | ListV x -> List.concat_map (as_args fail) x
+    | ListV x -> List.concat_map (as_args ~cap fail) x
 end
 
 let lookup_var (env : eval_env) (loc : loc) (var : name) : value =
@@ -474,7 +506,7 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
         begin
           fun () ->
             let output_lines =
-              Value.as_args
+              Value.as_args ~cap
                 (fun value ->
                   panic __LOC__
                     (Loc.pretty loc ^ ": Invalid process argument at runtime: "
@@ -897,7 +929,7 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
         begin
           fun () ->
             let output_lines =
-              Value.as_args
+              Value.as_args ~cap
                 (fun value ->
                   panic __LOC__
                     (Loc.pretty loc ^ ": Invalid process argument at runtime: "
@@ -1634,7 +1666,7 @@ and progs_of_exprs ~cap env = function
       in
       let arg_strings =
         List.concat_map
-          (fun arg -> Value.as_args fail (eval_expr ~cap env arg))
+          (fun arg -> Value.as_args ~cap fail (eval_expr ~cap env arg))
           args
       in
       (progName, arg_strings) :: progs_of_exprs ~cap env exprs

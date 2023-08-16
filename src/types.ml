@@ -2106,6 +2106,10 @@ let rec solve_program_arg :
   | Number ->
       ()
   | List ty -> solve_program_arg loc env state ty definition_env
+  | Fun ([ arg_type ], result) ->
+      (* TODO: Until we get type classes, the error messages from this are going to be horrendous... *)
+      solve_unify loc env state arg_type (List String) definition_env;
+      solve_unify loc env state result Number definition_env
   | ty -> (
       match state.deferred_constraints with
       | None ->

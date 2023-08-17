@@ -1,1 +1,5 @@
-aaa
+test/categories/classes/constraint_no_instance.pls:12:7: ERROR:
+Missing instance 'Eq(Bool)'
+   | 
+12 | print(f(true))
+   |       ^

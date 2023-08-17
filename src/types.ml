@@ -509,7 +509,7 @@ let subsumes :
 let rec is_value : expr -> bool = function
   | Var _ -> true
   | DataConstructor _ -> true
-  | ModSubscriptDataCon (void, _, _, _) -> absurd void
+  | ModSubscriptDataCon (void, _, _, _) -> .
   | VariantConstructor (_, _, args) -> List.for_all is_value args
   (* Applications of data constructors to values are safe *)
   | App (_, DataConstructor _, args) -> List.for_all is_value args
@@ -587,7 +587,7 @@ let rec is_value : expr -> bool = function
      If we are, do we need to check that the raised value is a value?
      It's never going to be returned anyway. *)
   | Raise (_, _expr) -> true
-  | ExprExt (_, void) -> absurd void
+  | ExprExt (_, void) -> .
 
 let binds_value : expr -> bool = function
   | LetSeq (_, _, expr) -> is_value expr
@@ -873,7 +873,10 @@ and check_pattern :
             ~f:(check_pattern env allow_polytype)
         with
         | Ok transformers_and_patterns -> List.split transformers_and_patterns
-        | Unequal_lengths -> todo __LOC__
+        | Unequal_lengths ->
+            raise
+              (TypeError
+                 (loc, TupleLiteralOfWrongLength (List.length patterns, arg_tys)))
       in
       (Util.compose transformers, TuplePat (loc, patterns))
   | TuplePat _, _ -> defer_to_inference ()
@@ -895,6 +898,7 @@ and check_pattern :
       end;
 
       let sources, targets = subsumes env loc ty expected_ty in
+      todo __LOC__;
       check_pattern env allow_polytype pattern ty
   | ( DataPat (loc, data_name, underlying_pattern),
       TyConstructor (constr_name, args) )
@@ -925,6 +929,7 @@ and check_pattern :
 
 let rec split_fun_ty : local_env -> loc -> int -> ty -> ty list * ty =
  fun env loc arg_count ty ->
+  assert (not (is_polytype env ty));
   match normalize_unif ty with
   | Fun (args, result) ->
       (* TODO: Should we check that the argument count matches here? *)
@@ -945,13 +950,15 @@ let rec split_fun_ty : local_env -> loc -> int -> ty -> ty list * ty =
       let sources, targets =
         subsumes env loc ty (Fun (argument_types, result_type))
       in
-      todo __LOC__;
+      assert (sources = []);
+      assert (targets = []);
       (argument_types, result_type)
 
 (** Find the type under a reference. This will match on the type directly if possible or
     use unification otherwise *)
 let rec split_ref_ty : local_env -> loc -> ty -> ty =
  fun env loc ty ->
+  assert (not (is_polytype env ty));
   match normalize_unif ty with
   | Ref ty -> ty
   | TypeAlias (alias_name, args) ->
@@ -960,7 +967,8 @@ let rec split_ref_ty : local_env -> loc -> ty -> ty =
   | ty ->
       let inner_type = fresh_unif env in
       let sources, targets = subsumes env loc ty (Ref inner_type) in
-      todo __LOC__;
+      assert (sources = []);
+      assert (targets = []);
       inner_type
 
 let rec infer : local_env -> expr -> ty * Typed.expr =
@@ -1025,7 +1033,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let ext_field = fresh_unif_raw env in
       ( VariantUnif ([| (constructor_name, arg_types) |], ext_field),
         VariantConstructor (loc, constructor_name, args) )
-  | ModSubscriptDataCon (void, _, _, _) -> absurd void
+  | ModSubscriptDataCon (void, _, _, _) -> .
   | App (loc, fun_expr, args) ->
       (* We infer the function type and then match the arguments against that.
          This is both more efficient than inferring the arguments first, since most functions
@@ -1203,6 +1211,11 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       *)
       let sources1, targets1 = subsumes env loc then_ty else_ty in
       let sources2, targets2 = subsumes env loc else_ty then_ty in
+      (* All inferred types are ρ-types so we don't need to worry about evidence here *)
+      assert (sources1 = []);
+      assert (sources2 = []);
+      assert (targets1 = []);
+      assert (targets2 = []);
 
       (then_ty, If (loc, cond, then_branch, else_branch))
   | Seq (loc, exprs) ->
@@ -1306,7 +1319,7 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let expr = check env Exception expr in
       let result_type = fresh_unif env in
       (result_type, Raise (loc, expr))
-  | ExprExt (_, void) -> absurd void
+  | ExprExt (_, void) -> .
 
 and check : local_env -> ty -> expr -> Typed.expr =
  fun env polymorphic_expected_ty expr ->
@@ -1337,7 +1350,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
       (* Variant constructors would be a bit complicated to check directly
          and we wouldn't gain much, so we just defer to inference. *)
       | VariantConstructor _, _ -> defer_to_inference ()
-      | ModSubscriptDataCon (void, _, _, _), _ -> absurd void
+      | ModSubscriptDataCon (void, _, _, _), _ -> .
       | App _, _ -> defer_to_inference ()
       | Lambda (loc, param_patterns, body), expected_ty ->
           let param_tys, result_ty =
@@ -1462,8 +1475,8 @@ and check : local_env -> ty -> expr -> Typed.expr =
       | Ascription (loc, expr, ty), expected_ty ->
           let expr = check env ty expr in
           let sources, targets = subsumes env loc ty expected_ty in
-          todo __LOC__;
-          Ascription (loc, expr, ty)
+          assert (sources = []);
+          Ascription (loc, apply_targets loc targets expr, ty)
       | Unwrap (loc, expr), expected_ty ->
           let ty, expr = infer env expr in
           unwrap_constraint env loc ty expected_ty;
@@ -1495,7 +1508,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
       | Raise (loc, expr), _ ->
           let expr = check env Exception expr in
           Raise (loc, expr)
-      | ExprExt (_, void), _ -> absurd void
+      | ExprExt (_, void), _ -> .
     end
 
 and abstract_sources :
@@ -1658,7 +1671,8 @@ and check_seq_expr :
       ( env_trans,
         (* TODO: I don't think this concat is correct :/ It doesn't make a difference *yet* though
            since all constraints are atomic for now *)
-        LetRecSeq ((loc, fun_ty, List.concat sources), mty, fun_name, patterns, body) )
+        LetRecSeq
+          ((loc, fun_ty, List.concat sources), mty, fun_name, patterns, body) )
   | LetEnvSeq (loc, envvar, expr) ->
       (* TODO: Once typeclasses are implemented, the expr should really just have to implement
          some kind of 'ToString' typeclass. For now we require the expr to be an exact string though *)
@@ -1820,8 +1834,13 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
   | [] ->
       let sources, targets = subsumes env loc Ty.unit expected_ty in
       assert (targets = []);
-      todo __LOC__ sources;
-      []
+      begin
+        match sources with
+        | [] -> []
+        (* If the expected type adds any evidence, we desugar to a unit literal instead
+           of an empty sequence in order to apply the correct dictionary abstractions *)
+        | sources -> [ abstract_sources loc sources (UnitLit loc) ]
+      end
   | [
    (( LetSeq _ | LetRecSeq _ | LetEnvSeq _ | LetModuleSeq _ | LetDataSeq _
     | LetTypeSeq _ ) as expr);

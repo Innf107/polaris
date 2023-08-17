@@ -40,6 +40,8 @@ let handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a =
   | Rename.RenameError err -> handler (RenameError err)
   | Types.TypeError (loc, err) -> handler (TypeError (loc, err))
   | Eval.EvalError err -> handler (EvalError err)
+  | Assert_failure _ as exn -> handler (Panic ("Assertion failure: " ^ Printexc.to_string exn))
+  | err -> handler (Panic ("Exception: " ^ Printexc.to_string err))
 
 let pretty_call_trace (locs : loc list) =
   match locs with

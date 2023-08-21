@@ -21,6 +21,7 @@ depends: [
   "bestline"
   "eio"
   "eio_main"
+  "ocaml-embed-file"
   "odoc" {with-doc}
 ]
 build: [

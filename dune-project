@@ -30,7 +30,8 @@
   ppx_yojson_conv
   bestline
   eio
-  eio_main)
+  eio_main
+  ocaml-embed-file)
  (tags
   (topics "to describe" your project)))
 

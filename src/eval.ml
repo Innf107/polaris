@@ -5,6 +5,9 @@ module VarMap = Map.Make (Name)
 module EnvMap = Map.Make (String)
 module RecordVImpl = Multimap.Make (String)
 
+let _argclosure_category, trace_argclosure =
+  Trace.make ~flag:"argclosure" ~prefix:"ArgClosure"
+
 type eval_capabilities = {
   switch : Eio.Switch.t;
   fs : Eio.Fs.dir Eio.Path.t;
@@ -136,59 +139,6 @@ module Value = struct
                args)
         ^ ")"
     | RefV value -> "<ref: " ^ pretty !value ^ ">"
-
-  let set_up_closure_argument ~cap env patterns body =
-    let random_suffix () = Int.to_string (Int.abs (Base.Random.bits ())) in
-
-    let tempdir =
-      Filename.get_temp_dir_name () ^ Filename.dir_sep ^ random_suffix ()
-    in
-    Eio.Path.mkdir ~perm:0o700 Eio.Path.(cap.fs / tempdir);
-
-    let child_file_path = tempdir ^ Filename.dir_sep ^ "closure" in
-
-    let child_init_channel_path = tempdir ^ Filename.dir_sep ^ "init" in
-    Unix.mkfifo child_init_channel_path 0o600;
-
-    let file_content = "#!/usr/bin/bash\necho AAA" in
-    Eio.Path.save ~append:false
-      Eio.Path.(cap.fs / child_file_path)
-      file_content
-      ~create:Eio.Fs.(`Or_truncate 0o700);
-
-    (* We spawn a fiber in the background, which in turn spawns new fibers for every
-       initialization from the child.
-       TODO: Kill this fiber when the parent switch (try block) finishes *)
-    Eio.Fiber.fork ~sw:cap.switch
-      begin
-        fun () -> 
-          (* TODO: spawn a new fiber and pipes that evaluates the closure with 
-             the correct stdin and stdout every time something is sent through init  *)
-          ()
-      end;
-    [ child_file_path ]
-
-  let rec as_args ~cap (fail : t -> 'a) (x : t) : string list =
-    match x with
-    | StringV v -> [ v ]
-    | NumV _
-    | BoolV _ ->
-        [ pretty x ]
-    | ClosureV (env, patterns, body) ->
-        set_up_closure_argument ~cap env patterns body
-    (* TODO: Should records/maps be converted to JSON? *)
-    | PrimOpV _
-    | TupleV _
-    | RecordV _
-    | PromiseV _
-    | DataConV _
-    | PartialDataConV _
-    | RefV _
-    | VariantConstructorV _
-    | PartialExceptionV _
-    | ExceptionV _ ->
-        fail x
-    | ListV x -> List.concat_map (as_args ~cap fail) x
 end
 
 let lookup_var (env : eval_env) (loc : loc) (var : name) : value =
@@ -506,7 +456,7 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
         begin
           fun () ->
             let output_lines =
-              Value.as_args ~cap
+              value_as_args ~cap loc
                 (fun value ->
                   panic __LOC__
                     (Loc.pretty loc ^ ": Invalid process argument at runtime: "
@@ -929,7 +879,7 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
         begin
           fun () ->
             let output_lines =
-              Value.as_args ~cap
+              value_as_args ~cap loc
                 (fun value ->
                   panic __LOC__
                     (Loc.pretty loc ^ ": Invalid process argument at runtime: "
@@ -1137,6 +1087,160 @@ and eval_app ~cap env loc fun_v arg_vals =
       panic __LOC__
         (Loc.pretty loc ^ ": Trying to apply non-function at runtime: "
        ^ Value.pretty value)
+
+and value_as_args ~cap loc (fail : value -> 'a) (x : value) : string list =
+  match x with
+  | StringV v -> [ v ]
+  | NumV _
+  | BoolV _ ->
+      [ Value.pretty x ]
+  | ClosureV (env, patterns, body) ->
+      set_up_closure_argument ~cap loc env patterns body
+  (* TODO: Should records/maps be converted to JSON? *)
+  | PrimOpV _
+  | TupleV _
+  | RecordV _
+  | PromiseV _
+  | DataConV _
+  | PartialDataConV _
+  | RefV _
+  | VariantConstructorV _
+  | PartialExceptionV _
+  | ExceptionV _ ->
+      fail x
+  | ListV x -> List.concat_map (value_as_args ~cap loc fail) x
+
+and set_up_closure_argument ~cap loc env patterns body =
+  let random_suffix () = Int.to_string (Int.abs (Base.Random.bits ())) in
+  let tempdir =
+    Filename.get_temp_dir_name () ^ Filename.dir_sep ^ random_suffix ()
+  in
+  Eio.Path.mkdir ~perm:0o700 Eio.Path.(cap.fs / tempdir);
+
+  trace_argclosure (lazy ("setting up closure in " ^ tempdir));
+
+  let child_file_path = tempdir ^ Filename.dir_sep ^ "closure" in
+
+  let child_init_channel_path = tempdir ^ Filename.dir_sep ^ "init" in
+  Unix.mkfifo child_init_channel_path 0o600;
+
+  let child_channels_channel_path = tempdir ^ Filename.dir_sep ^ "channels" in
+  Unix.mkfifo child_channels_channel_path 0o600;
+
+  Eio.Path.save ~append:false
+    Eio.Path.(cap.fs / child_file_path)
+    Closurewrapper.closurewrapper_dot_exe
+    ~create:Eio.Fs.(`Or_truncate 0o700);
+
+  let parse_channel_args init_channel =
+    trace_argclosure (lazy "parsing arguments...");
+    let reader = Eio.Buf_read.of_flow ~max_size:Int.max_int init_channel in
+    let arg_count = Eio.Buf_read.LE.uint64 reader in
+    trace_argclosure
+      (lazy ("expecting " ^ Int64.to_string arg_count ^ " arguments"));
+
+    let arguments =
+      List.init (Int64.to_int arg_count) (fun _ ->
+          let arg_size = Eio.Buf_read.LE.uint64 reader in
+          Eio.Buf_read.take (Int64.to_int arg_size) reader)
+    in
+
+    trace_argclosure
+      (lazy
+        ("arguments: "
+        ^ String.concat ", "
+            (List.map (fun arg -> "\"" ^ String.escaped arg ^ "\"") arguments)));
+    arguments
+  in
+
+  let evaluate_closure ~cap args channels_channel =
+    let id = Int64.of_int (Int.abs (Base.Random.bits ())) in
+    trace_argclosure
+      (lazy ("Evaluating execution with id: " ^ Int64.to_string id));
+
+    let stdin_path =
+      tempdir ^ Filename.dir_sep ^ Int64.to_string id ^ "_stdin"
+    in
+    Unix.mkfifo stdin_path 0o600;
+    let stdout_path =
+      tempdir ^ Filename.dir_sep ^ Int64.to_string id ^ "_stdout"
+    in
+    Unix.mkfifo stdout_path 0o600;
+    let exit_code_path =
+      tempdir ^ Filename.dir_sep ^ Int64.to_string id ^ "_exit_code"
+    in
+    Unix.mkfifo exit_code_path 0o600;
+
+    Eio.Buf_write.with_flow channels_channel (fun writer ->
+        Eio.Buf_write.LE.uint64 writer id);
+
+    (* TODO: Set up stdin/stdout correctly, rather than just opening them and forgetting about them *)
+    let stdout_flow =
+      Eio.Path.open_out ~sw:cap.switch ~create:`Never
+        Eio.Path.(cap.fs / stdout_path)
+    in
+    let stdin_flow =
+      Eio.Path.open_in ~sw:cap.switch Eio.Path.(cap.fs / stdin_path)
+    in
+
+    let exit_code_value =
+      eval_app ~cap (Lazy.force env) loc
+        (ClosureV (env, patterns, body))
+        [ ListV (List.map (fun x -> StringV x) args) ]
+    in
+    let exit_code =
+      match exit_code_value with
+      | NumV code -> Int.of_float code
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc
+           ^ ": Program call closure returned non-number at runtime")
+    in
+    trace_argclosure
+      (lazy
+        ("closure execution " ^ Int64.to_string id ^ " exited with code: "
+       ^ Int.to_string exit_code));
+
+    (* We need to run this in a system thread since we need to open the exit code pipe in
+       write mode (Eio.Path.with_open_out would open it in read/write) so that it blocks until
+       the other side has been opened *)
+    Eio_unix.run_in_systhread (fun () ->
+        Out_channel.with_open_bin exit_code_path (fun out_channel ->
+            let buffer = Buffer.create 8 in
+            Buffer.add_int64_le buffer (Int64.of_int exit_code);
+            Out_channel.output_bytes out_channel (Buffer.to_bytes buffer)))
+  in
+
+  (* We spawn a fiber in the background, which in turn spawns new fibers for every
+     initialization from the child. *)
+  Eio.Fiber.fork_daemon ~sw:cap.switch
+    begin
+      fun () ->
+        Eio.Path.with_open_in
+          Eio.Path.(cap.fs / child_init_channel_path)
+          begin
+            fun init_channel ->
+              Eio.Path.with_open_out ~create:`Never
+                Eio.Path.(cap.fs / child_channels_channel_path)
+                begin
+                  fun channels_channel ->
+                    while true do
+                      (* TODO: This might need to re-open the init channel *)
+                      let args = parse_channel_args init_channel in
+
+                      Eio.Fiber.fork ~sw:cap.switch (fun () ->
+                          evaluate_closure ~cap args channels_channel);
+
+                      (* TODO: Remove this sleep lol *)
+                      Eio_unix.sleep 5.0
+                    done;
+                    (* The daemon never returns but OCaml is not smart enough to understand that so
+                       we need to return `Stop_daemon explicitly here *)
+                    `Stop_daemon
+                end
+          end
+    end;
+  [ child_file_path ]
 
 (* This takes a continuation argument in order to stay mutually tail recursive with eval_expr *)
 and eval_seq_cont :
@@ -1666,7 +1770,7 @@ and progs_of_exprs ~cap env = function
       in
       let arg_strings =
         List.concat_map
-          (fun arg -> Value.as_args ~cap fail (eval_expr ~cap env arg))
+          (fun arg -> value_as_args ~cap loc fail (eval_expr ~cap env arg))
           args
       in
       (progName, arg_strings) :: progs_of_exprs ~cap env exprs

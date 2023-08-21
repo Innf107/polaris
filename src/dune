@@ -1,11 +1,33 @@
 (library
  (name polaris)
- (libraries menhirLib trees_that_grow bestline re eio eio.unix eio_posix base)
+ (libraries
+  menhirLib
+  trees_that_grow
+  bestline
+  re
+  eio
+  eio.unix
+  eio_posix
+  base)
  (preprocess
   (pps trees_that_grow)))
 
 (menhir
  (modules parser))
+
+(rule
+ (target closurewrapper.exe)
+ (deps closurewrapper/main.rs)
+ (action
+  (chdir
+   closurewrapper
+   (run rustc main.rs -o "../closurewrapper.exe"))))
+
+(rule
+ (target closurewrapper.ml)
+ (deps closurewrapper.exe)
+ (action
+  (run ocaml-embed-file closurewrapper.exe -output closurewrapper)))
 
 (env
  (dev

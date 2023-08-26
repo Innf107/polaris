@@ -46,7 +46,7 @@ module RenameScope = struct
        just check that type constructors are always fully applied in the renamer. *)
     ty_constructors : (name * int * type_constructor_sort) RenameMap.t;
     data_constructors : (name * data_constructor_sort) RenameMap.t;
-    type_classes : (name * Renamed.ty) StringMap.t NameMap.t;
+    type_classes : (name list * (name * Renamed.ty) StringMap.t) NameMap.t;
   }
 
   let empty : t =
@@ -87,10 +87,11 @@ module RenameScope = struct
       data_constructors = add old (renamed, sort) scope.data_constructors;
     }
 
-  let insert_type_class class_name method_names scope =
+  let insert_type_class class_name params method_names scope =
     {
       scope with
-      type_classes = NameMap.add class_name method_names scope.type_classes;
+      type_classes =
+        NameMap.add class_name (params, method_names) scope.type_classes;
     }
 
   let lookup_var (scope : t) (loc : loc) (var : string) : name =
@@ -429,6 +430,7 @@ let rec rename_mod_expr :
                    RenameScope.insert_type_constructor name.name name
                      (List.length params) ClassSort
                      (RenameScope.insert_type_class name
+                        params
                         (StringMap.of_seq
                            (Seq.map
                               (fun (name, ty) -> (name.name, (name, ty)))
@@ -832,7 +834,9 @@ and rename_seq_state
              methods')
           (insert_type_constructor class_name class_name' (List.length params)
              ClassSort
-             (insert_type_class class_name' method_map scope))
+             (insert_type_class class_name'
+                (List.map snd renamed_params)
+                method_map scope))
       in
 
       let exprs, scope = rename_seq_state exports scope exprs in
@@ -865,7 +869,7 @@ and rename_seq_state
           panic __LOC__
             "Type constructor with ClassSort but without entry in \
              scope.type_classes"
-      | Some definition_methods -> (
+      | Some (_params, definition_methods) -> (
           let args = List.map (fst << rename_type loc scope) args in
 
           let invalid_methods, methods' =
@@ -971,8 +975,12 @@ let rename_exports :
           Renamed.ExportVal (loc, RenameScope.lookup_var scope loc name)
       | Parsed.ExportConstructor (loc, name) -> (
           match RenameMap.find_opt name scope.ty_constructors with
-          | Some (name, _, _sort) ->
-              Renamed.ExportConstructor ((loc, `Type), name)
+          | Some (renamed, _, _sort) -> begin
+              match NameMap.find_opt renamed scope.type_classes with
+              | Some (params, fields) ->
+                  Renamed.ExportConstructor ((loc, `Class (params, fields)), renamed)
+              | None -> Renamed.ExportConstructor ((loc, `Type), renamed)
+            end
           | None -> (
               match RenameMap.find_opt name scope.data_constructors with
               | Some (name, ExceptionSort) ->

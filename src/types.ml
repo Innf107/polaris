@@ -10,12 +10,6 @@ let _class_category, trace_class = Trace.make ~flag:"class" ~prefix:"Class"
 
 type unify_context = ty * ty
 
-type class_constraint = {
-  variables : name list;
-  class_name : name;
-  arguments : ty list;
-}
-
 type type_error =
   | UnableToUnify of (ty * ty) * unify_context option
   (* ^           ^ full original types (None if there is no difference) *)
@@ -622,7 +616,11 @@ let rec eval_module_env :
           type_aliases = mod_exports.exported_type_aliases;
           type_classes = NameMap.map fst mod_exports.exported_type_classes;
           ambient_level = Typeref.initial_top_level;
-          given_constraints = todo __LOC__;
+          given_constraints =
+            List.map
+              (fun (loc, given, evidence) ->
+                GivenClass { loc; given; evidence })
+              mod_exports.exported_instances;
         },
         Import ((loc, mod_exports, exprs), path) )
   | SubModule (loc, mod_expr, name) -> (
@@ -835,9 +833,10 @@ and check_pattern :
     in
     (* infer_pattern only infers monotypes (TODO: does it?!)*)
     assert (targets = []);
-    (* TODO: No idea how we are going to abstract the sources here.
-       Concretely, how are we going to desugar `let (x : forall a. Eq a => a -> a, y) = (\x -> x, 5)` *)
-    todo __LOC__;
+    assert (sources = []);
+    (* TODO: I don't think this holds entirely right now. I guess we should just not allow polytypes in patterns?
+       No idea how we would abstract the sources here otherwise.
+       Concretely, how would we desugar `let (x : forall a. Eq a => a -> a, y) = (\x -> x, 5)`? *)
     (trans, pattern)
   in
   match (pattern, expected_ty) with

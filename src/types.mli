@@ -3,13 +3,12 @@ open Syntax.Renamed
 
 type unify_context = ty * ty
 
-type class_constraint = {
-  variables : name list;
-  class_name : name;
-  arguments : ty list;
-}
-
-type given_constraint
+type given_constraint =
+  | GivenClass of {
+      loc : loc;
+      given : class_constraint;
+      evidence : Evidence.source;
+    }
 
 type type_error =
   | UnableToUnify of (ty * ty) * unify_context option

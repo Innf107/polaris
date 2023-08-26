@@ -57,6 +57,8 @@ let build_export_map header exprs rename_scope global_env =
             Util.panic __LOC__
               ("Exception not found in build_export_map: " ^ Name.pretty name)
       end
+    | Typed.ExportConstructor ((_, `Class (params, methods)), name) ->
+        `Class (name, (params, methods))
   in
 
   let entries = List.map export_entry Typed.(header.exports) in
@@ -100,6 +102,21 @@ let build_export_map header exprs rename_scope global_env =
     exported_ty_constrs_data @ exported_ty_constrs_alias
   in
 
+  let exported_type_classes =
+    List.filter_map
+      (function
+        | `Class (name, entry) -> Some (name, entry)
+        | _ -> None)
+      entries
+  in
+
+  let exported_instances =
+    List.map
+      (function
+        | Types.GivenClass { loc; given; evidence } -> (loc, given, evidence))
+      global_env.given_constraints
+  in
+
   trace_exports
     (lazy
       ("Exported variables: ["
@@ -135,5 +152,7 @@ let build_export_map header exprs rename_scope global_env =
         NameMap.of_seq (List.to_seq exported_data_definitions);
       exported_exceptions = NameMap.of_seq (List.to_seq exported_exceptions);
       exported_type_aliases = NameMap.of_seq (List.to_seq exported_type_aliases);
-      exported_type_classes = Util.todo __LOC__;
+      (* TODO: Uuuugggghhh*)
+      exported_type_classes = NameMap.of_seq (List.to_seq exported_type_classes);
+      exported_instances;
     }

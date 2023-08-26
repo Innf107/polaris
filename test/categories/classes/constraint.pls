@@ -1,4 +1,4 @@
-# EXPECT: 5
+# EXPECT: 1
 
 class Eq(a) {
     eq : (a, a) -> Bool

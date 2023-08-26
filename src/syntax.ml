@@ -90,6 +90,13 @@ struct
         Ext.mod_subscript_tycon_ext * Ext.name * Ext.name * ty list
 end
 
+type 'ty make_class_constraint = {
+  variables : name list;
+  class_name : name;
+  arguments : 'ty list;
+}
+
+
 module Template = struct
   include TypeDefinition
 
@@ -164,6 +171,8 @@ module Template = struct
     | ExceptionDataPat of loc * name * pattern list
     | VariantPat of VariantPatExt.t * string * pattern list
 
+  type class_constraint = ty make_class_constraint
+
   type module_exports = {
     exported_variables : name StringMap.t;
     exported_variable_types : ty NameMap.t;
@@ -172,6 +181,7 @@ module Template = struct
     exported_exceptions : ty list NameMap.t;
     exported_type_aliases : (name list * ty) NameMap.t;
     exported_type_classes : (name list * (name * ty) list) NameMap.t;
+    exported_instances : (loc * class_constraint * Evidence.source) list;
   }
 
   type binop =
@@ -604,8 +614,8 @@ module Template = struct
         ^ String.concat ", " (List.map pretty_pattern xs)
         ^ ") = " ^ pretty e
     | LetRecSeq (ext, Some ty, x, xs, e) ->
-        "let " ^ pretty_name x ^ " : "
-        ^ pretty_type ty ^ "\nlet" ^ LetRecExt.pretty ext ^ " " ^ pretty_name x ^ "("
+        "let " ^ pretty_name x ^ " : " ^ pretty_type ty ^ "\nlet"
+        ^ LetRecExt.pretty ext ^ " " ^ pretty_name x ^ "("
         ^ String.concat ", " (List.map pretty_pattern xs)
         ^ ") = " ^ pretty e
     | LetEnvSeq (_, x, e) -> "let $" ^ x ^ " = " ^ pretty e
@@ -1545,6 +1555,7 @@ module Typed = Template (struct
     type t =
       [ `Type
       | `Exception
+      | `Class of name list * (name * FullTypeDefinition.ty) list
       ]
   end)
 
@@ -1617,6 +1628,7 @@ module Renamed = Template (struct
     type t =
       [ `Type
       | `Exception
+      | `Class of name list * (name * FullTypeDefinition.ty) StringMap.t
       ]
   end)
 

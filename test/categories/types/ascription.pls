@@ -1,4 +1,4 @@
 
 let f(x) = (x : Number)
 
-f("a")
+let _ = f("a")

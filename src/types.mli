@@ -39,6 +39,8 @@ type type_error =
   | PatternError of Pattern.pattern_error
   | MissingInstance of class_constraint
   | TupleLiteralOfWrongLength of int * ty array
+  | NonProgramArgument of ty
+  | NonInterpolatable of ty
 
 exception TypeError of loc * type_error
 

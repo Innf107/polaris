@@ -1,3 +1,4 @@
+# EXPECT: 5
 
 class C(a) {
     m : forall b. b -> a
@@ -10,3 +11,4 @@ instance C(Number) {
     }
 }
 
+print(m("a"))

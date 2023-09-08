@@ -40,7 +40,8 @@ let handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a =
   | Rename.RenameError err -> handler (RenameError err)
   | Types.TypeError (loc, err) -> handler (TypeError (loc, err))
   | Eval.EvalError err -> handler (EvalError err)
-  | Assert_failure _ as exn -> handler (Panic ("Assertion failure: " ^ Printexc.to_string exn))
+  | Assert_failure _ as exn ->
+      handler (Panic ("Assertion failure: " ^ Printexc.to_string exn))
   | err -> handler (Panic ("Exception: " ^ Printexc.to_string err))
 
 let pretty_call_trace (locs : loc list) =
@@ -533,12 +534,30 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
                   ^ String.concat ", " (List.map pretty_type arguments)
                   ^ ")")
           | TupleLiteralOfWrongLength (expected, actual) ->
-              let pretty_type = 
+              let pretty_type =
                 Disambiguate.builder
                 |> Disambiguate.types (Array.to_list actual)
                 |> Disambiguate.pretty_type
               in
               "Tuple literal has " ^ text_style.number expected ^ " elements\n"
-            ^ "But its type expects it to have " ^ text_style.number (Array.length actual) ^ ".\n"
-            ^ "    Expected type: " ^ text_style.ty (pretty_type (Typed.Tuple actual))
+              ^ "But its type expects it to have "
+              ^ text_style.number (Array.length actual)
+              ^ ".\n" ^ "    Expected type: "
+              ^ text_style.ty (pretty_type (Typed.Tuple actual))
+          | NonProgramArgument ty ->
+              let pretty_type =
+                Disambiguate.builder |> Disambiguate.ty ty
+                |> Disambiguate.pretty_type
+              in
+              "Invalid argument to program call\n"
+              ^ "Program calls do not accept arguments of type "
+              ^ text_style.ty (pretty_type ty)
+          | NonInterpolatable ty ->
+              let pretty_type =
+                Disambiguate.builder |> Disambiguate.ty ty
+                |> Disambiguate.pretty_type
+              in
+              "Non-interpolatable item in string interpolation\n"
+              ^ "String interpolation does not accept arguments of type "
+              ^ text_style.ty (pretty_type ty)
         end

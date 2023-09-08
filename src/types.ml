@@ -39,6 +39,8 @@ type type_error =
   | PatternError of Pattern.pattern_error
   | MissingInstance of class_constraint
   | TupleLiteralOfWrongLength of int * ty array
+  | NonProgramArgument of ty
+  | NonInterpolatable of ty
 
 exception TypeError of loc * type_error
 
@@ -694,6 +696,7 @@ let rec infer_pattern :
   | TypePat (loc, pattern, ty) ->
       (* TODO: Should this skolemize ty? *)
       let env_trans, pattern = check_pattern env allow_polytype pattern ty in
+
       (ty, env_trans, TypePat (loc, pattern, ty))
   | DataPat (loc, constructor_name, pattern) ->
       let datacon_level, type_variables, underlying_type_raw =
@@ -897,7 +900,9 @@ and check_pattern :
       end;
 
       let sources, targets = subsumes env loc ty expected_ty in
-      todo __LOC__;
+      assert (sources = []);
+      assert (targets = []);
+      (* TODO: Yeah no these are *not* empty *)
       check_pattern env allow_polytype pattern ty
   | ( DataPat (loc, data_name, underlying_pattern),
       TyConstructor (constr_name, args) )
@@ -1959,9 +1964,7 @@ let occurs_and_adjust needle name full_ty loc definition_env
   in
   snd (traversal#traverse_type false full_ty)
 
-type unify_state = {
-  deferred_constraints : ty_constraint Difflist.t ref option;
-}
+type unify_state = { deferred_constraints : ty_constraint Difflist.t ref }
 
 (** Bind a typeref to a new type
     This is like bind_directly but skips the occurs check
@@ -1999,7 +2002,7 @@ let bind_directly :
   else bind_unchecked typeref name ty
 
 let solve_unify :
-    loc -> local_env -> unify_state -> ty -> ty -> local_env -> unit =
+    loc -> local_env -> unify_state -> ty -> ty -> local_env -> bool =
  fun loc env state original_type1 original_type2 definition_env ->
   trace_unify
     (lazy (pretty_type original_type1 ^ " ~ " ^ pretty_type original_type2));
@@ -2023,7 +2026,8 @@ let solve_unify :
               ("bind: "
               ^ pretty_type (Unif (typeref, name))
               ^ " ~ " ^ pretty_type ty));
-          go previous_ty ty
+          let _ = go previous_ty ty in
+          ()
     in
     (* bind assumes that an occurs check violation is only possible if the unify_context
        is relevant. If this is not the case (only when solving constraints between unification variables directly),
@@ -2069,7 +2073,12 @@ let solve_unify :
              ( loc,
                DifferentVariantConstrArgs
                  (constructor_name, params1, params2, unify_context) ))
-      else List.iter2 go params1 params2
+      else
+        List.iter2
+          (fun ty1 ty2 ->
+            let _ = go ty1 ty2 in
+            ())
+          params1 params2
     in
     match (normalize_unif ty1, normalize_unif ty2) with
     | Unif (typeref, name), ty
@@ -2079,8 +2088,10 @@ let solve_unify :
         (* Ignore 'a ~ a' constraints. These are mostly harmless,
            but might hang the type checker if they become part of the substitution
         *)
-        | Unif (typeref2, _) when Typeref.equal typeref typeref2 -> ()
-        | ty -> bind_with_context typeref name ty optional_unify_context
+        | Unif (typeref2, _) when Typeref.equal typeref typeref2 -> true
+        | ty ->
+            bind_with_context typeref name ty optional_unify_context;
+            true
       end
     | TyConstructor (name1, args1), TyConstructor (name2, args2) ->
         if Name.compare name1 name2 <> 0 then
@@ -2096,7 +2107,7 @@ let solve_unify :
              ^ "' to different numbers of arguments.\n    ty1: "
              ^ pretty_type ty1 ^ "\n    ty2: " ^ pretty_type ty2)
           else begin
-            List.iter2 go args1 args2
+            List.exists2 go args1 args2
           end
         end
     | Fun (dom1, cod1), Fun (dom2, cod2) ->
@@ -2105,11 +2116,12 @@ let solve_unify :
             (TypeError
                (loc, FunctionsWithDifferentArgCounts (dom1, dom2, unify_context)))
         else begin
-          List.iter2 go dom1 dom2;
-          go cod1 cod2
+          let progress1 = List.exists2 go dom1 dom2 in
+          let progress2 = go cod1 cod2 in
+          progress1 || progress2
         end
     | Tuple tys1, Tuple tys2 when Array.length tys1 = Array.length tys2 ->
-        List.iter2 go (Array.to_list tys1) (Array.to_list tys2)
+        List.exists2 go (Array.to_list tys1) (Array.to_list tys2)
     | List ty1, List ty2 -> go ty1 ty2
     | Promise ty1, Promise ty2 -> go ty1 ty2
     | Ref ty1, Ref ty2 -> go ty1 ty2
@@ -2126,31 +2138,38 @@ let solve_unify :
     | Bool, Bool
     | String, String
     | Exception, Exception ->
-        ()
+        true
     | Skol (u1, level1, _), Skol (u2, level2, _) when Unique.equal u1 u2 ->
-        assert (level1 = level2)
+        assert (level1 = level2);
+        true
     (* closed, closed *)
     | RecordClosed fields1, RecordClosed fields2 ->
         unify_rows
-          (fun _ -> go)
+          (fun _ ty1 ty2 ->
+            let _ = go ty1 ty2 in
+            ())
           fields1 fields2
           (fun remaining1 remaining2 ->
             raise
               (TypeError
                  ( loc,
                    MissingRecordFields (remaining1, remaining2, unify_context)
-                 )))
+                 )));
+        true
     | VariantClosed fields1, VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
             raise
               (TypeError
                  ( loc,
                    MissingVariantConstructors
-                     (remaining1, remaining2, unify_context) )))
+                     (remaining1, remaining2, unify_context) )));
+        true
     (* unif, closed *)
     | RecordUnif (fields1, (u, name)), RecordClosed fields2 ->
         unify_rows
-          (fun _ -> go)
+          (fun _ ty1 ty2 ->
+            let _ = go ty1 ty2 in
+            ())
           fields1 fields2
           begin
             fun remaining1 remaining2 ->
@@ -2160,7 +2179,8 @@ let solve_unify :
                   raise
                     (TypeError
                        (loc, MissingRecordFields (remaining1, [], unify_context)))
-          end
+          end;
+        true
     | VariantUnif (fields1, (typeref, name)), VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2
           begin
@@ -2174,11 +2194,14 @@ let solve_unify :
                        ( loc,
                          MissingVariantConstructors
                            (remaining1, [], unify_context) ))
-          end
+          end;
+        true
     (* closed, unif *)
     | RecordClosed fields1, RecordUnif (fields2, (u, name)) ->
         unify_rows
-          (fun _ -> go)
+          (fun _ ty1 ty2 ->
+            let _ = go ty1 ty2 in
+            ())
           fields1 fields2
           begin
             fun remaining1 remaining2 ->
@@ -2188,7 +2211,8 @@ let solve_unify :
                   raise
                     (TypeError
                        (loc, MissingRecordFields ([], remaining2, unify_context)))
-          end
+          end;
+        true
     | VariantClosed fields1, VariantUnif (fields2, (u, name)) ->
         unify_rows go_variant fields1 fields2
           begin
@@ -2201,11 +2225,14 @@ let solve_unify :
                        ( loc,
                          MissingVariantConstructors
                            ([], remaining2, unify_context) ))
-          end
+          end;
+        true
     (* unif, unif *)
     | RecordUnif (fields1, (u1, name1)), RecordUnif (fields2, (u2, name2)) ->
         unify_rows
-          (fun _ -> go)
+          (fun _ ty1 ty2 ->
+            let _ = go ty1 ty2 in
+            ())
           fields1 fields2
           begin
             fun remaining1 remaining2 ->
@@ -2223,7 +2250,8 @@ let solve_unify :
                 bind u2 name2
                   (RecordUnif (Array.of_list remaining1, (new_u, new_name)))
               end
-          end
+          end;
+        true
     | VariantUnif (fields1, (u1, name1)), VariantUnif (fields2, (u2, name2)) ->
         unify_rows go_variant fields1 fields2
           begin
@@ -2243,7 +2271,8 @@ let solve_unify :
                 bind u2 name2
                   (VariantUnif (Array.of_list remaining1, (new_u, new_name)))
               end
-          end
+          end;
+        true
     (* unif, skolem *)
     (* This is almost exactly like the (unif, closed) case, except that we need to carry the
        skolem extension field over *)
@@ -2251,7 +2280,9 @@ let solve_unify :
         RecordSkol (fields2, (skol_unique, skol_level, skol_name)) ) ->
         (* TODO: Only unify if levels are correct *)
         unify_rows
-          (fun _ -> go)
+          (fun _ ty1 ty2 ->
+            let _ = go ty1 ty2 in
+            ())
           fields1 fields2
           begin
             fun remaining1 remaining2 ->
@@ -2265,7 +2296,8 @@ let solve_unify :
                   raise
                     (TypeError
                        (loc, MissingRecordFields (remaining1, [], unify_context)))
-          end
+          end;
+        true
     | ( VariantUnif (fields1, (unif_unique, unif_name)),
         VariantSkol (fields2, (skol_unique, skol_level, skol_name)) ) ->
         (* TODO: Only unify if levels are correct *)
@@ -2284,7 +2316,8 @@ let solve_unify :
                        ( loc,
                          MissingVariantConstructors
                            (remaining1, [], unify_context) ))
-          end
+          end;
+        true
     (* skolem, unif *)
     (* This is almost exactly like the (closed, unif) case, except that we need to carry the
        skolem extension field over *)
@@ -2292,7 +2325,9 @@ let solve_unify :
         RecordUnif (fields2, (unif_unique, unif_name)) ) ->
         (* TODO: Only unify if levels are correct *)
         unify_rows
-          (fun _ -> go)
+          (fun _ ty1 ty2 ->
+            let _ = go ty1 ty2 in
+            ())
           fields1 fields2
           begin
             fun remaining1 remaining2 ->
@@ -2306,7 +2341,8 @@ let solve_unify :
                   raise
                     (TypeError
                        (loc, MissingRecordFields ([], remaining2, unify_context)))
-          end
+          end;
+        true
     | ( VariantSkol (fields1, (skolem_unique, skolem_level, skolem_name)),
         VariantUnif (fields2, (unif_unique, unif_name)) ) ->
         (* TODO: Only unify if levels are correct *)
@@ -2325,7 +2361,8 @@ let solve_unify :
                        ( loc,
                          MissingVariantConstructors
                            ([], remaining2, unify_context) ))
-          end
+          end;
+        true
     (* skolem, skolem *)
     (* Skolem rows only unify if the skolem fields match and
         all fields unify (similar to closed rows) *)
@@ -2334,33 +2371,41 @@ let solve_unify :
         (* TODO: Only unify if levels are correct *)
         (* We unify the skolems to generate a more readable error message.
            TODO: Maybe a custom error message is clearer? *)
-        go
-          (Skol (skolem1_unique, skolem1_level, skolem1_name))
-          (Skol (skolem2_unique, skolem2_level, skolem2_name));
+        let _ =
+          go
+            (Skol (skolem1_unique, skolem1_level, skolem1_name))
+            (Skol (skolem2_unique, skolem2_level, skolem2_name))
+        in
         unify_rows
-          (fun _ -> go)
+          (fun _ ty1 ty2 ->
+            let _ = go ty1 ty2 in
+            ())
           fields1 fields2
           (fun remaining1 remaining2 ->
             raise
               (TypeError
                  ( loc,
                    MissingRecordFields (remaining1, remaining2, unify_context)
-                 )))
+                 )));
+        true
     | ( VariantSkol (fields1, (skolem1_unique, skolem1_level, skolem1_name)),
         VariantSkol (fields2, (skolem2_unique, skolem2_level, skolem2_name)) )
       ->
         (* TODO: Only unify if levels are correct *)
         (* We unify the skolems to generate a more readable error message.
            TODO: Maybe a custom error message is clearer? *)
-        go
-          (Skol (skolem1_unique, skolem1_level, skolem1_name))
-          (Skol (skolem2_unique, skolem2_level, skolem2_name));
+        let _ =
+          go
+            (Skol (skolem1_unique, skolem1_level, skolem1_name))
+            (Skol (skolem2_unique, skolem2_level, skolem2_name))
+        in
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
             raise
               (TypeError
                  ( loc,
                    MissingVariantConstructors
-                     (remaining1, remaining2, unify_context) )))
+                     (remaining1, remaining2, unify_context) )));
+        true
         (* closed, skolem *)
         (* skolem, closed *)
         (* Unifying a skolem and closed record is always impossible so we don't need a dedicated case here. *)
@@ -2389,7 +2434,7 @@ let solve_unify :
   go_with_original None original_type1 original_type2
 
 let solve_unwrap :
-    loc -> local_env -> unify_state -> ty -> ty -> local_env -> unit =
+    loc -> local_env -> unify_state -> ty -> ty -> local_env -> bool =
  fun loc env state ty1 ty2 definition_env ->
   match normalize_unif ty1 with
   | TyConstructor (name, args) ->
@@ -2411,35 +2456,41 @@ let solve_unwrap :
           (NameMap.of_seq (Seq.zip (List.to_seq var_names) (List.to_seq args)))
           underlying_type_raw
       in
-      solve_unify loc env state underlying_type ty2 definition_env
-  | Ref value_type -> solve_unify loc env state value_type ty2 definition_env
-  | ty -> (
-      (* Defer this constraint if possible. If not (i.e. we already deferred this one) we throw a type error *)
-      match state.deferred_constraints with
-      | None -> raise (TypeError (loc, CannotUnwrapNonData ty))
-      | Some deferred_constraint_ref ->
-          deferred_constraint_ref :=
-            Difflist.snoc !deferred_constraint_ref
-              (Unwrap (loc, ty, ty2, definition_env)))
+      let _ = solve_unify loc env state underlying_type ty2 definition_env in
+      true
+  | Ref value_type ->
+      let _ = solve_unify loc env state value_type ty2 definition_env in
+      true
+  | (Skol _ | Unif _) as ty ->
+      (* Re-queue this constraint since it might become solvable later *)
+      state.deferred_constraints :=
+        Difflist.snoc
+          !(state.deferred_constraints)
+          (Unwrap (loc, ty, ty2, definition_env));
+      false
+  | ty ->
+      (* We know this constraint is unsolvable so we can just throw a type error *)
+      raise (TypeError (loc, CannotUnwrapNonData ty))
 
 let rec solve_program_arg :
-    loc -> local_env -> unify_state -> ty -> local_env -> unit =
+    loc -> local_env -> unify_state -> ty -> local_env -> bool =
  fun loc env state ty definition_env ->
   match normalize_unif ty with
   | String
   | Number ->
-      ()
+      true
   | List ty -> solve_program_arg loc env state ty definition_env
-  | ty -> (
-      match state.deferred_constraints with
-      | None ->
-          (* Fall back to matching against strings. This might be a little
-             brittle, but we're going to replace this with type classes in the future anyway. *)
-          solve_unify loc env state ty String definition_env
-      | Some deferred_constraint_ref ->
-          deferred_constraint_ref :=
-            Difflist.snoc !deferred_constraint_ref
-              (ProgramArg (loc, ty, definition_env)))
+  | (Unif _ | Skol _) as ty ->
+      (* This constraint might still be solved in the future so we add it to the queue and try again *)
+      state.deferred_constraints :=
+        Difflist.snoc
+          !(state.deferred_constraints)
+          (ProgramArg (loc, ty, definition_env));
+      false
+  | ty ->
+      (* We know the constraint is unsolvable so we don't need to try solving it again *)
+      (* TODO: Collect a list of errors *)
+      raise (TypeError (loc, NonProgramArgument ty))
 
 let solve_refine_variant loc env unify_state ty path variant result_type
     definition_env =
@@ -2506,17 +2557,14 @@ let solve_interpolatable loc env state ty definition_env =
   | String
   | Number
   | Bool ->
-      ()
-  | ty -> (
-      match state.deferred_constraints with
-      | None ->
-          (* Fall back to matching against strings. This might be a little
-             brittle, but we're going to replace this with type classes in the future anyway. *)
-          solve_unify loc env state ty String definition_env
-      | Some deferred_constraint_ref ->
-          deferred_constraint_ref :=
-            Difflist.snoc !deferred_constraint_ref
-              (Interpolatable (loc, ty, definition_env)))
+      true
+  | (Unif _ | Skol _) as ty ->
+      state.deferred_constraints :=
+        Difflist.snoc
+          !(state.deferred_constraints)
+          (Interpolatable (loc, ty, env));
+      false
+  | ty -> raise (TypeError (loc, NonInterpolatable ty))
 
 let solve_wanted_class loc env unify_state wanted givens local_env
     evidence_target =
@@ -2587,9 +2635,11 @@ let solve_wanted_class loc env unify_state wanted givens local_env
             ^ String.concat "," (List.map pretty_type given.arguments)
             ^ ")"
           in
+          (* TODO: Uggghhh this is not allowed to defer any constraints, huh *)
           match
             List.iter2
-              (fun x y -> solve_unify loc env unify_state x y local_env)
+              (fun x y ->
+                todo __LOC__ (solve_unify loc env unify_state x y local_env))
               locked_arguments instantiated_arguments
           with
           | () ->
@@ -2602,48 +2652,55 @@ let solve_wanted_class loc env unify_state wanted givens local_env
         end
   in
   match List.find_map find_matching_given givens with
-  | Some () -> ()
-  | None -> (
-      match unify_state.deferred_constraints with
-      | None -> raise (TypeError (loc, MissingInstance wanted))
-      | Some deferred_constraint_ref ->
-          deferred_constraint_ref :=
-            Difflist.snoc !deferred_constraint_ref
-              (WantedClass { loc; wanted; givens; local_env; evidence_target }))
+  | Some () -> true
+  | None ->
+      unify_state.deferred_constraints :=
+        Difflist.snoc
+          !(unify_state.deferred_constraints)
+          (WantedClass { loc; wanted; givens; local_env; evidence_target });
+      false
 
 let solve_constraints : local_env -> ty_constraint list -> unit =
  fun env constraints ->
   let go unify_state constraints =
-    List.iter
+    List.fold_left
       begin
-        function
-        | Unify (loc, ty1, ty2, definition_env) ->
-            solve_unify loc env unify_state ty1 ty2 definition_env
-        | Unwrap (loc, ty1, ty2, definition_env) ->
-            solve_unwrap loc env unify_state ty1 ty2 definition_env
-        | ProgramArg (loc, ty, definition_env) ->
-            solve_program_arg loc env unify_state ty definition_env
-        | RefineVariant (loc, ty, path, variant, result_type, definition_env) ->
-            solve_refine_variant loc env unify_state ty path variant result_type
-              definition_env
-        | Interpolatable (loc, ty, definition_env) ->
-            solve_interpolatable loc env unify_state ty definition_env
-        | WantedClass { loc; wanted; givens; local_env; evidence_target } ->
-            solve_wanted_class loc env unify_state wanted givens local_env
-              evidence_target
+        fun progress constraint_ ->
+          let new_progress =
+            match constraint_ with
+            | Unify (loc, ty1, ty2, definition_env) ->
+                solve_unify loc env unify_state ty1 ty2 definition_env
+            | Unwrap (loc, ty1, ty2, definition_env) ->
+                solve_unwrap loc env unify_state ty1 ty2 definition_env
+            | ProgramArg (loc, ty, definition_env) ->
+                solve_program_arg loc env unify_state ty definition_env
+            | RefineVariant (loc, ty, path, variant, result_type, definition_env)
+              ->
+                solve_refine_variant loc env unify_state ty path variant
+                  result_type definition_env
+            | Interpolatable (loc, ty, definition_env) ->
+                solve_interpolatable loc env unify_state ty definition_env
+            | WantedClass { loc; wanted; givens; local_env; evidence_target } ->
+                solve_wanted_class loc env unify_state wanted givens local_env
+                  evidence_target
+          in
+          new_progress || progress
       end
-      constraints
+      false constraints
   in
 
-  let initial_deferred_constraint_ref = ref Difflist.empty in
-  let initial_unify_state =
-    { deferred_constraints = Some initial_deferred_constraint_ref }
+  let rec actually_solve_constraints = function
+    | [] -> ()
+    | constraints ->
+        let unify_state = { deferred_constraints = ref Difflist.empty } in
+        let progress = go unify_state constraints in
+        if not progress then (* TODO: Exit and report errors *)
+          todo __LOC__
+        else
+          actually_solve_constraints
+            (Difflist.to_list !(unify_state.deferred_constraints))
   in
-  (* We try to solve the constraints once, collect any deferred ones and try again *)
-  go initial_unify_state constraints;
-
-  let updated_unify_state = { deferred_constraints = None } in
-  go updated_unify_state (Difflist.to_list !initial_deferred_constraint_ref)
+  actually_solve_constraints constraints
 
 let free_unifs : ty -> TyperefSet.t =
  fun ty ->

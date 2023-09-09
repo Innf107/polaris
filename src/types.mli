@@ -55,12 +55,11 @@ type global_env = {
   given_constraints : given_constraint list;
 }
 
-(* Might throw 'TypeError' *)
 val typecheck :
   [ `Check | `Infer ] ->
   Renamed.header ->
   Renamed.expr list ->
   global_env ->
-  global_env * Typed.header * Typed.expr list
+  global_env * Typed.header * Typed.expr list * (loc * type_error) list
 
 val empty_env : global_env

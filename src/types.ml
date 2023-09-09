@@ -201,6 +201,10 @@ let fresh_unif_with env name =
   let typeref, name = fresh_unif_raw_with env name in
   Unif (typeref, name)
 
+let fresh_skolem_raw_with env name =
+  let unique = Unique.fresh () in
+  (unique, env.level, name)
+
 let fresh_skolem_with env name =
   let unique = Unique.fresh () in
   Skol (unique, env.level, name)
@@ -2566,60 +2570,124 @@ let solve_interpolatable loc env state ty definition_env =
       false
   | ty -> raise (TypeError (loc, NonInterpolatable ty))
 
-let solve_wanted_class loc env unify_state wanted givens local_env
+let is_valid_instance env given_loc (given_constraint : class_constraint)
+    evidence_source wanted_loc (wanted_constraint : class_constraint)
     evidence_target =
-  let lock_traversal =
-    object
-      inherit [ty TyperefMap.t] Traversal.traversal
-
-      method! ty subst ty =
-        match normalize_unif ty with
-        | Unif (ref, name) -> begin
-            match TyperefMap.find_opt (ref, name) subst with
-            | None ->
-                (* TODO: This might need to use the environment in which the constraint originated
-                   to get the correct level *)
-                let replacement = fresh_skolem_with env name in
-                (replacement, TyperefMap.add (ref, name) replacement subst)
-            | Some replacement -> (replacement, subst)
-          end
-        | _ -> (ty, subst)
-    end
+  let exception DoesNotMatch in
+  let substitution = ref NameMap.empty in
+  let rec match_types given_type wanted_type =
+    let wanted_type = normalize_unif wanted_type in
+    match normalize_unif given_type with
+    | Forall (name, ty) -> todo __LOC__
+    | Fun (arguments1, result1) -> begin
+        match wanted_type with
+        | Fun (arguments2, result2)
+          when List.compare_lengths arguments1 arguments2 = 0 ->
+            List.iter2 match_types arguments1 arguments2;
+            match_types result1 result2
+        | _ -> raise DoesNotMatch
+      end
+    (* This *doesn't* validate kinds yet *)
+    | Constraint (class_constraint_type1, ty1) -> begin
+        match wanted_type with
+        | Constraint (class_constraint_type2, ty2) ->
+            match_types class_constraint_type1 class_constraint_type2;
+            match_types ty1 ty2
+        | _ -> raise DoesNotMatch
+      end
+    | TyVar name -> begin
+        match NameMap.find_opt name !substitution with
+        | None -> substitution := NameMap.add name wanted_type !substitution
+        | Some substituted -> match_types substituted wanted_type
+      end
+    | TyConstructor (name, arguments) -> begin
+        match wanted_type with
+        | TyConstructor (name2, arguments2) when Name.equal name name2 ->
+            List.iter2 match_types arguments arguments2
+        | _ -> raise DoesNotMatch
+      end
+    | TypeAlias (alias_name, arguments) ->
+        match_types
+          (instantiate_type_alias env alias_name arguments)
+          wanted_type
+    | Unif (typeref, _) -> begin
+        match wanted_type with
+        | Unif (typeref2, _) when Typeref.equal typeref typeref2 -> ()
+        | _ -> raise DoesNotMatch
+      end
+    | Skol (unique, _, _) -> begin
+        match wanted_type with
+        | Skol (unique2, _, _) when Unique.equal unique unique2 -> ()
+        | _ -> raise DoesNotMatch
+      end
+    | Number -> begin
+        match wanted_type with
+        | Number -> ()
+        | _ -> raise DoesNotMatch
+      end
+    | Bool -> begin
+        match wanted_type with
+        | Bool -> ()
+        | _ -> raise DoesNotMatch
+      end
+    | String -> begin
+        match wanted_type with
+        | String -> ()
+        | _ -> raise DoesNotMatch
+      end
+    | Exception -> begin
+        match wanted_type with
+        | Exception -> ()
+        | _ -> raise DoesNotMatch
+      end
+    | Tuple types1 -> begin
+        match wanted_type with
+        | Tuple types2 when Array.length types1 = Array.length types2 ->
+            Array.iter2 match_types types1 types2
+        | _ -> raise DoesNotMatch
+      end
+    | List argument1 -> begin
+        match wanted_type with
+        | List argument2 -> match_types argument1 argument2
+        | _ -> raise DoesNotMatch
+      end
+    | Ref argument1 -> begin
+        match wanted_type with
+        | Ref argument2 -> match_types argument1 argument2
+        | _ -> raise DoesNotMatch
+      end
+    | Promise argument1 -> begin
+        match wanted_type with
+        | Promise argument2 -> match_types argument1 argument2
+        | _ -> raise DoesNotMatch
+      end
+    | RecordClosed _ -> todo __LOC__
+    | RecordUnif _ -> todo __LOC__
+    | RecordSkol _ -> todo __LOC__
+    | RecordVar _ -> todo __LOC__
+    | VariantClosed _ -> todo __LOC__
+    | VariantUnif _ -> todo __LOC__
+    | VariantSkol _ -> todo __LOC__
+    | VariantVar _ -> todo __LOC__
+    | ModSubscriptTyCon (_, _, _, _) -> .
   in
 
-  let locked_arguments, _ =
-    Traversal.traverse_list lock_traversal#traverse_type TyperefMap.empty
-      wanted.arguments
-  in
+  match
+    List.iter2 match_types given_constraint.arguments
+      wanted_constraint.arguments
+  with
+  | () -> true
+  | exception DoesNotMatch -> false
 
+let solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
+    local_env evidence_target =
+  (* TODO: Worry about ambiguity here *)
   let find_matching_given = function
-    | GivenClass { loc; given; evidence } ->
+    | GivenClass { loc = given_loc; given; evidence = evidence_source } ->
         if not (Name.equal wanted.class_name given.class_name) then begin
           None
         end
         else begin
-          let instantiate_traversal =
-            object
-              inherit [ty NameMap.t] Traversal.traversal
-
-              method! ty subst ty =
-                match normalize_unif ty with
-                | TyVar name -> begin
-                    match NameMap.find_opt name subst with
-                    | None ->
-                        let replacement = fresh_unif_with env name.name in
-                        (replacement, NameMap.add name replacement subst)
-                    | Some replacement -> (replacement, subst)
-                  end
-                | _ -> (ty, subst)
-            end
-          in
-
-          let instantiated_arguments, _ =
-            Traversal.traverse_list instantiate_traversal#traverse_type
-              NameMap.empty given.arguments
-          in
-
           let class_trace_diagnostic () =
             "[W] ∀"
             ^ String.concat "" (List.map pretty_name given.variables)
@@ -2637,16 +2705,14 @@ let solve_wanted_class loc env unify_state wanted givens local_env
           in
           (* TODO: Uggghhh this is not allowed to defer any constraints, huh *)
           match
-            List.iter2
-              (fun x y ->
-                todo __LOC__ (solve_unify loc env unify_state x y local_env))
-              locked_arguments instantiated_arguments
+            is_valid_instance env given_loc given evidence_source wanted_loc
+              wanted evidence_target
           with
-          | () ->
+          | true ->
               trace_class (lazy (class_trace_diagnostic () ^ " -> Success"));
-              Evidence.fill_target evidence_target evidence;
+              Evidence.fill_target evidence_target evidence_source;
               Some ()
-          | exception TypeError _ ->
+          | false ->
               trace_class (lazy (class_trace_diagnostic () ^ " -> Failure"));
               None
         end
@@ -2657,10 +2723,30 @@ let solve_wanted_class loc env unify_state wanted givens local_env
       unify_state.deferred_constraints :=
         Difflist.snoc
           !(unify_state.deferred_constraints)
-          (WantedClass { loc; wanted; givens; local_env; evidence_target });
+          (WantedClass
+             { loc = wanted_loc; wanted; givens; local_env; evidence_target });
       false
 
-let solve_constraints : local_env -> ty_constraint list -> unit =
+let residuals_to_errors : ty_constraint list -> (loc * type_error) list =
+ fun residuals ->
+  let residual_to_error = function
+    (* TODO: Actually keep track of the unification context *)
+    | Unify (loc, expected, actual, _) ->
+        (loc, UnableToUnify ((expected, actual), None))
+    | Unwrap (loc, to_unwrap, result, _) -> (loc, CannotUnwrapNonData to_unwrap)
+    | ProgramArg (loc, argument_type, _) ->
+        (loc, NonProgramArgument argument_type)
+    | RefineVariant _ -> panic __LOC__ "residual RefineVariant constraint"
+    | Interpolatable (loc, interpolatable_type, _) ->
+        (loc, NonInterpolatable interpolatable_type)
+    | WantedClass { loc; wanted = class_constraint; _ } ->
+        (loc, MissingInstance class_constraint)
+  in
+
+  List.map residual_to_error residuals
+
+let solve_constraints :
+    local_env -> ty_constraint list -> (loc * type_error) list =
  fun env constraints ->
   let go unify_state constraints =
     List.fold_left
@@ -2690,12 +2776,13 @@ let solve_constraints : local_env -> ty_constraint list -> unit =
   in
 
   let rec actually_solve_constraints = function
-    | [] -> ()
+    | [] -> []
     | constraints ->
         let unify_state = { deferred_constraints = ref Difflist.empty } in
         let progress = go unify_state constraints in
-        if not progress then (* TODO: Exit and report errors *)
-          todo __LOC__
+        if not progress then
+          residuals_to_errors
+            (Difflist.to_list !(unify_state.deferred_constraints))
         else
           actually_solve_constraints
             (Difflist.to_list !(unify_state.deferred_constraints))
@@ -2798,7 +2885,10 @@ let check_exhaustiveness_and_close_variants_in_exprs expr =
   ()
 
 let typecheck_top_level :
-    global_env -> [ `Check | `Infer ] -> expr -> global_env * Typed.expr =
+    global_env ->
+    [ `Check | `Infer ] ->
+    expr ->
+    global_env * Typed.expr * (loc * type_error) Difflist.t =
  fun global_env check_or_infer expr ->
   let data_definitions_with_levels =
     NameMap.map
@@ -2845,7 +2935,9 @@ let typecheck_top_level :
       }
   in
 
-  solve_constraints local_env (Difflist.to_list !(local_env.constraints));
+  let errors =
+    solve_constraints local_env (Difflist.to_list !(local_env.constraints))
+  in
 
   check_exhaustiveness_and_close_variants_in_exprs typed_expr;
 
@@ -2888,7 +2980,7 @@ let typecheck_top_level :
       given_constraints = temp_local_env.given_constraints;
     }
   in
-  (global_env, typed_expr)
+  (global_env, typed_expr, Difflist.of_list errors)
 
 let typecheck_exports : Renamed.export_item list -> Typed.export_item list =
   Obj.magic
@@ -2939,12 +3031,17 @@ let typecheck check_or_infer_top_level header exprs global_env =
 
   let global_env, header = typecheck_header header global_env in
 
-  let global_env, exprs =
+  let (global_env, errors), exprs =
     List.fold_left_map
-      (fun env e -> typecheck_top_level env check_or_infer_top_level e)
-      global_env exprs
+      (fun (env, errors) expr ->
+        let env, expr, new_errors =
+          typecheck_top_level env check_or_infer_top_level expr
+        in
+        ((env, Difflist.append errors new_errors), expr))
+      (global_env, Difflist.empty)
+      exprs
   in
-  (global_env, header, exprs)
+  (global_env, header, exprs, Difflist.to_list errors)
 
 let prim_types =
   NameMap.of_seq

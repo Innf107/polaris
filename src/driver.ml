@@ -20,7 +20,11 @@ let rec parse_rename_typecheck :
     RenameScope.t ->
     ?check_or_infer_top_level:[ `Check | `Infer ] ->
     Types.global_env ->
-    ( Typed.header * Typed.expr list * RenameScope.t * Types.global_env,
+    ( Typed.header
+      * Typed.expr list
+      * RenameScope.t
+      * Types.global_env
+      * (loc * Types.type_error) list,
       Error.t )
     result =
  fun options lexbuf scope ?(check_or_infer_top_level = `Check) type_env ->
@@ -91,7 +95,7 @@ let rec parse_rename_typecheck :
         let import_map =
           FilePathMap.of_seq
             (Seq.map
-               (fun (file, (header, ast, scope, env)) ->
+               (fun (file, (header, ast, scope, env, _)) ->
                  (file, (Modules.build_export_map header ast scope env, ast)))
                (List.to_seq items_for_exports))
         in
@@ -107,18 +111,18 @@ let rec parse_rename_typecheck :
         end;
 
         trace_driver (lazy "Typechecking...");
-        let type_env, typed_header, typed_exprs =
+        let type_env, typed_header, typed_exprs, type_errors =
           Types.typecheck check_or_infer_top_level renamed_header renamed
             type_env
         in
 
-        if options.print_typed then begin 
+        if options.print_typed then begin
           print_endline "~~~~~~~~Typed AST~~~~~~~";
           print_endline (Typed.pretty_list typed_exprs);
           print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~"
         end;
 
-        Ok (typed_header, typed_exprs, new_scope, type_env)
+        Ok (typed_header, typed_exprs, new_scope, type_env, type_errors)
     end
 
 let run_env :
@@ -130,40 +134,49 @@ let run_env :
     Types.global_env ->
     fs:Eio.Fs.dir Eio.Path.t ->
     mgr:Eio.Process.mgr ->
-    (value * eval_env * RenameScope.t * Types.global_env, Error.t) result =
+    (value * eval_env * RenameScope.t * Types.global_env, Error.t list) result =
  fun options lexbuf env scope ?check_or_infer_top_level type_env ~fs ~mgr ->
   Error.handle_errors
-    (fun err -> Error err)
+    (fun err -> Error [ err ])
     begin
       fun () ->
         let ( let* ) = Result.bind in
 
-        let* renamed_header, renamed, new_scope, new_type_env =
-          parse_rename_typecheck options lexbuf scope ?check_or_infer_top_level
-            type_env
+        let* renamed_header, renamed, new_scope, new_type_env, type_errors =
+          Result.map_error
+            (fun x -> [ x ])
+            (parse_rename_typecheck options lexbuf scope
+               ?check_or_infer_top_level type_env)
         in
-
-        trace_driver (lazy "Evaluating...");
-        let env = Eval.eval_header env renamed_header in
-        let context =
-          match check_or_infer_top_level with
-          | Some `Check
-          | None ->
-              `Statement
-          | Some `Infer -> `Expr
-        in
-        Eio.Switch.run
-          begin
-            fun switch ->
-              let res, new_env =
-                Eval.eval_seq_state ~cap:{ switch; fs; mgr } context env renamed
-              in
-              Ok (res, new_env, new_scope, new_type_env)
-          end
+        match type_errors with
+        | _ :: _ ->
+            Error
+              (List.map
+                 (fun (loc, err) -> Error.TypeError (loc, err))
+                 type_errors)
+        | [] ->
+            trace_driver (lazy "Evaluating...");
+            let env = Eval.eval_header env renamed_header in
+            let context =
+              match check_or_infer_top_level with
+              | Some `Check
+              | None ->
+                  `Statement
+              | Some `Infer -> `Expr
+            in
+            Eio.Switch.run
+              begin
+                fun switch ->
+                  let res, new_env =
+                    Eval.eval_seq_state ~cap:{ switch; fs; mgr } context env
+                      renamed
+                  in
+                  Ok (res, new_env, new_scope, new_type_env)
+              end
     end
 
 let run (options : driver_options) (lexbuf : Lexing.lexbuf) ~fs ~mgr :
-    (value, Error.t) result =
+    (value, Error.t list) result =
   let result =
     run_env ~fs ~mgr options lexbuf
       (Eval.make_eval_env options.argv)

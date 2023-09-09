@@ -14,7 +14,7 @@ val run :
   Lexing.lexbuf ->
   fs:Eio.Fs.dir Eio.Path.t ->
   mgr:Eio.Process.mgr ->
-  (Eval.value, Error.t) result
+  (Eval.value, Error.t list) result
 
 val run_env :
   driver_options ->
@@ -26,7 +26,7 @@ val run_env :
   fs:Eio.Fs.dir Eio.Path.t ->
   mgr:Eio.Process.mgr ->
   ( Eval.value * Eval.eval_env * Rename.RenameScope.t * Types.global_env,
-    Error.t )
+    Error.t list )
   result
 
 val parse_rename_typecheck :
@@ -35,6 +35,10 @@ val parse_rename_typecheck :
   Rename.RenameScope.t ->
   ?check_or_infer_top_level:[ `Check | `Infer ] ->
   Types.global_env ->
-  ( Typed.header * Typed.expr list * Rename.RenameScope.t * Types.global_env,
+  ( Typed.header
+    * Typed.expr list
+    * Rename.RenameScope.t
+    * Types.global_env
+    * (loc * Types.type_error) list,
     Error.t )
   result

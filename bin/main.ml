@@ -33,7 +33,7 @@ let fail_usage : 'a. string -> 'a =
 
 let use_colors () = Unix.isatty Unix.stdout
 
-let fatal_error maybe_loc (message : string) =
+let print_error maybe_loc (message : string) =
   (* We might need to disable colors if we are outputting to something other than a tty *)
   let text_style = Errormessage.make_text_style ~enable_color:(use_colors ()) in
 
@@ -64,9 +64,7 @@ let fatal_error maybe_loc (message : string) =
         ^ text_style.bold (line_color (padding ^ " | "))
         ^ next_line
   in
-
-  print_endline (prefix ^ text_style.error "ERROR" ^ ":\n" ^ message ^ suffix);
-  exit 1
+  print_endline (prefix ^ text_style.error "ERROR" ^ ":\n" ^ message ^ suffix)
 
 let repl_error maybe_loc (message : string) =
   let open Errormessage in
@@ -88,14 +86,17 @@ type run_options = {
   print_tokens : bool;
 }
 
-let handle_errors text_style print_fun result =
+let handle_errors text_style print_fun on_exit result =
   match result with
   | Ok x -> x
-  | Error (Error.EvalError (ArgParseError msg)) ->
+  (* TODO:
+     | Error (Error.EvalError (ArgParseError msg)) ->
       (* We cannot run the script if there was an error parsing arguments *)
       print_endline msg;
-      exit 1
-  | Error err -> Error.pretty_error text_style print_fun err
+      exit 1 *)
+  | Error errors ->
+      List.iter (Error.pretty_error text_style print_fun) errors;
+      on_exit ()
 
 let run_repl_with ~fs ~mgr (scope : Rename.RenameScope.t)
     (type_env : Polaris.Types.global_env) (env : eval_env)
@@ -120,7 +121,8 @@ let run_repl_with ~fs ~mgr (scope : Rename.RenameScope.t)
     match options.eval with
     | Some expr ->
         let result, env, scope, type_env =
-          handle_errors text_style fatal_error
+          handle_errors text_style print_error
+            (fun () -> exit 1)
             (Driver.run_env ~fs ~mgr driver_options (Lexing.from_string expr)
                env scope ?check_or_infer_top_level:(Some `Infer) type_env)
         in
@@ -148,10 +150,8 @@ let run_repl_with ~fs ~mgr (scope : Rename.RenameScope.t)
         | Some input ->
             let _ = Bestline.history_add input in
             let result, new_env, new_scope, new_type_env =
-              handle_errors text_style
-                (fun mloc msg ->
-                  repl_error mloc msg;
-                  go env scope type_env)
+              handle_errors text_style repl_error
+                (fun () -> go env scope type_env)
                 (Driver.run_env ~fs ~mgr driver_options
                    (Lexing.from_string input) env scope
                    ?check_or_infer_top_level:(Some `Infer) type_env)
@@ -190,7 +190,8 @@ let run_file ~fs ~mgr (options : run_options) (filepath : string)
   in
 
   let _, env, scope, type_env =
-    handle_errors text_style fatal_error
+    handle_errors text_style print_error
+      (fun () -> exit 1)
       (Driver.run_env ~fs ~mgr driver_options
          (Lexing.from_channel (open_in filepath))
          (Eval.make_eval_env driver_options.argv)

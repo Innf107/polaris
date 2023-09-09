@@ -27,7 +27,7 @@ let as_exn = function
       | TypeError (loc, err) -> raise (Types.TypeError (loc, err))
       | EvalError err -> raise (Eval.EvalError err))
 
-let handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a =
+let handle_errors : 'a. (t -> 'a) -> (unit -> 'a) -> 'a =
  fun handler thunk ->
   try thunk () with
   | Util.Panic msg -> handler (Panic msg)

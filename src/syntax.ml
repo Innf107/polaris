@@ -96,7 +96,6 @@ type 'ty make_class_constraint = {
   arguments : 'ty list;
 }
 
-
 module Template = struct
   include TypeDefinition
 
@@ -265,6 +264,8 @@ module Template = struct
         * (name * ty) list (* class X(x, .., x) { x : t } *)
     | LetInstanceSeq of
         InstanceExt.t
+        * name list
+        * ty
         * name
         * ty list
         * (InstanceMethodExt.t * name * pattern list * expr) list
@@ -509,6 +510,15 @@ module Template = struct
           end;
       }
 
+  let pretty_class_constraint class_constraint =
+    "∀"
+    ^ String.concat ", " (List.map Name.pretty class_constraint.variables)
+    ^ ". "
+    ^ Name.pretty class_constraint.class_name
+    ^ "("
+    ^ String.concat ", " (List.map pretty_type class_constraint.arguments)
+    ^ ")"
+
   let rec pretty_pattern = function
     | VarPat (_, x) -> pretty_name x
     | AsPat (_, pattern, name) ->
@@ -640,9 +650,11 @@ module Template = struct
                (fun (name, ty) -> pretty_name name ^ " : " ^ pretty_type ty)
                methods)
         ^ "\n}"
-    | LetInstanceSeq (_, classname, params, methods) ->
-        "instance " ^ pretty_name classname ^ "("
-        ^ String.concat ", " (List.map pretty_type params)
+    | LetInstanceSeq (_, parameters, entailed, classname, arguments, methods) ->
+        "instance (forall "
+        ^ String.concat " " (List.map pretty_name parameters)
+        ^ ". " ^ pretty_type entailed ^ " => " ^ pretty_name classname ^ "("
+        ^ String.concat ", " (List.map pretty_type arguments)
         ^ ") {\n"
         ^ String.concat "\n"
             (List.map
@@ -697,7 +709,7 @@ module Template = struct
     | Subscript (ext, _, _) -> SubscriptExt.loc ext
     | ModSubscript (ext, _, _) -> ModSubscriptExt.loc ext
     | LetRecSeq (ext, _, _, _, _) -> LetRecExt.loc ext
-    | LetInstanceSeq (ext, _, _, _) -> InstanceExt.loc ext
+    | LetInstanceSeq (ext, _, _, _, _, _) -> InstanceExt.loc ext
     | ExceptionConstructor (loc, _)
     | VariantConstructor (loc, _, _)
     | ModSubscriptDataCon (_, loc, _, _)
@@ -997,10 +1009,15 @@ module Template = struct
                       state methods
                   in
                   (LetClassSeq (loc, class_name, params, methods), state)
-              | LetInstanceSeq (loc, class_name, params, methods) ->
+              | LetInstanceSeq
+                  (loc, parameters, entailed, class_name, arguments, methods) ->
+                  let parameters, state =
+                    traverse_list self#traverse_name state parameters
+                  in
+                  let entailed, state = self#traverse_type state entailed in
                   let class_name, state = self#traverse_name state class_name in
-                  let params, state =
-                    traverse_list self#traverse_type state params
+                  let arguments, state =
+                    traverse_list self#traverse_type state arguments
                   in
                   let methods, state =
                     traverse_list
@@ -1019,7 +1036,9 @@ module Template = struct
                         ((ext, method_name, patterns, expr), state))
                       state methods
                   in
-                  (LetInstanceSeq (loc, class_name, params, methods), state)
+                  ( LetInstanceSeq
+                      (loc, parameters, entailed, class_name, arguments, methods),
+                    state )
               | Assign (loc, place_expr, expr) ->
                   let place_expr, state = self#traverse_expr state place_expr in
                   let expr, state = self#traverse_expr state expr in

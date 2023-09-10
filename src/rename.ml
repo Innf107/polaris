@@ -429,8 +429,7 @@ let rec rename_mod_expr :
                  (fun name (params, methods) r ->
                    RenameScope.insert_type_constructor name.name name
                      (List.length params) ClassSort
-                     (RenameScope.insert_type_class name
-                        params
+                     (RenameScope.insert_type_class name params
                         (StringMap.of_seq
                            (Seq.map
                               (fun (name, ty) -> (name.name, (name, ty)))
@@ -636,7 +635,7 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
   | LetDataSeq (loc, _, _, _)
   | LetTypeSeq (loc, _, _, _)
   | LetClassSeq (loc, _, _, _)
-  | LetInstanceSeq (loc, _, _, _)
+  | LetInstanceSeq (loc, _, _, _, _, _)
   | LetExceptionSeq (loc, _, _, _) ->
       raise (RenameError (LetSeqInNonSeq (expr, loc)))
   | ProgCall (loc, p, args) ->
@@ -843,7 +842,19 @@ and rename_seq_state
       ( LetClassSeq (loc, class_name', List.map snd renamed_params, methods')
         :: exprs,
         scope )
-  | LetInstanceSeq (loc, class_name, args, methods) :: exprs -> begin
+  | LetInstanceSeq (loc, parameters, entailed, class_name, args, methods)
+    :: exprs -> begin
+      let add_type_variable scope variable =
+        let renamed = fresh_var variable in
+        (RenameScope.insert_type_var variable renamed scope, renamed)
+      in
+
+      let scope, parameters =
+        List.fold_left_map add_type_variable scope parameters
+      in
+
+      let entailed, _ = rename_type loc scope entailed in
+
       let class_name', arg_count =
         match RenameMap.find_opt class_name scope.ty_constructors with
         | Some (class_name', arg_count, ClassSort)
@@ -897,7 +908,10 @@ and rename_seq_state
           match (invalid_methods, missing_methods) with
           | [], [] ->
               let exprs, scope = rename_seq_state exports scope exprs in
-              (LetInstanceSeq (loc, class_name', args, methods') :: exprs, scope)
+              ( LetInstanceSeq
+                  (loc, parameters, entailed, class_name', args, methods')
+                :: exprs,
+                scope )
           | _ ->
               raise
                 (RenameError
@@ -978,7 +992,8 @@ let rename_exports :
           | Some (renamed, _, _sort) -> begin
               match NameMap.find_opt renamed scope.type_classes with
               | Some (params, fields) ->
-                  Renamed.ExportConstructor ((loc, `Class (params, fields)), renamed)
+                  Renamed.ExportConstructor
+                    ((loc, `Class (params, fields)), renamed)
               | None -> Renamed.ExportConstructor ((loc, `Type), renamed)
             end
           | None -> (

@@ -71,7 +71,7 @@ type expr_or_fun_def_ext =
 %token USAGE DESCRIPTION OPTIONS AS
 %token WITH EXTEND
 %token MODULE IMPORT EXPORT
-%token FORALL
+%token FORALL "forall"
 %token DATA
 %token TYPE
 %token CLASS
@@ -106,6 +106,10 @@ sep_trailing1(sep, p):
     | p { [$1] }
     | p sep { [$1] }
     | p sep sep_trailing1(sep, p) { $1 :: $3 }
+
+many(p):
+    |           { [] }
+    | p many(p) { $1 :: $2 }
 
 semis(p):
     p SEMI* { $1 }
@@ -286,7 +290,11 @@ expr_leaf:
         "}" { LetClassSeq(loc $startpos $endpos, $2, $4, $7) }
     | INSTANCE CONSTRUCTOR "(" sep_trailing1(COMMA, ty) ")" "{"
             sep_trailing(SEMI+, instance_def)
-        "}" { LetInstanceSeq(loc $startpos $endpos, $2, $4, $7) }
+        "}" { LetInstanceSeq(loc $startpos $endpos, [], Tuple [||], $2, $4, $7) }
+        (* TODO: Allow a version without parentheses around the entailed constraint *)
+    | INSTANCE "(" "forall" many(IDENT) "." "(" ty ")" "=>" CONSTRUCTOR "(" sep_trailing1(COMMA, ty) ")" ")" "{"
+            sep_trailing(SEMI+, instance_def)
+        "}" { LetInstanceSeq(loc $startpos $endpos, $4, $7, $10, $12, $16) }
     | EXCEPTION CONSTRUCTOR "(" sep_trailing(COMMA, typed_ident) ")" "=" expr { LetExceptionSeq(loc $startpos $endpos, $2, $4, $7) }
     | TRY expr WITH "{" sep_trailing(SEMI+, match_branch) "}" { Try(loc $startpos $endpos, $2, $5) }
     | RAISE expr { Raise(loc $startpos $endpos, $2) }
@@ -359,7 +367,7 @@ ty:
     | "(" ")" arrow ty                                              { make_function $3 [] $4}
     | ty2 arrow ty                                                  { make_function $2 [$1] $3 }
     | "(" ty "," sep_trailing(",", ty) ")"                          { Tuple(Array.of_list ($2 :: $4)) }
-    | FORALL IDENT* "." ty                                          { List.fold_right (fun a r -> Forall(a, r)) $2 $4 }
+    | "forall" IDENT* "." ty                                        { List.fold_right (fun a r -> Forall(a, r)) $2 $4 }
     | "(" ty ")"                                                    { $2 }
     | ty1                                                           { $1 }
 

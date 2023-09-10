@@ -90,6 +90,7 @@ and given_constraint =
   | GivenClass of {
       loc : loc;
       given : class_constraint;
+      entailed : class_constraint list;
       evidence : Evidence.source;
     }
 
@@ -295,9 +296,24 @@ let insert_type_class : name -> name list -> local_env -> local_env =
     type_classes = NameMap.add class_name parameter_names env.type_classes;
   }
 
+let pretty_ty_constraint = function
+  | Unify (_, ty1, ty2, _) -> pretty_type ty1 ^ " ~ " ^ pretty_type ty2
+  | Unwrap (_, ty1, ty2, _) ->
+      "Unwrap(" ^ pretty_type ty1 ^ ") --> " ^ pretty_type ty2
+  | ProgramArg (_, argument_type, _) ->
+      "ProgramArg(" ^ pretty_type argument_type ^ ")"
+  | RefineVariant _ -> "RefineVariant(_)"
+  | Interpolatable (_, argument_type, _) ->
+      "Interpolatable(" ^ pretty_type argument_type ^ ")"
+  | WantedClass { wanted; _ } ->
+      Name.pretty wanted.class_name
+      ^ "("
+      ^ String.concat ", " (List.map pretty_type wanted.arguments)
+      ^ ")"
+
 let emit_givens loc givens (env : local_env) =
   List.iter
-    (fun (given, evidence) ->
+    (fun (given, evidence, entailed) ->
       trace_emit
         (lazy
           ("[G] ∀"
@@ -306,6 +322,8 @@ let emit_givens loc givens (env : local_env) =
           ^ Name.pretty given.class_name
           ^ "("
           ^ String.concat ", " (List.map pretty_type given.arguments)
+          ^ ") ==> ("
+          ^ String.concat ", " (List.map pretty_class_constraint entailed)
           ^ ") #d = "
           ^ Evidence.display_source evidence)))
     givens;
@@ -313,7 +331,8 @@ let emit_givens loc givens (env : local_env) =
     env with
     given_constraints =
       List.map
-        (fun (given, evidence) -> GivenClass { loc; given; evidence })
+        (fun (given, evidence, entailed) ->
+          GivenClass { loc; given; evidence; entailed })
         givens
       @ env.given_constraints;
   }
@@ -385,6 +404,7 @@ let rec collect_atomic_given_constraints :
   | TypeAlias (name, arguments) ->
       collect_atomic_given_constraints env
         (instantiate_type_alias env name arguments)
+  | Tuple [||] -> ([], [])
   | ty ->
       panic __LOC__
         ("Non type constructor in constraint: " ^ Typed.pretty_type ty)
@@ -404,6 +424,7 @@ let rec collect_atomic_wanted_constraints :
   | TypeAlias (name, arguments) ->
       collect_atomic_wanted_constraints env
         (instantiate_type_alias env name arguments)
+  | Tuple [||] -> ([], [])
   | ty ->
       panic __LOC__
         ("Non type constructor in constraint: " ^ Typed.pretty_type ty)
@@ -468,6 +489,12 @@ let rec skolemize_with_function :
   | Constraint (class_constraint, ty) ->
       let givens, sources_to_abstract =
         collect_atomic_given_constraints env class_constraint
+      in
+      let givens =
+        List.map
+          (fun (class_constraint, evidence_source) ->
+            (class_constraint, evidence_source, []))
+          givens
       in
       let skolemized, skolemizer, env_transformer, evidence =
         skolemize_with_function loc env ty
@@ -625,7 +652,7 @@ let rec eval_module_env :
           given_constraints =
             List.map
               (fun (loc, given, evidence) ->
-                GivenClass { loc; given; evidence })
+                GivenClass { loc; given; evidence; entailed = todo __LOC__ })
               mod_exports.exported_instances;
         },
         Import ((loc, mod_exports, exprs), path) )
@@ -1737,7 +1764,8 @@ and check_seq_expr :
       let insert_methods env = List.fold_right insert_method methods env in
       ( insert_methods << insert_type_class class_name params,
         LetClassSeq (loc, class_name, params, methods) )
-  | LetInstanceSeq (loc, class_name, arguments, methods) ->
+  | LetInstanceSeq (loc, universals, entailed, class_name, arguments, methods)
+    ->
       (* TODO: Does this really need to be part of the environment? Can't we just
          annotate this with the parameters in the renamer? *)
       let parameter_names =
@@ -1777,10 +1805,26 @@ and check_seq_expr :
 
       let given_source = Evidence.make_source () in
 
+      let entailed_constraints, entailed_evidence =
+        collect_atomic_given_constraints env entailed
+      in
+
+      let entailed_constraints = List.map fst entailed_constraints in
+
       (* TODO: Annotate the instance with its given source here *)
       ( emit_givens loc
-          [ ({ class_name; variables = []; arguments }, given_source) ],
-        LetInstanceSeq ((loc, given_source), class_name, arguments, methods) )
+          [
+            ( { class_name; variables = []; arguments },
+              given_source,
+              entailed_constraints );
+          ],
+        LetInstanceSeq
+          ( (loc, given_source),
+            universals,
+            entailed,
+            class_name,
+            arguments,
+            methods ) )
   | LetExceptionSeq (loc, exception_name, params, message_expr) ->
       let message_env =
         List.fold_right (fun (param, ty) r -> insert_var param ty r) params env
@@ -2676,16 +2720,17 @@ let is_valid_instance env given_loc (given_constraint : class_constraint)
     List.iter2 match_types given_constraint.arguments
       wanted_constraint.arguments
   with
-  | () -> true
-  | exception DoesNotMatch -> false
+  | () -> Some !substitution
+  | exception DoesNotMatch -> None
 
-let solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
+let rec solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
     local_env evidence_target =
   (* TODO: Worry about ambiguity here *)
   let find_matching_given = function
-    | GivenClass { loc = given_loc; given; evidence = evidence_source } ->
+    | GivenClass
+        { loc = given_loc; given; evidence = evidence_source; entailed } ->
         if not (Name.equal wanted.class_name given.class_name) then begin
-          None
+          false
         end
         else begin
           let class_trace_diagnostic () =
@@ -2708,18 +2753,64 @@ let solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
             is_valid_instance env given_loc given evidence_source wanted_loc
               wanted evidence_target
           with
-          | true ->
+          | Some substitution ->
+              let substitution_traversal =
+                object
+                  inherit [unit] Traversal.traversal
+
+                  method! ty () =
+                    function
+                    | TyVar name -> begin
+                        match NameMap.find_opt name substitution with
+                        | Some ty -> (ty, ())
+                        | None -> (TyVar name, ())
+                      end
+                    | RecordVar _
+                    | VariantVar _ ->
+                        todo __LOC__
+                    | ty -> (ty, ())
+                end
+              in
+
+              (* TODO: This is probably were you build up evidence from the entailed constraints*)
+
+              (* Solve all entailed constraints as well. These might not all be solved immediately
+                 which is why we need the indirection with evidence targets *)
+              let solve_entailed entailed =
+                let evidence_target = Evidence.make_empty_target () in
+
+                (* We need to apply the substitution from the instance resolution so we actually get the *full*
+                   entailed constraints here *)
+                let entailed_arguments, () =
+                  Traversal.traverse_list substitution_traversal#traverse_type
+                    () entailed.arguments
+                in
+
+                let entailed =
+                  { entailed with arguments = entailed_arguments }
+                in
+
+                let _progress =
+                  solve_wanted_class wanted_loc env unify_state entailed givens
+                    local_env evidence_target
+                in
+
+                evidence_target
+              in
+
+              let entailed_evidence = List.map solve_entailed entailed in
+
               trace_class (lazy (class_trace_diagnostic () ^ " -> Success"));
               Evidence.fill_target evidence_target evidence_source;
-              Some ()
-          | false ->
+              true
+          | None ->
               trace_class (lazy (class_trace_diagnostic () ^ " -> Failure"));
-              None
+              false
         end
   in
-  match List.find_map find_matching_given givens with
-  | Some () -> true
-  | None ->
+  match List.exists find_matching_given givens with
+  | true -> true
+  | false ->
       unify_state.deferred_constraints :=
         Difflist.snoc
           !(unify_state.deferred_constraints)
@@ -2868,7 +2959,8 @@ let check_exhaustiveness_and_close_variants_in_exprs expr =
                 check_column (Typed.get_pattern_loc pattern) [ pattern ])
               patterns;
             (expr, ())
-        | Typed.LetInstanceSeq (_, _, _, methods) ->
+        | Typed.LetInstanceSeq (_, _, _, _, _, methods) ->
+            (* TODO: Account for entailment *)
             List.iter
               (fun (_, _, patterns, _) ->
                 List.iter

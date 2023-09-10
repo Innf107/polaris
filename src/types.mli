@@ -7,6 +7,7 @@ type given_constraint =
   | GivenClass of {
       loc : loc;
       given : class_constraint;
+      entailed : class_constraint list;
       evidence : Evidence.source;
     }
 

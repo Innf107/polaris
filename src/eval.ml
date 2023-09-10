@@ -1268,7 +1268,7 @@ and eval_seq_cont :
           methods env
       in
       eval_seq_cont ~cap context updated_env exprs cont
-  | LetInstanceSeq ((loc, given_source), name, arguments, methods) :: exprs ->
+  | LetInstanceSeq ((loc, given_source), _parameters, _, name, _arguments, methods) :: exprs ->
       let source_unique =
         match given_source with
         | Dictionary unique -> unique

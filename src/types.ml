@@ -41,6 +41,7 @@ type type_error =
   | TupleLiteralOfWrongLength of int * ty array
   | NonProgramArgument of ty
   | NonInterpolatable of ty
+  | AmbiguousClassConstraint of class_constraint * (name list * ty list) list
 
 exception TypeError of loc * type_error
 
@@ -53,6 +54,368 @@ end
 
 module TyperefSet = Set.Make (TyperefOrd)
 module TyperefMap = Map.Make (TyperefOrd)
+
+let normalize_unif = Ty.normalize_unif
+
+type class_instance = {
+  evidence : Evidence.source
+}
+
+(** An efficient trie for matching type classes during type class resolution
+    This is indexed by the unrolled type constructors for instance parameters
+    making instance matching extremely efficient in practice.
+
+    Matching instances traverses all matching paths at the same time, which allows
+    it to report ambiguities*)
+module InstanceTrie : sig
+  type t
+
+  val empty : t
+  val add_instance : name list -> ty list -> class_instance -> t -> t
+
+  val match_instance :
+    t ->
+    ty list ->
+    [> `Found of class_instance | `Missing | `Ambiguous of class_instance list ]
+end = struct
+  type type_head =
+    (* DeBruijn level of a universal type class variable *)
+    | HVariable of int
+    (* Number of parameters. This is necessary to keep the linearly unrolled
+       type string consistent *)
+    | HFunction of int
+    | HConstraint
+    (* This has to use Name.t instead of name for the deriver to work correctly *)
+    | HConstructor of Name.t
+    (* HUnifs will never be substituted here, so we only need to carry
+        their `Unique.t`s, rather than their full `Typeref.t`s.
+        The actual matching logic treats these abstractly, just like skolems *)
+    | HUnif of Unique.t
+    | HSkolem of Unique.t
+    | HNumber
+    | HBool
+    | HString
+    | HException
+    | HTuple of int
+    | HList
+    | HRef
+    | HPromise
+    (* record fields are presented in canonical (sorted) order (up to duplicate labels)*)
+    | HRecord of string array
+    | HVariant of (string * int) array
+  [@@deriving ord]
+
+  (* TODO: Unroll incrementally (maybe by returning a type_head Seq.t?) *)
+  (* This needs to take an environment because it might need to follow type aliases :/
+     (Maybe type aliases should just contain their definition so we don't need this anymore) *)
+  let unroll : name list -> ty list -> type_head list =
+   fun universals types ->
+    let rec unroll_type = function
+      | Forall _ -> panic __LOC__ "forall in type class instance"
+      | Fun (arguments, result) ->
+          Difflist.cons
+            (HFunction (List.length arguments))
+            (Difflist.append
+               (Difflist.concat_map_list unroll_type arguments)
+               (unroll_type result))
+      | Constraint (constraint_type, ty) ->
+          Difflist.cons HConstraint
+            (Difflist.append (unroll_type constraint_type) (unroll_type ty))
+      (* TODO: Resolve DeBruijn levels based on the position in the type, *not* the quantifier*)
+      | TyVar name -> begin
+          match
+            Base.List.findi
+              ~f:(fun _ universal_name -> Name.equal name universal_name)
+              universals
+          with
+          | Some (index, _) -> Difflist.cons (HVariable index) Difflist.empty
+          | None ->
+              panic __LOC__
+                ("Trying to unroll a type involving the unbound universal type \
+                  variable '" ^ Name.pretty name ^ "'")
+        end
+      | TyConstructor (name, arguments) ->
+          Difflist.cons (HConstructor name)
+            (Difflist.concat_map_list unroll_type arguments)
+      | TypeAlias { underlying; _ } ->
+          (* type aliases are immediately substituted by their definition *)
+          unroll_type underlying
+      | Unif (typeref, _) ->
+          Difflist.cons (HUnif (Typeref.get_unique typeref)) Difflist.empty
+      | Skol (unique, _, _) ->
+          (* TODO: Do we need to check skolem levels here? *)
+          Difflist.cons (HSkolem unique) Difflist.empty
+      | Number -> Difflist.cons HNumber Difflist.empty
+      | Bool -> Difflist.cons HBool Difflist.empty
+      | String -> Difflist.cons HString Difflist.empty
+      | Exception -> Difflist.cons HException Difflist.empty
+      | Tuple elements ->
+          Difflist.cons
+            (HTuple (Array.length elements))
+            (Difflist.concat_map_list unroll_type (Array.to_list elements))
+      | List ty -> Difflist.cons HList (unroll_type ty)
+      | Ref ty -> Difflist.cons HRef (unroll_type ty)
+      | Promise ty -> Difflist.cons HPromise (unroll_type ty)
+      | RecordClosed fields ->
+          let sorted_fields =
+            Util.immutable_stable_sort
+              (fun (key1, _) (key2, _) -> String.compare key1 key2)
+              fields
+          in
+          Difflist.cons
+            (HRecord (Array.map fst sorted_fields))
+            (Difflist.concat_map_array
+               (fun (_, ty) -> unroll_type ty)
+               sorted_fields)
+      | RecordSkol (fields, (unique, _, _)) ->
+          let sorted_fields =
+            Util.immutable_stable_sort
+              (fun (key1, _) (key2, _) -> String.compare key1 key2)
+              fields
+          in
+          Difflist.cons
+            (HRecord (Array.map fst sorted_fields))
+            (Difflist.snoc
+               (Difflist.concat_map_array
+                  (fun (_, ty) -> unroll_type ty)
+                  sorted_fields)
+               (HSkolem unique))
+      | RecordVar _ ->
+          panic __LOC__
+            "Uninstantiated (record) type variable in wanted constraint"
+      | RecordUnif (fields, (typeref, _)) ->
+          let sorted_fields =
+            Util.immutable_stable_sort
+              (fun (key1, _) (key2, _) -> String.compare key1 key2)
+              fields
+          in
+          Difflist.cons
+            (HRecord (Array.map fst sorted_fields))
+            (Difflist.snoc
+               (Difflist.concat_map_array
+                  (fun (_, ty) -> unroll_type ty)
+                  sorted_fields)
+               (HUnif (Typeref.get_unique typeref)))
+      | VariantClosed constructors ->
+          let sorted_constructors =
+            Util.immutable_stable_sort
+              (fun (key1, _) (key2, _) -> String.compare key1 key2)
+              constructors
+          in
+          Difflist.cons
+            (HVariant
+               (Array.map
+                  (fun (key, types) -> (key, List.length types))
+                  sorted_constructors))
+            (Difflist.concat_map_array
+               (fun (_, types) -> Difflist.concat_map_list unroll_type types)
+               sorted_constructors)
+      | VariantSkol (constructors, (unique, _, _)) ->
+          let sorted_constructors =
+            Util.immutable_stable_sort
+              (fun (key1, _) (key2, _) -> String.compare key1 key2)
+              constructors
+          in
+          Difflist.cons
+            (HVariant
+               (Array.map
+                  (fun (key, types) -> (key, List.length types))
+                  sorted_constructors))
+            (Difflist.snoc
+               (Difflist.concat_map_array
+                  (fun (_, types) -> Difflist.concat_map_list unroll_type types)
+                  sorted_constructors)
+               (HSkolem unique))
+      | VariantUnif (constructors, (typeref, _)) ->
+          let sorted_constructors =
+            Util.immutable_stable_sort
+              (fun (key1, _) (key2, _) -> String.compare key1 key2)
+              constructors
+          in
+          Difflist.cons
+            (HVariant
+               (Array.map
+                  (fun (key, types) -> (key, List.length types))
+                  sorted_constructors))
+            (Difflist.snoc
+               (Difflist.concat_map_array
+                  (fun (_, types) -> Difflist.concat_map_list unroll_type types)
+                  sorted_constructors)
+               (HUnif (Typeref.get_unique typeref)))
+      | VariantVar _ ->
+          panic __LOC__
+            "Uninstantiated (variant) type variable in wanted constraint"
+      | ModSubscriptTyCon _ -> .
+    in
+
+    Difflist.to_list (Difflist.concat_map_list unroll_type types)
+
+  module HeadMap = Map.Make (struct
+    type t = type_head
+
+    let compare = compare_type_head
+  end)
+
+  type t =
+    | Leaf of class_instance
+    | Node of t HeadMap.t
+
+  (* TODO: This technically does not allow nullary instances. Those are really weird though, so... *)
+  let empty = Node HeadMap.empty
+
+  let add_instance variables types instance trie =
+    let rec create_trie_from = function
+      | [] -> Leaf instance
+      | head :: rest ->
+          Node (HeadMap.add head (create_trie_from rest) HeadMap.empty)
+    in
+    let rec go children = function
+      | head :: rest -> begin
+          match HeadMap.find_opt head children with
+          | Some (Leaf _) ->
+              panic __LOC__
+                "duplicate type class instance or misshapen instance trie"
+          | Some (Node children) ->
+              let child_trie = go children rest in
+              Node (HeadMap.add head child_trie children)
+          | None -> 
+            (* TODO: Should this be (head :: rest) or just rest? *)
+            create_trie_from (head :: rest)
+        end
+      | [] -> panic __LOC__ "misshapen instance trie"
+    in
+    match trie with
+    | Leaf _ ->
+        panic __LOC__
+          "duplicate nullary type class instance (what's wrong with you???)"
+    | Node children -> go children (unroll variables types)
+
+  let all_matching : ty list -> t -> (t * ty list) list =
+   fun types trie ->
+    let filter_map_or_substitute remaining_types children predicate =
+      List.filter_map
+        (fun (head, value) ->
+          match head with
+          | HVariable i -> todo __LOC__
+          | head when predicate head -> Some (value, remaining_types)
+          | _ -> None)
+        (HeadMap.bindings children)
+    in
+    let normalize_first_unif = function
+      | ty :: rest -> normalize_unif ty :: rest
+      | [] -> []
+    in
+
+    match trie with
+    | Leaf _ -> []
+    | Node children -> begin
+        match normalize_first_unif types with
+        | [] -> todo __LOC__
+        | RecordClosed _ :: rest
+        | RecordVar _ :: rest
+        | RecordUnif _ :: rest
+        | RecordSkol _ :: rest
+        | VariantClosed _ :: rest
+        | VariantVar _ :: rest
+        | VariantUnif _ :: rest
+        | VariantSkol _ :: rest ->
+            todo __LOC__ (* the difficult cases*)
+        | Forall _ :: rest -> panic __LOC__ "forall in wanted class constraint"
+        | Fun (parameters, result) :: rest ->
+            let remaining_types = parameters @ [ result ] @ rest in
+            let parameter_count = List.length parameters in
+            filter_map_or_substitute remaining_types children (function
+              | HFunction count when count = parameter_count -> true
+              | _ -> false)
+        | Constraint (constraint_type, result) :: rest ->
+            let remaining_types = constraint_type :: result :: rest in
+            filter_map_or_substitute remaining_types children (function
+              | HConstraint -> true
+              | _ -> false)
+        | TyVar name :: rest ->
+            panic __LOC__
+              ("Uninstantiated type variable in wanted constraint: "
+             ^ Name.pretty name)
+        | TyConstructor (name, arguments) :: rest ->
+            filter_map_or_substitute (arguments @ rest) children (function
+              | HConstructor constr_name when Name.equal name constr_name ->
+                  true
+              | _ -> false)
+        | TypeAlias _ :: rest -> todo __LOC__
+        | Unif (typeref, _) :: rest ->
+            filter_map_or_substitute rest children (function
+              | HUnif unique
+                when Unique.equal (Typeref.get_unique typeref) unique ->
+                  true
+              | _ -> false)
+        | Skol (unique, _level, _) :: rest ->
+            filter_map_or_substitute rest children (function
+              | HSkolem head_unique when Unique.equal unique head_unique -> true
+              | _ -> false)
+        | Number :: rest ->
+            filter_map_or_substitute rest children (function
+              | HNumber -> true
+              | _ -> false)
+        | Bool :: rest ->
+            filter_map_or_substitute rest children (function
+              | HBool -> true
+              | _ -> false)
+        | String :: rest ->
+            filter_map_or_substitute rest children (function
+              | HString -> true
+              | _ -> false)
+        | Exception :: rest ->
+            filter_map_or_substitute rest children (function
+              | HException -> true
+              | _ -> false)
+        | Tuple arguments :: rest ->
+            filter_map_or_substitute
+              (Array.to_list arguments @ rest)
+              children
+              (function
+                | HTuple count when count = Array.length arguments -> true
+                | _ -> false)
+        | List argument :: rest ->
+            filter_map_or_substitute (argument :: rest) children (function
+              | HList -> true
+              | _ -> false)
+        | Ref argument :: rest ->
+            filter_map_or_substitute (argument :: rest) children (function
+              | HRef -> true
+              | _ -> false)
+        | Promise argument :: rest ->
+            filter_map_or_substitute (argument :: rest) children (function
+              | HPromise -> true
+              | _ -> false)
+        | ModSubscriptTyCon _ :: _ -> .
+      end
+
+  let match_instance trie types =
+    (* It might seem like it would be more efficient to traverse the trie in
+       BFS rather than backtracking, but since we need to traverse every
+       reachable path anyway to detect and report ambiguities, that actually turns
+       out to be false!
+       Depth first search is much simpler so that is what we do here. *)
+    let rec go trie types =
+      let subtries_and_remaining_types = all_matching types trie in
+
+      let continue (subtrie, remaining) =
+        match remaining with
+        | [] -> begin
+            match subtrie with
+            | Leaf instance -> [ instance ]
+            | Node _ -> panic __LOC__ "misshapen instance trie"
+          end
+        | _ -> go subtrie remaining
+      in
+
+      List.concat_map continue subtries_and_remaining_types
+    in
+    match go trie types with
+    | [] -> `Missing
+    | [ instance ] -> `Found instance
+    | instances -> `Ambiguous instances
+end
 
 (* Note [Env in Constraints]
    During unification, we need to check for escaping type constructors.
@@ -70,6 +433,8 @@ module TyperefMap = Map.Make (TyperefOrd)
    unification constraints
 *)
 
+type given_constraints = { class_instances : InstanceTrie.t NameMap.t }
+
 type ty_constraint =
   (* See Note [Env in Constraints] *)
   | Unify of loc * ty * ty * local_env (* See Note [Env in Constraints] *)
@@ -81,17 +446,9 @@ type ty_constraint =
   | WantedClass of {
       loc : loc;
       wanted : class_constraint;
-      givens : given_constraint list;
+      givens : given_constraints;
       local_env : local_env;
       evidence_target : Evidence.target;
-    }
-
-and given_constraint =
-  | GivenClass of {
-      loc : loc;
-      given : class_constraint;
-      entailed : class_constraint list;
-      evidence : Evidence.source;
     }
 
 (* forall a. Eq(List(a)) *)
@@ -103,13 +460,13 @@ and global_env = {
   ambient_level : Typeref.level;
   exception_definitions : ty list NameMap.t;
   type_classes : name list NameMap.t;
-  given_constraints : given_constraint list;
+  given_constraints : given_constraints;
 }
 
 and local_env = {
   local_types : ty NameMap.t;
   constraints : ty_constraint Difflist.t ref;
-  given_constraints : given_constraint list;
+  given_constraints : given_constraints;
   module_var_contents : global_env NameMap.t;
   data_definitions : (Typeref.level * name list * ty) NameMap.t;
   type_aliases : (name list * ty) NameMap.t;
@@ -119,8 +476,6 @@ and local_env = {
   level : Typeref.level;
   exception_definitions : ty list NameMap.t;
 }
-
-let normalize_unif = Ty.normalize_unif
 
 let unify : local_env -> loc -> ty -> ty -> unit =
  fun env loc ty1 ty2 ->
@@ -175,8 +530,7 @@ let wanted_class :
       ^ Name.pretty class_constraint.class_name
       ^ "("
       ^ String.concat ", " (List.map pretty_type class_constraint.arguments)
-      ^ ")" ^ " #[G] = "
-      ^ string_of_int (List.length env.given_constraints)));
+      ^ ")"));
   env.constraints :=
     Difflist.snoc !(env.constraints)
       (WantedClass
@@ -312,30 +666,40 @@ let pretty_ty_constraint = function
       ^ ")"
 
 let emit_givens loc givens (env : local_env) =
-  List.iter
-    (fun (given, evidence, entailed) ->
-      trace_emit
-        (lazy
-          ("[G] ∀"
-          ^ String.concat " " (List.map Name.pretty given.variables)
-          ^ ". "
-          ^ Name.pretty given.class_name
-          ^ "("
-          ^ String.concat ", " (List.map pretty_type given.arguments)
-          ^ ") ==> ("
-          ^ String.concat ", " (List.map pretty_class_constraint entailed)
-          ^ ") #d = "
-          ^ Evidence.display_source evidence)))
-    givens;
-  {
-    env with
-    given_constraints =
-      List.map
-        (fun (given, evidence, entailed) ->
-          GivenClass { loc; given; evidence; entailed })
-        givens
-      @ env.given_constraints;
-  }
+  let add_given given_constraints (given, evidence, entailed) =
+    trace_emit
+      (lazy
+        ("[G] ∀"
+        ^ String.concat " " (List.map Name.pretty given.variables)
+        ^ ". "
+        ^ Name.pretty given.class_name
+        ^ "("
+        ^ String.concat ", " (List.map pretty_type given.arguments)
+        ^ ") ==> ("
+        ^ String.concat ", " (List.map pretty_class_constraint entailed)
+        ^ ") #d = "
+        ^ Evidence.display_source evidence));
+
+    let class_instances =
+      NameMap.update given.class_name
+        (fun maybe_instance_trie ->
+          let instance_trie =
+            Option.value maybe_instance_trie ~default:InstanceTrie.empty
+          in
+
+          let instance = { evidence } in
+
+          Some
+            (InstanceTrie.add_instance given.variables given.arguments instance
+               instance_trie))
+        given_constraints.class_instances
+    in
+    { given_constraints with class_instances }
+  in
+  let given_constraints =
+    List.fold_left add_given env.given_constraints givens
+  in
+  { env with given_constraints }
 
 let insert_exception_definition : name -> ty list -> local_env -> local_env =
  fun name params env ->
@@ -367,43 +731,17 @@ let replace_tvars : ty NameMap.t -> ty -> ty =
       | ty -> ty
     end
 
-let instantiate_type_alias : local_env -> name -> ty list -> ty =
- fun env name args ->
-  let params, underlying_type =
-    match NameMap.find_opt name env.type_aliases with
-    | None ->
-        panic __LOC__
-          ("Unbound type alias '" ^ Name.pretty name
-         ^ "' in type checker. This should have been caught earlier!")
-    | Some (params, underlying_type) -> (params, underlying_type)
-  in
-  if List.compare_lengths args params <> 0 then begin
-    panic __LOC__
-      ("Wrong number of arguments to type alias " ^ Name.pretty name
-     ^ " in type checker. (Expected: "
-      ^ string_of_int (List.length params)
-      ^ ", Actual: "
-      ^ string_of_int (List.length args)
-      ^ " This should have been caught earlier!")
-  end;
-  replace_tvars
-    (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args)))
-    underlying_type
-
 (* This needs to collect a list of *atomic* sources and a separate list
    of sources *to be abstracted*, since compound sources might need to be split and rebuilt *)
 let rec collect_atomic_given_constraints :
-    local_env ->
-    ty ->
-    (class_constraint * Evidence.source) list * Evidence.source list =
- fun env -> function
+    ty -> (class_constraint * Evidence.source) list * Evidence.source list =
+  function
   | TyConstructor (name, arguments) ->
       let source = Evidence.make_source () in
       ( [ ({ variables = []; class_name = name; arguments }, source) ],
         [ source ] )
-  | TypeAlias (name, arguments) ->
-      collect_atomic_given_constraints env
-        (instantiate_type_alias env name arguments)
+  | TypeAlias { name = _; arguments = _; underlying } ->
+      collect_atomic_given_constraints underlying
   | Tuple [||] -> ([], [])
   | ty ->
       panic __LOC__
@@ -421,9 +759,8 @@ let rec collect_atomic_wanted_constraints :
 
       ( [ ({ variables = []; class_name = name; arguments }, target) ],
         [ target ] )
-  | TypeAlias (name, arguments) ->
-      collect_atomic_wanted_constraints env
-        (instantiate_type_alias env name arguments)
+  | TypeAlias { name = _; arguments = _; underlying } ->
+      collect_atomic_wanted_constraints env underlying
   | Tuple [||] -> ([], [])
   | ty ->
       panic __LOC__
@@ -456,8 +793,8 @@ let rec instantiate_with_function :
       in
       (* TODO: Let's hope the order of expressions is correct here *)
       (instantiated, inner_replacement_fun, targets_to_apply :: evidence)
-  | TypeAlias (name, args) ->
-      instantiate_with_function loc env (instantiate_type_alias env name args)
+  | TypeAlias { name = _; arguments = _; underlying } ->
+      instantiate_with_function loc env underlying
   | ty -> (ty, Fun.id, [])
 
 let instantiate : loc -> local_env -> ty -> ty * Evidence.target list list =
@@ -488,7 +825,7 @@ let rec skolemize_with_function :
         end
   | Constraint (class_constraint, ty) ->
       let givens, sources_to_abstract =
-        collect_atomic_given_constraints env class_constraint
+        collect_atomic_given_constraints class_constraint
       in
       let givens =
         List.map
@@ -503,8 +840,8 @@ let rec skolemize_with_function :
         skolemizer,
         emit_givens loc givens << env_transformer,
         sources_to_abstract :: evidence )
-  | TypeAlias (name, args) ->
-      skolemize_with_function loc env (instantiate_type_alias env name args)
+  | TypeAlias { name; arguments; underlying } ->
+      skolemize_with_function loc env underlying
   | ty -> (ty, Fun.id, Fun.id, [])
 
 let skolemize : loc -> local_env -> ty -> ty * Evidence.source list list =
@@ -621,10 +958,8 @@ let binds_value : expr -> bool = function
   | LetRecSeq _ -> true
   | _ -> false
 
-let rec is_polytype : local_env -> ty -> bool =
- fun env -> function
-  | TypeAlias (name, params) ->
-      is_polytype env (instantiate_type_alias env name params)
+let rec is_polytype : ty -> bool = function
+  | TypeAlias { name = _; arguments = _; underlying } -> is_polytype underlying
   | Forall _ -> true
   | _ -> false
 
@@ -649,11 +984,8 @@ let rec eval_module_env :
           type_aliases = mod_exports.exported_type_aliases;
           type_classes = NameMap.map fst mod_exports.exported_type_classes;
           ambient_level = Typeref.initial_top_level;
-          given_constraints =
-            List.map
-              (fun (loc, given, evidence) ->
-                GivenClass { loc; given; evidence; entailed = todo __LOC__ })
-              mod_exports.exported_instances;
+          given_constraints = (* TODO *)
+                              { class_instances = NameMap.empty };
         },
         Import ((loc, mod_exports, exprs), path) )
   | SubModule (loc, mod_expr, name) -> (
@@ -856,7 +1188,7 @@ and check_pattern :
       (level_prefix env ^ "checking pattern '" ^ pretty_pattern pattern ^ "' : "
      ^ pretty_type expected_ty));
 
-  if (not allow_polytype) && is_polytype env expected_ty then begin
+  if (not allow_polytype) && is_polytype expected_ty then begin
     raise (TypeError (get_pattern_loc pattern, ValueRestriction expected_ty))
   end;
 
@@ -926,7 +1258,7 @@ and check_pattern :
       in
       (right_trans << left_trans, OrPat (loc, left, right))
   | TypePat (loc, pattern, ty), expected_ty ->
-      if (not allow_polytype) && is_polytype env ty then begin
+      if (not allow_polytype) && is_polytype ty then begin
         raise (TypeError (loc, ValueRestriction ty))
       end;
 
@@ -964,17 +1296,16 @@ and check_pattern :
 
 let rec split_fun_ty : local_env -> loc -> int -> ty -> ty list * ty =
  fun env loc arg_count ty ->
-  assert (not (is_polytype env ty));
+  assert (not (is_polytype ty));
   match normalize_unif ty with
   | Fun (args, result) ->
       (* TODO: Should we check that the argument count matches here? *)
       (args, result)
-  | TypeAlias (alias_name, args) ->
-      let real_type = instantiate_type_alias env alias_name args in
+  | TypeAlias { name = _; arguments = _; underlying } ->
       (* We continue recursively, unwrapping every layer of type synonym until we hit either a function
          or a non-alias type that we can unify with a function type.
          This guarantees that type synonyms for functions taking polytypes behave correctly *)
-      split_fun_ty env loc arg_count real_type
+      split_fun_ty env loc arg_count underlying
   | ty ->
       let argument_types = List.init arg_count (fun _ -> fresh_unif env) in
       let result_type = fresh_unif env in
@@ -993,12 +1324,10 @@ let rec split_fun_ty : local_env -> loc -> int -> ty -> ty list * ty =
     use unification otherwise *)
 let rec split_ref_ty : local_env -> loc -> ty -> ty =
  fun env loc ty ->
-  assert (not (is_polytype env ty));
+  assert (not (is_polytype ty));
   match normalize_unif ty with
   | Ref ty -> ty
-  | TypeAlias (alias_name, args) ->
-      let real_type = instantiate_type_alias env alias_name args in
-      split_ref_ty env loc real_type
+  | TypeAlias { underlying; _ } -> split_ref_ty env loc underlying
   | ty ->
       let inner_type = fresh_unif env in
       let sources, targets = subsumes env loc ty (Ref inner_type) in
@@ -1806,7 +2135,7 @@ and check_seq_expr :
       let given_source = Evidence.make_source () in
 
       let entailed_constraints, entailed_evidence =
-        collect_atomic_given_constraints env entailed
+        collect_atomic_given_constraints entailed
       in
 
       let entailed_constraints = List.map fst entailed_constraints in
@@ -2469,12 +2798,10 @@ let solve_unify :
         panic __LOC__
           (Loc.pretty loc
          ^ ": Uninstantiated type variable found during unification")
-    | TypeAlias (name, args), other_type ->
-        let real_type = instantiate_type_alias env name args in
-        go real_type other_type
-    | other_type, TypeAlias (name, args) ->
-        let real_type = instantiate_type_alias env name args in
-        go other_type real_type
+    | TypeAlias { underlying; _ }, other_type ->
+        (* TODO: Remember the alias here (if possible) for error messages *)
+        go underlying other_type
+    | other_type, TypeAlias { underlying; _ } -> go other_type underlying
     | _ ->
         raise
           (TypeError (loc, UnableToUnify ((ty1, ty2), optional_unify_context)))
@@ -2650,10 +2977,7 @@ let is_valid_instance env given_loc (given_constraint : class_constraint)
             List.iter2 match_types arguments arguments2
         | _ -> raise DoesNotMatch
       end
-    | TypeAlias (alias_name, arguments) ->
-        match_types
-          (instantiate_type_alias env alias_name arguments)
-          wanted_type
+    | TypeAlias { underlying; _ } -> match_types underlying wanted_type
     | Unif (typeref, _) -> begin
         match wanted_type with
         | Unif (typeref2, _) when Typeref.equal typeref typeref2 -> ()
@@ -2725,98 +3049,29 @@ let is_valid_instance env given_loc (given_constraint : class_constraint)
 
 let rec solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
     local_env evidence_target =
-  (* TODO: Worry about ambiguity here *)
-  let find_matching_given = function
-    | GivenClass
-        { loc = given_loc; given; evidence = evidence_source; entailed } ->
-        if not (Name.equal wanted.class_name given.class_name) then begin
-          false
-        end
-        else begin
-          let class_trace_diagnostic () =
-            "[W] ∀"
-            ^ String.concat "" (List.map pretty_name given.variables)
-            ^ ". "
-            ^ Name.pretty wanted.class_name
-            ^ "("
-            ^ String.concat ", " (List.map pretty_type wanted.arguments)
-            ^ ") <-> [G] ∀"
-            ^ String.concat "" (List.map pretty_name given.variables)
-            ^ ". "
-            ^ Name.pretty given.class_name
-            ^ "("
-            ^ String.concat "," (List.map pretty_type given.arguments)
-            ^ ")"
-          in
-          (* TODO: Uggghhh this is not allowed to defer any constraints, huh *)
-          match
-            is_valid_instance env given_loc given evidence_source wanted_loc
-              wanted evidence_target
-          with
-          | Some substitution ->
-              let substitution_traversal =
-                object
-                  inherit [unit] Traversal.traversal
-
-                  method! ty () =
-                    function
-                    | TyVar name -> begin
-                        match NameMap.find_opt name substitution with
-                        | Some ty -> (ty, ())
-                        | None -> (TyVar name, ())
-                      end
-                    | RecordVar _
-                    | VariantVar _ ->
-                        todo __LOC__
-                    | ty -> (ty, ())
-                end
-              in
-
-              (* TODO: This is probably were you build up evidence from the entailed constraints*)
-
-              (* Solve all entailed constraints as well. These might not all be solved immediately
-                 which is why we need the indirection with evidence targets *)
-              let solve_entailed entailed =
-                let evidence_target = Evidence.make_empty_target () in
-
-                (* We need to apply the substitution from the instance resolution so we actually get the *full*
-                   entailed constraints here *)
-                let entailed_arguments, () =
-                  Traversal.traverse_list substitution_traversal#traverse_type
-                    () entailed.arguments
-                in
-
-                let entailed =
-                  { entailed with arguments = entailed_arguments }
-                in
-
-                let _progress =
-                  solve_wanted_class wanted_loc env unify_state entailed givens
-                    local_env evidence_target
-                in
-
-                evidence_target
-              in
-
-              let entailed_evidence = List.map solve_entailed entailed in
-
-              trace_class (lazy (class_trace_diagnostic () ^ " -> Success"));
-              Evidence.fill_target evidence_target evidence_source;
-              true
-          | None ->
-              trace_class (lazy (class_trace_diagnostic () ^ " -> Failure"));
-              false
-        end
-  in
-  match List.exists find_matching_given givens with
-  | true -> true
-  | false ->
-      unify_state.deferred_constraints :=
-        Difflist.snoc
-          !(unify_state.deferred_constraints)
-          (WantedClass
-             { loc = wanted_loc; wanted; givens; local_env; evidence_target });
-      false
+  match NameMap.find_opt wanted.class_name givens.class_instances with
+  | None -> todo __LOC__
+  | Some trie -> (
+      match InstanceTrie.match_instance trie wanted.arguments with
+      | `Found instance ->
+        Evidence.fill_target evidence_target instance.evidence;
+        true
+      | `Ambiguous instances -> raise (TypeError(wanted_loc, AmbiguousClassConstraint (wanted, todo __LOC__)))
+      | `Missing ->
+          (* TODO: This should be able to track if the instance might be unblocked by unification variables or skolems
+             later and only requeue the wanted constraint in that case. *)
+          unify_state.deferred_constraints :=
+            Difflist.snoc
+              !(unify_state.deferred_constraints)
+              (WantedClass
+                 {
+                   loc = wanted_loc;
+                   wanted;
+                   givens;
+                   local_env;
+                   evidence_target;
+                 });
+          false)
 
 let residuals_to_errors : ty_constraint list -> (loc * type_error) list =
  fun residuals ->
@@ -3155,5 +3410,5 @@ let empty_env =
     type_aliases = NameMap.empty;
     type_classes = NameMap.empty;
     ambient_level = Typeref.initial_top_level;
-    given_constraints = [];
+    given_constraints = { class_instances = NameMap.empty };
   }

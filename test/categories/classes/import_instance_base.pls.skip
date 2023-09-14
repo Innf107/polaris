@@ -1,0 +1,12 @@
+export {
+    C,
+    f
+}
+
+class C(a) {
+    f : a -> Number
+}
+
+instance C(Bool) {
+    f(_) = 5
+}

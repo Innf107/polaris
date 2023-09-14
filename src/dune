@@ -1,8 +1,17 @@
 (library
  (name polaris)
- (libraries menhirLib trees_that_grow bestline re eio eio.unix eio_posix base)
+ (libraries
+  menhirLib
+  trees_that_grow
+  bestline
+  re
+  eio
+  eio.unix
+  eio_posix
+  base
+  ppx_deriving)
  (preprocess
-  (pps trees_that_grow)))
+  (pps trees_that_grow ppx_deriving.ord)))
 
 (menhir
  (modules parser))

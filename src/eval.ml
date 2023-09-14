@@ -548,7 +548,7 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
   | VariantConstructor (loc, name, args) ->
       let arg_vals = List.map (eval_expr ~cap env) args in
       VariantConstructorV (name, arg_vals)
-  | ModSubscriptDataCon (void, _, _, _) -> absurd void
+  | ModSubscriptDataCon (void, _, _, _) -> .
   | App (loc, f, args) ->
       (* See Note [left-to-right evaluation] *)
       let f_val = eval_expr ~cap env f in

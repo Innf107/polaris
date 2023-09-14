@@ -45,6 +45,7 @@ module RenameScope = struct
     (* Polaris does not have a Haskell-style kind system, so we
        just check that type constructors are always fully applied in the renamer. *)
     ty_constructors : (name * int * type_constructor_sort) RenameMap.t;
+    type_aliases : (name list * Renamed.ty) NameMap.t;
     data_constructors : (name * data_constructor_sort) RenameMap.t;
     type_classes : (name list * (name * Renamed.ty) StringMap.t) NameMap.t;
   }
@@ -58,6 +59,7 @@ module RenameScope = struct
       module_vars = RenameMap.empty;
       ty_vars = RenameMap.empty;
       ty_constructors = RenameMap.empty;
+      type_aliases = NameMap.empty;
       data_constructors =
         RenameMap.map
           (fun (name, _) -> (name, ExceptionSort))
@@ -79,6 +81,13 @@ module RenameScope = struct
     {
       scope with
       ty_constructors = add old (renamed, arg_count, sort) scope.ty_constructors;
+    }
+
+  let insert_type_alias name parameters underlying scope =
+    {
+      scope with
+      type_aliases =
+        NameMap.add name (parameters, underlying) scope.type_aliases;
     }
 
   let insert_data_constructor old renamed sort scope =
@@ -110,6 +119,42 @@ end
 
 let fresh_var = Name.fresh
 
+let instantiate_type_alias scope name args =
+  let params, underlying_type =
+    match NameMap.find_opt name RenameScope.(scope.type_aliases) with
+    | None ->
+        panic __LOC__
+          ("Unbound type alias '" ^ Name.pretty name
+         ^ "' in renamer instantiation")
+    | Some (params, underlying_type) -> (params, underlying_type)
+  in
+  if List.compare_lengths args params <> 0 then begin
+    panic __LOC__
+      ("Wrong number of arguments to type alias " ^ Name.pretty name
+     ^ " in renamer instantiation. (Expected: "
+      ^ string_of_int (List.length params)
+      ^ ", Actual: "
+      ^ string_of_int (List.length args)
+      ^ " This should have been caught earlier!")
+  end;
+  let variable_substitutions =
+    NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args))
+  in
+
+  let substitute_variable = function
+    | Renamed.TyVar name -> begin
+        match NameMap.find_opt name variable_substitutions with
+        | Some substitution -> substitution
+        | None ->
+            panic __LOC__
+              ("Unbound variable in type alias during substitution: "
+             ^ Name.pretty name)
+      end
+    | ty -> ty
+  in
+
+  Renamed.Traversal.transform_type substitute_variable underlying_type
+
 let rename_type_constructor :
     (Parsed.ty -> Renamed.ty) ->
     loc ->
@@ -126,12 +171,14 @@ let rename_type_constructor :
   if List.compare_length_with args arg_count <> 0 then begin
     raise (RenameError (WrongNumberOfTyConArgs (name, arg_count, args, loc)))
   end;
-  let args = List.map rename_nonbinding args in
+  let arguments = List.map rename_nonbinding args in
   begin
     match sort with
-    | TypeAliasSort -> TypeAlias (name, args)
-    | DataConSort -> TyConstructor (name, args)
-    | ClassSort -> TyConstructor (name, args)
+    | TypeAliasSort ->
+        let underlying = instantiate_type_alias scope name arguments in
+        TypeAlias { name; arguments; underlying }
+    | DataConSort -> TyConstructor (name, arguments)
+    | ClassSort -> TyConstructor (name, arguments)
   end
 
 let rename_type loc (scope : RenameScope.t) original_type =
@@ -205,7 +252,7 @@ let rename_type loc (scope : RenameScope.t) original_type =
           *)
           rename_type_constructor (rename_nonbinding scope) loc
             module_export_scope name args
-      | TypeAlias (name, args) ->
+      | TypeAlias _ ->
           panic __LOC__ (Loc.pretty loc ^ ": Type Alias found before renamer")
       | TyVar tv -> begin
           match RenameMap.find_opt tv scope.ty_vars with
@@ -786,7 +833,10 @@ and rename_seq_state
 
       let scope =
         insert_type_constructor alias_name alias_name' (List.length params)
-          TypeAliasSort scope
+          TypeAliasSort
+          (insert_type_alias alias_name'
+             (List.map snd renamed_params)
+             underlying_type' scope)
       in
 
       let exprs, scope = rename_seq_state exports scope exprs in

@@ -560,4 +560,43 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
               "Non-interpolatable item in string interpolation\n"
               ^ "String interpolation does not accept arguments of type "
               ^ text_style.ty (pretty_type ty)
+          | AmbiguousClassConstraint (class_constraint, matching_instances) ->
+              let pretty_type =
+                Disambiguate.builder
+                |> Disambiguate.types class_constraint.arguments
+                |> Disambiguate.types (List.concat_map snd matching_instances)
+                |> Disambiguate.pretty_type
+              in
+              let pretty_instance variables arguments =
+                match variables with
+                | [] ->
+                    text_style.ty
+                      (Name.pretty class_constraint.class_name
+                      ^ "("
+                      ^ String.concat ", " (List.map pretty_type arguments)
+                      ^ ")")
+                | variables ->
+                    text_style.ty
+                      ("forall "
+                      ^ String.concat " " (List.map Name.pretty variables)
+                      ^ ". "
+                      ^ Name.pretty class_constraint.class_name
+                      ^ "("
+                      ^ String.concat ", " (List.map pretty_type arguments)
+                      ^ ")")
+              in
+
+              "Ambiguous type class constraint "
+              ^ text_style.ty
+                  (Name.pretty class_constraint.class_name
+                  ^ "("
+                  ^ String.concat ", "
+                      (List.map pretty_type class_constraint.arguments)
+                  ^ ")")
+              ^ "\n  Valid instances:" ^ "    -"
+              ^ String.concat "    -"
+                  (List.map
+                     (fun (universals, arguments) ->
+                       pretty_instance universals arguments)
+                     matching_instances)
         end

@@ -134,3 +134,8 @@ let map_array_at index f array =
 
 let map_at index f list =
   List.mapi (fun i x -> if i = index then f x else x) list
+
+let immutable_stable_sort compare array =
+  let other = Array.copy array in
+  Array.stable_sort compare other;
+  other

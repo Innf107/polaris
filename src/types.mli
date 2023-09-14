@@ -3,13 +3,7 @@ open Syntax.Renamed
 
 type unify_context = ty * ty
 
-type given_constraint =
-  | GivenClass of {
-      loc : loc;
-      given : class_constraint;
-      entailed : class_constraint list;
-      evidence : Evidence.source;
-    }
+type given_constraints
 
 type type_error =
   | UnableToUnify of (ty * ty) * unify_context option
@@ -42,6 +36,7 @@ type type_error =
   | TupleLiteralOfWrongLength of int * ty array
   | NonProgramArgument of ty
   | NonInterpolatable of ty
+  | AmbiguousClassConstraint of class_constraint * (name list * ty list) list
 
 exception TypeError of loc * type_error
 
@@ -53,7 +48,7 @@ type global_env = {
   ambient_level : Typeref.level;
   exception_definitions : ty list NameMap.t;
   type_classes : name list NameMap.t;
-  given_constraints : given_constraint list;
+  given_constraints : given_constraints;
 }
 
 val typecheck :

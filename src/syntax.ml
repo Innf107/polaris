@@ -9,7 +9,6 @@ type name = {
   name : string;
   index : Unique.t;
 }
-
 type type_constructor_sort =
   | DataConSort
   | TypeAliasSort
@@ -60,9 +59,13 @@ struct
     | Constraint of ty * ty
     | TyVar of Ext.name
     | TyConstructor of Ext.name * ty list
-    (* Type aliases are kept around as long as possible to improve error messages, but we need to differentiate
-       between these and real type constructors *)
-    | TypeAlias of Ext.name * ty list
+    (* Type aliases are kept around as long as possible to improve error messages.
+       We store a pointer the actual underlying type to make these very cheap *)
+    | TypeAlias of {
+        name : Ext.name;
+        arguments : ty list;
+        underlying : ty;
+      }
     (* The 'name' is just kept around for error messages but *completely ignored* when typechecking *)
     | Unif of ty Typeref.t * Ext.name
     | Skol of Unique.t * Typeref.level * Ext.name
@@ -97,6 +100,9 @@ type 'ty make_class_constraint = {
 }
 
 module Template = struct
+  [@@@warning "-32"]
+  [@@@warning "-56"]
+
   include TypeDefinition
 
   let ( --> ) xs y = Fun (xs, y)
@@ -371,10 +377,10 @@ module Template = struct
         pretty_name name ^ "("
         ^ String.concat ", " (List.map pretty_type args)
         ^ ")"
-    | TypeAlias (name, []) -> pretty_name name
-    | TypeAlias (name, args) ->
+    | TypeAlias { name; arguments = []; underlying = _ } -> pretty_name name
+    | TypeAlias { name; arguments; underlying = _ } ->
         pretty_name name ^ "("
-        ^ String.concat ", " (List.map pretty_type args)
+        ^ String.concat ", " (List.map pretty_type arguments)
         ^ ")"
     | ModSubscriptTyCon (_ext, mod_name, name, args) ->
         pretty_name mod_name ^ "." ^ pretty_name name ^ "("
@@ -803,7 +809,7 @@ module Template = struct
           let expr, state = traversal state expr in
           (Some expr, state)
 
-    class ['state] traversal =
+    class[@warning "-56"] ['state] traversal =
       object (self)
         method expr : 'state -> expr -> expr * 'state =
           fun state expr -> (expr, state)
@@ -1231,12 +1237,14 @@ module Template = struct
                     traverse_list self#traverse_type state arg_types
                   in
                   (TyConstructor (name, arg_types), state)
-              | TypeAlias (name, arg_types) ->
+              | TypeAlias { name; arguments; underlying } ->
                   let name, state = self#traverse_name state name in
-                  let arg_types, state =
-                    traverse_list self#traverse_type state arg_types
+                  let arguments, state =
+                    traverse_list self#traverse_type state arguments
                   in
-                  (TypeAlias (name, arg_types), state)
+                  (* It's not great that this breaks sharing on the underlying type *)
+                  let underlying, state = self#traverse_type state underlying in
+                  (TypeAlias { name; arguments; underlying }, state)
               | ModSubscriptTyCon (ext, mod_name, name, arg_types) ->
                   let mod_name, state = self#traverse_name state mod_name in
                   let name, state = self#traverse_name state name in
@@ -1505,6 +1513,8 @@ struct
 end
 
 module Parsed = Template (struct
+  [@@@warning "-32"]
+
   module TypeDefinition = ParsedTypeDefinition
 
   type name = string
@@ -1542,6 +1552,8 @@ end)
 [@@ttg_pass]
 
 module Typed = Template (struct
+  [@@@warning "-32"]
+
   module TypeDefinition = FullTypeDefinition
 
   type name = Name.t
@@ -1618,6 +1630,8 @@ type module_exports = Typed.module_exports
 (* Typed and Renamed need to be defined in reverse order since
    Renamed depends on Typed.module_exports *)
 module Renamed = Template (struct
+  [@@@warning "-32"]
+
   module TypeDefinition = FullTypeDefinition
 
   type name = Name.t

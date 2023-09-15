@@ -57,9 +57,7 @@ module TyperefMap = Map.Make (TyperefOrd)
 
 let normalize_unif = Ty.normalize_unif
 
-type class_instance = {
-  evidence : Evidence.source
-}
+type class_instance = { evidence : Evidence.source }
 
 (** An efficient trie for matching type classes during type class resolution
     This is indexed by the unrolled type constructors for instance parameters
@@ -278,9 +276,9 @@ end = struct
           | Some (Node children) ->
               let child_trie = go children rest in
               Node (HeadMap.add head child_trie children)
-          | None -> 
-            (* TODO: Should this be (head :: rest) or just rest? *)
-            create_trie_from (head :: rest)
+          | None ->
+              (* TODO: Should this be (head :: rest) or just rest? *)
+              create_trie_from (head :: rest)
         end
       | [] -> panic __LOC__ "misshapen instance trie"
     in
@@ -3054,9 +3052,12 @@ let rec solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
   | Some trie -> (
       match InstanceTrie.match_instance trie wanted.arguments with
       | `Found instance ->
-        Evidence.fill_target evidence_target instance.evidence;
-        true
-      | `Ambiguous instances -> raise (TypeError(wanted_loc, AmbiguousClassConstraint (wanted, todo __LOC__)))
+          Evidence.fill_target evidence_target instance.evidence;
+          true
+      | `Ambiguous instances ->
+          raise
+            (TypeError
+               (wanted_loc, AmbiguousClassConstraint (wanted, todo __LOC__)))
       | `Missing ->
           (* TODO: This should be able to track if the instance might be unblocked by unification variables or skolems
              later and only requeue the wanted constraint in that case. *)

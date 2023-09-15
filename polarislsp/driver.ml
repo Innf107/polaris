@@ -15,7 +15,7 @@ let run_polaris ~filename lexbuf =
     Polaris.Rename.RenameScope.empty Polaris.Types.empty_env
 
 let try_update_model ~filename lexbuf =
-  let on_error err =
+  let error_to_diagnostic err =
     let text_style = Polaris.Errormessage.make_text_style ~enable_color:false in
 
     let mloc, message =
@@ -23,11 +23,15 @@ let try_update_model ~filename lexbuf =
     in
     let loc = Option.value ~default:Polaris.Loc.internal mloc in
 
-    ( [ Diagnostic.{ loc; severity = `Error; source = "polaris"; message } ],
-      None )
+    Diagnostic.{ loc; severity = `Error; source = "polaris"; message }
   in
 
   match run_polaris ~filename lexbuf with
-  | Error err -> on_error err
-  | Ok (typed_header, typed_exprs, _rename_scope, _global_type_env) ->
-      ([], Some (Model.build typed_exprs))
+  | Error err -> ([ error_to_diagnostic err ], None)
+  | Ok (typed_header, typed_exprs, _rename_scope, _global_type_env, type_errors)
+    ->
+      ( List.map
+          (fun (loc, error) ->
+            error_to_diagnostic (Polaris.Error.TypeError (loc, error)))
+          type_errors,
+        Some (Model.build typed_exprs) )

@@ -88,9 +88,9 @@ for(files, \file -> {
 })
 
 if errors! == 0 then {
-    !echo "-e" "\e[32m\e[1mAll test passed.\e[0m"
+    !echo "-e" "\e[32m\e[1mAll ${List.length(files)} tests passed.\e[0m"
     ()
 } else {
-    !echo "-e" ("\e[31m" ~ toString(errors!) ~ " TESTS FAILED!\e[0m")
+    !echo "-e" ("\e[31m${errors!}/" ~ "${List.length(files)} TESTS FAILED!\e[0m")
     exit(errors!)
 }

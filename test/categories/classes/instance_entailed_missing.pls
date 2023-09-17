@@ -2,7 +2,7 @@ class Eq(a) {
     eq : (a, a) -> Bool
 }
 
-instance (forall a. Eq(a) => Eq(List(a))) {
+instance (forall a. (Eq(a)) => Eq(List(a))) {
     eq(x, y) = x == y
 }
 

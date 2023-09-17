@@ -290,11 +290,15 @@ expr_leaf:
         "}" { LetClassSeq(loc $startpos $endpos, $2, $4, $7) }
     | INSTANCE CONSTRUCTOR "(" sep_trailing1(COMMA, ty) ")" "{"
             sep_trailing(SEMI+, instance_def)
-        "}" { LetInstanceSeq(loc $startpos $endpos, [], Tuple [||], $2, $4, $7) }
+        "}" { LetInstanceSeq(loc $startpos $endpos, [], RecordClosed [||], $2, $4, $7) }
         (* TODO: Allow a version without parentheses around the entailed constraint *)
     | INSTANCE "(" "forall" many(IDENT) "." "(" ty ")" "=>" CONSTRUCTOR "(" sep_trailing1(COMMA, ty) ")" ")" "{"
             sep_trailing(SEMI+, instance_def)
         "}" { LetInstanceSeq(loc $startpos $endpos, $4, $7, $10, $12, $16) }
+    | INSTANCE "(" "forall" many(IDENT) "." CONSTRUCTOR "(" sep_trailing1(COMMA, ty) ")" ")" "{"
+            sep_trailing(SEMI+, instance_def)
+            (* TODO: Not super happy about using a closed record for an empty constraint... *)
+        "}" { LetInstanceSeq(loc $startpos $endpos, $4, RecordClosed [||], $6, $8, $12) }
     | EXCEPTION CONSTRUCTOR "(" sep_trailing(COMMA, typed_ident) ")" "=" expr { LetExceptionSeq(loc $startpos $endpos, $2, $4, $7) }
     | TRY expr WITH "{" sep_trailing(SEMI+, match_branch) "}" { Try(loc $startpos $endpos, $2, $5) }
     | RAISE expr { Raise(loc $startpos $endpos, $2) }

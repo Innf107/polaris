@@ -776,7 +776,7 @@ let rec collect_atomic_given_constraints :
         [ source ] )
   | TypeAlias { name = _; arguments = _; underlying } ->
       collect_atomic_given_constraints underlying
-  | Tuple [||] -> ([], [])
+  | RecordClosed [||] -> ([], [])
   | ty ->
       panic __LOC__
         ("Non type constructor in constraint: " ^ Typed.pretty_type ty)

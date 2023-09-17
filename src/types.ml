@@ -54,6 +54,7 @@ end
 
 module TyperefSet = Set.Make (TyperefOrd)
 module TyperefMap = Map.Make (TyperefOrd)
+module IntMap = Map.Make (Int)
 
 let normalize_unif = Ty.normalize_unif
 
@@ -69,7 +70,7 @@ module InstanceTrie : sig
   type t
 
   val empty : t
-  val add_instance : name list -> ty list -> class_instance -> t -> t
+  val add_instance : ty list -> class_instance -> t -> t
 
   val match_instance :
     t ->
@@ -104,10 +105,9 @@ end = struct
   [@@deriving ord]
 
   (* TODO: Unroll incrementally (maybe by returning a type_head Seq.t?) *)
-  (* This needs to take an environment because it might need to follow type aliases :/
-     (Maybe type aliases should just contain their definition so we don't need this anymore) *)
-  let unroll : name list -> ty list -> type_head list =
-   fun universals types ->
+  let unroll : ty list -> type_head list =
+   fun types ->
+    let variable_levels = ref NameMap.empty in
     let rec unroll_type = function
       | Forall _ -> panic __LOC__ "forall in type class instance"
       | Fun (arguments, result) ->
@@ -121,16 +121,12 @@ end = struct
             (Difflist.append (unroll_type constraint_type) (unroll_type ty))
       (* TODO: Resolve DeBruijn levels based on the position in the type, *not* the quantifier*)
       | TyVar name -> begin
-          match
-            Base.List.findi
-              ~f:(fun _ universal_name -> Name.equal name universal_name)
-              universals
-          with
-          | Some (index, _) -> Difflist.cons (HVariable index) Difflist.empty
+          match NameMap.find_opt name !variable_levels with
           | None ->
-              panic __LOC__
-                ("Trying to unroll a type involving the unbound universal type \
-                  variable '" ^ Name.pretty name ^ "'")
+              let level = NameMap.cardinal !variable_levels in
+              variable_levels := NameMap.add name level !variable_levels;
+              Difflist.cons (HVariable level) Difflist.empty
+          | Some level -> Difflist.cons (HVariable level) Difflist.empty
         end
       | TyConstructor (name, arguments) ->
           Difflist.cons (HConstructor name)
@@ -261,7 +257,7 @@ end = struct
   (* TODO: This technically does not allow nullary instances. Those are really weird though, so... *)
   let empty = Node HeadMap.empty
 
-  let add_instance variables types instance trie =
+  let add_instance types instance trie =
     let rec create_trie_from = function
       | [] -> Leaf instance
       | head :: rest ->
@@ -286,116 +282,158 @@ end = struct
     | Leaf _ ->
         panic __LOC__
           "duplicate nullary type class instance (what's wrong with you???)"
-    | Node children -> go children (unroll variables types)
+    | Node children -> go children (unroll types)
 
-  let all_matching : ty list -> t -> (t * ty list) list =
-   fun types trie ->
-    let filter_map_or_substitute remaining_types children predicate =
-      List.filter_map
-        (fun (head, value) ->
-          match head with
-          | HVariable i -> todo __LOC__
-          | head when predicate head -> Some (value, remaining_types)
-          | _ -> None)
-        (HeadMap.bindings children)
-    in
+  let all_matching :
+      type_head list lazy_t IntMap.t ref -> ty list -> t -> (t * ty list) list =
+   fun substitution types trie ->
     let normalize_first_unif = function
       | ty :: rest -> normalize_unif ty :: rest
       | [] -> []
     in
 
+    (* TODO: Would be nice if this didn't need to allocate as much *)
     match trie with
-    | Leaf _ -> []
-    | Node children -> begin
-        match normalize_first_unif types with
-        | [] -> todo __LOC__
-        | RecordClosed _ :: rest
-        | RecordVar _ :: rest
-        | RecordUnif _ :: rest
-        | RecordSkol _ :: rest
-        | VariantClosed _ :: rest
-        | VariantVar _ :: rest
-        | VariantUnif _ :: rest
-        | VariantSkol _ :: rest ->
-            todo __LOC__ (* the difficult cases*)
-        | Forall _ :: rest -> panic __LOC__ "forall in wanted class constraint"
-        | Fun (parameters, result) :: rest ->
-            let remaining_types = parameters @ [ result ] @ rest in
-            let parameter_count = List.length parameters in
-            filter_map_or_substitute remaining_types children (function
-              | HFunction count when count = parameter_count -> true
-              | _ -> false)
-        | Constraint (constraint_type, result) :: rest ->
-            let remaining_types = constraint_type :: result :: rest in
-            filter_map_or_substitute remaining_types children (function
-              | HConstraint -> true
-              | _ -> false)
-        | TyVar name :: rest ->
-            panic __LOC__
-              ("Uninstantiated type variable in wanted constraint: "
-             ^ Name.pretty name)
-        | TyConstructor (name, arguments) :: rest ->
-            filter_map_or_substitute (arguments @ rest) children (function
-              | HConstructor constr_name when Name.equal name constr_name ->
-                  true
-              | _ -> false)
-        | TypeAlias _ :: rest -> todo __LOC__
-        | Unif (typeref, _) :: rest ->
-            filter_map_or_substitute rest children (function
-              | HUnif unique
-                when Unique.equal (Typeref.get_unique typeref) unique ->
-                  true
-              | _ -> false)
-        | Skol (unique, _level, _) :: rest ->
-            filter_map_or_substitute rest children (function
-              | HSkolem head_unique when Unique.equal unique head_unique -> true
-              | _ -> false)
-        | Number :: rest ->
-            filter_map_or_substitute rest children (function
-              | HNumber -> true
-              | _ -> false)
-        | Bool :: rest ->
-            filter_map_or_substitute rest children (function
-              | HBool -> true
-              | _ -> false)
-        | String :: rest ->
-            filter_map_or_substitute rest children (function
-              | HString -> true
-              | _ -> false)
-        | Exception :: rest ->
-            filter_map_or_substitute rest children (function
-              | HException -> true
-              | _ -> false)
-        | Tuple arguments :: rest ->
-            filter_map_or_substitute
-              (Array.to_list arguments @ rest)
-              children
-              (function
+    | Leaf _ -> panic __LOC__ "misshapen instance trie"
+    | Node children ->
+        let filter_children ~new_types ~rest ~original_type predicate =
+          List.filter_map
+            (fun (head, subtrie) ->
+              let rec go head subtrie =
+                match head with
+                | HVariable i -> begin
+                    match IntMap.find_opt i !substitution with
+                    | None ->
+                        (* This variable was previously unbound, so we bind it to the
+                           list of head constructors in the matched type.
+                           Because many instances will only use universal variables once,
+                           we unroll the type in a lazy_t to avoid unnecessary work. *)
+                        let heads = lazy (unroll [ original_type ]) in
+                        substitution := IntMap.add i heads !substitution;
+                        Some (subtrie, rest)
+                    | Some heads ->
+                        (* This variable has been substituted so we extend our expected subtrie accordingly,
+                           and try again, as if the variable had never existed *)
+                        let first_head, remaining_heads =
+                          match Lazy.force heads with
+                          | [] ->
+                              panic __LOC__ "empty instance trie substitution"
+                          | first :: rest -> (first, rest)
+                        in
+
+                        let extended_subtrie =
+                          List.fold_right
+                            (fun head rest ->
+                              Node (HeadMap.add head rest HeadMap.empty))
+                            remaining_heads subtrie
+                        in
+
+                        go first_head extended_subtrie
+                  end
+                | head when predicate head -> Some (subtrie, new_types @ rest)
+                | _ -> None
+              in
+              go head subtrie)
+            (HeadMap.bindings children)
+        in
+
+        begin
+          match normalize_first_unif types with
+          | [] -> todo __LOC__
+          | RecordClosed _ :: rest
+          | RecordVar _ :: rest
+          | RecordUnif _ :: rest
+          | RecordSkol _ :: rest
+          | VariantClosed _ :: rest
+          | VariantVar _ :: rest
+          | VariantUnif _ :: rest
+          | VariantSkol _ :: rest ->
+              todo __LOC__ (* the difficult cases*)
+          | Forall _ :: rest ->
+              panic __LOC__ "forall in wanted class constraint"
+          | (Fun (parameters, result) as original_type) :: rest ->
+              let new_types = parameters @ [ result ] in
+              let parameter_count = List.length parameters in
+              filter_children ~new_types ~rest ~original_type (function
+                | HFunction count when count = parameter_count -> true
+                | _ -> false)
+          | (Constraint (constraint_type, result) as original_type) :: rest ->
+              let new_types = [ constraint_type; result ] in
+              filter_children ~new_types ~rest ~original_type (function
+                | HConstraint -> true
+                | _ -> false)
+          | TyVar name :: rest ->
+              panic __LOC__
+                ("Uninstantiated type variable in wanted constraint: "
+               ^ Name.pretty name)
+          | (TyConstructor (name, arguments) as original_type) :: rest ->
+              filter_children ~new_types:arguments ~rest ~original_type
+                (function
+                | HConstructor constr_name when Name.equal name constr_name ->
+                    true
+                | _ -> false)
+          | TypeAlias _ :: rest -> todo __LOC__
+          | (Unif (typeref, _) as original_type) :: rest ->
+              filter_children ~new_types:[] ~rest ~original_type (function
+                | HUnif unique
+                  when Unique.equal (Typeref.get_unique typeref) unique ->
+                    true
+                | _ -> false)
+          | (Skol (unique, _level, _) as original_type) :: rest ->
+              filter_children ~new_types:[] ~rest ~original_type (function
+                | HSkolem head_unique when Unique.equal unique head_unique ->
+                    true
+                | _ -> false)
+          | (Number as original_type) :: rest ->
+              filter_children ~new_types:[] ~rest ~original_type (function
+                | HNumber -> true
+                | _ -> false)
+          | (Bool as original_type) :: rest ->
+              filter_children ~new_types:[] ~rest ~original_type (function
+                | HBool -> true
+                | _ -> false)
+          | (String as original_type) :: rest ->
+              filter_children ~new_types:[] ~rest ~original_type (function
+                | HString -> true
+                | _ -> false)
+          | (Exception as original_type) :: rest ->
+              filter_children ~new_types:[] ~rest ~original_type (function
+                | HException -> true
+                | _ -> false)
+          | (Tuple arguments as original_type) :: rest ->
+              filter_children ~new_types:(Array.to_list arguments) ~rest
+                ~original_type (function
                 | HTuple count when count = Array.length arguments -> true
                 | _ -> false)
-        | List argument :: rest ->
-            filter_map_or_substitute (argument :: rest) children (function
-              | HList -> true
-              | _ -> false)
-        | Ref argument :: rest ->
-            filter_map_or_substitute (argument :: rest) children (function
-              | HRef -> true
-              | _ -> false)
-        | Promise argument :: rest ->
-            filter_map_or_substitute (argument :: rest) children (function
-              | HPromise -> true
-              | _ -> false)
-        | ModSubscriptTyCon _ :: _ -> .
-      end
+          | (List argument as original_type) :: rest ->
+              filter_children ~new_types:[ argument ] ~rest ~original_type
+                (function
+                | HList -> true
+                | _ -> false)
+          | (Ref argument as original_type) :: rest ->
+              filter_children ~new_types:[ argument ] ~rest ~original_type
+                (function
+                | HRef -> true
+                | _ -> false)
+          | (Promise argument as original_type) :: rest ->
+              filter_children ~new_types:[ argument ] ~rest ~original_type
+                (function
+                | HPromise -> true
+                | _ -> false)
+          | ModSubscriptTyCon _ :: _ -> .
+        end
 
   let match_instance trie types =
+    let substitutions = ref IntMap.empty in
     (* It might seem like it would be more efficient to traverse the trie in
        BFS rather than backtracking, but since we need to traverse every
        reachable path anyway to detect and report ambiguities, that actually turns
        out to be false!
        Depth first search is much simpler so that is what we do here. *)
     let rec go trie types =
-      let subtries_and_remaining_types = all_matching types trie in
+      let subtries_and_remaining_types =
+        all_matching substitutions types trie
+      in
 
       let continue (subtrie, remaining) =
         match remaining with
@@ -449,7 +487,6 @@ type ty_constraint =
       evidence_target : Evidence.target;
     }
 
-(* forall a. Eq(List(a)) *)
 and global_env = {
   var_types : Typed.ty NameMap.t;
   module_var_contents : global_env NameMap.t;
@@ -688,8 +725,7 @@ let emit_givens loc givens (env : local_env) =
           let instance = { evidence } in
 
           Some
-            (InstanceTrie.add_instance given.variables given.arguments instance
-               instance_trie))
+            (InstanceTrie.add_instance given.arguments instance instance_trie))
         given_constraints.class_instances
     in
     { given_constraints with class_instances }

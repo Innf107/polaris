@@ -297,7 +297,7 @@ end = struct
     | Node children -> go children (unroll types)
 
   let all_matching :
-      type_head list lazy_t IntMap.t ref -> ty list -> t -> (t * ty list) list =
+      type_head list lazy_t IntMap.t -> ty list -> t -> (t * ty list * type_head list lazy_t IntMap.t) list =
    fun substitution types trie ->
     let normalize_first_unif = function
       | ty :: rest -> normalize_unif ty :: rest
@@ -318,15 +318,14 @@ end = struct
                     ^ String.concat ", " (List.map pretty_type types)));
                 match head with
                 | HVariable i -> begin
-                    match IntMap.find_opt i !substitution with
+                    match IntMap.find_opt i substitution with
                     | None ->
                         (* This variable was previously unbound, so we bind it to the
                            list of head constructors in the matched type.
                            Because many instances will only use universal variables once,
                            we unroll the type in a lazy_t to avoid unnecessary work. *)
                         let heads = lazy (unroll [ original_type ]) in
-                        substitution := IntMap.add i heads !substitution;
-                        Some (subtrie, rest)
+                        Some (subtrie, rest, IntMap.add i heads substitution)
                     | Some heads ->
                         (* This variable has been substituted so we extend our expected subtrie accordingly,
                            and try again, as if the variable had never existed *)
@@ -346,7 +345,7 @@ end = struct
 
                         go first_head extended_subtrie
                   end
-                | head when predicate head -> Some (subtrie, new_types @ rest)
+                | head when predicate head -> Some (subtrie, new_types @ rest, substitution)
                 | _ -> None
               in
               go head subtrie)
@@ -440,30 +439,31 @@ end = struct
         end
 
   let match_instance trie types =
-    let substitutions = ref IntMap.empty in
     (* It might seem like it would be more efficient to traverse the trie in
        BFS rather than backtracking, but since we need to traverse every
        reachable path anyway to detect and report ambiguities, that actually turns
        out to be false!
-       Depth first search is much simpler so that is what we do here. *)
-    let rec go trie types =
+       Depth first search is much simpler so that is what we do here. 
+       
+       TODO: aren't we doing bfs? I'm confused... *)
+    let rec go trie types substitution =
       let subtries_and_remaining_types =
-        all_matching substitutions types trie
+        all_matching substitution types trie
       in
 
-      let continue (subtrie, remaining) =
+      let continue (subtrie, remaining, substitution) =
         match remaining with
         | [] -> begin
             match subtrie with
             | Leaf instance -> [ instance ]
             | Node _ -> panic __LOC__ "misshapen instance trie"
           end
-        | _ -> go subtrie remaining
+        | _ -> go subtrie remaining substitution
       in
 
       List.concat_map continue subtries_and_remaining_types
     in
-    match go trie types with
+    match go trie types IntMap.empty with
     | [] -> `Missing
     | [ instance ] -> `Found instance
     | instances -> `Ambiguous instances
@@ -2866,18 +2866,20 @@ let solve_unify :
         (* closed, skolem *)
         (* skolem, closed *)
         (* Unifying a skolem and closed record is always impossible so we don't need a dedicated case here. *)
-    | RecordVar _, _
-    | _, RecordVar _
-    | VariantVar _, _
-    | _, VariantVar _ ->
+    | RecordVar (_, name), _
+    | _, RecordVar (_, name)
+    | VariantVar (_, name), _
+    | _, VariantVar (_, name) ->
         panic __LOC__
           (Loc.pretty loc
-         ^ ": Uninstantiated row variable found during unification")
-    | TyVar _, _
-    | _, TyVar _ ->
+         ^ ": Uninstantiated row variable found during unification: "
+         ^ Name.pretty name)
+    | TyVar name, _
+    | _, TyVar name ->
         panic __LOC__
           (Loc.pretty loc
-         ^ ": Uninstantiated type variable found during unification")
+         ^ ": Uninstantiated type variable found during unification: "
+         ^ Name.pretty name)
     | TypeAlias { underlying; _ }, other_type ->
         (* TODO: Remember the alias here (if possible) for error messages *)
         go underlying other_type
@@ -3021,111 +3023,6 @@ let solve_interpolatable loc env state ty definition_env =
       false
   | ty -> raise (TypeError (loc, NonInterpolatable ty))
 
-let is_valid_instance env given_loc (given_constraint : class_constraint)
-    evidence_source wanted_loc (wanted_constraint : class_constraint)
-    evidence_target =
-  let exception DoesNotMatch in
-  let substitution = ref NameMap.empty in
-  let rec match_types given_type wanted_type =
-    let wanted_type = normalize_unif wanted_type in
-    match normalize_unif given_type with
-    | Forall (name, ty) -> todo __LOC__
-    | Fun (arguments1, result1) -> begin
-        match wanted_type with
-        | Fun (arguments2, result2)
-          when List.compare_lengths arguments1 arguments2 = 0 ->
-            List.iter2 match_types arguments1 arguments2;
-            match_types result1 result2
-        | _ -> raise DoesNotMatch
-      end
-    (* This *doesn't* validate kinds yet *)
-    | Constraint (class_constraint_type1, ty1) -> begin
-        match wanted_type with
-        | Constraint (class_constraint_type2, ty2) ->
-            match_types class_constraint_type1 class_constraint_type2;
-            match_types ty1 ty2
-        | _ -> raise DoesNotMatch
-      end
-    | TyVar name -> begin
-        match NameMap.find_opt name !substitution with
-        | None -> substitution := NameMap.add name wanted_type !substitution
-        | Some substituted -> match_types substituted wanted_type
-      end
-    | TyConstructor (name, arguments) -> begin
-        match wanted_type with
-        | TyConstructor (name2, arguments2) when Name.equal name name2 ->
-            List.iter2 match_types arguments arguments2
-        | _ -> raise DoesNotMatch
-      end
-    | TypeAlias { underlying; _ } -> match_types underlying wanted_type
-    | Unif (typeref, _) -> begin
-        match wanted_type with
-        | Unif (typeref2, _) when Typeref.equal typeref typeref2 -> ()
-        | _ -> raise DoesNotMatch
-      end
-    | Skol (unique, _, _) -> begin
-        match wanted_type with
-        | Skol (unique2, _, _) when Unique.equal unique unique2 -> ()
-        | _ -> raise DoesNotMatch
-      end
-    | Number -> begin
-        match wanted_type with
-        | Number -> ()
-        | _ -> raise DoesNotMatch
-      end
-    | Bool -> begin
-        match wanted_type with
-        | Bool -> ()
-        | _ -> raise DoesNotMatch
-      end
-    | String -> begin
-        match wanted_type with
-        | String -> ()
-        | _ -> raise DoesNotMatch
-      end
-    | Exception -> begin
-        match wanted_type with
-        | Exception -> ()
-        | _ -> raise DoesNotMatch
-      end
-    | Tuple types1 -> begin
-        match wanted_type with
-        | Tuple types2 when Array.length types1 = Array.length types2 ->
-            Array.iter2 match_types types1 types2
-        | _ -> raise DoesNotMatch
-      end
-    | List argument1 -> begin
-        match wanted_type with
-        | List argument2 -> match_types argument1 argument2
-        | _ -> raise DoesNotMatch
-      end
-    | Ref argument1 -> begin
-        match wanted_type with
-        | Ref argument2 -> match_types argument1 argument2
-        | _ -> raise DoesNotMatch
-      end
-    | Promise argument1 -> begin
-        match wanted_type with
-        | Promise argument2 -> match_types argument1 argument2
-        | _ -> raise DoesNotMatch
-      end
-    | RecordClosed _ -> todo __LOC__
-    | RecordUnif _ -> todo __LOC__
-    | RecordSkol _ -> todo __LOC__
-    | RecordVar _ -> todo __LOC__
-    | VariantClosed _ -> todo __LOC__
-    | VariantUnif _ -> todo __LOC__
-    | VariantSkol _ -> todo __LOC__
-    | VariantVar _ -> todo __LOC__
-    | ModSubscriptTyCon (_, _, _, _) -> .
-  in
-
-  match
-    List.iter2 match_types given_constraint.arguments
-      wanted_constraint.arguments
-  with
-  | () -> Some !substitution
-  | exception DoesNotMatch -> None
 
 let rec solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
     local_env evidence_target =

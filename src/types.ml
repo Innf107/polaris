@@ -8,6 +8,9 @@ let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
 let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix:"Subst"
 let _class_category, trace_class = Trace.make ~flag:"class" ~prefix:"Class"
 
+let _instance_trie_category, trace_instance_trie =
+  Trace.make ~flag:"insttrie" ~prefix:"InstanceTrie"
+
 type unify_context = ty * ty
 
 type type_error =
@@ -76,6 +79,8 @@ module InstanceTrie : sig
     t ->
     ty list ->
     [> `Found of class_instance | `Missing | `Ambiguous of class_instance list ]
+
+  val pretty : t -> string
 end = struct
   type type_head =
     (* DeBruijn level of a universal type class variable *)
@@ -86,11 +91,14 @@ end = struct
     | HConstraint
     (* This has to use Name.t instead of name for the deriver to work correctly *)
     | HConstructor of Name.t
+        [@printer fun fmt name -> fprintf fmt "%s" (Name.pretty name)]
     (* HUnifs will never be substituted here, so we only need to carry
         their `Unique.t`s, rather than their full `Typeref.t`s.
         The actual matching logic treats these abstractly, just like skolems *)
     | HUnif of Unique.t
+        [@printer fun fmt unique -> fprintf fmt "%s" (Unique.display unique)]
     | HSkolem of Unique.t
+        [@printer fun fmt unique -> fprintf fmt "%s" (Unique.display unique)]
     | HNumber
     | HBool
     | HString
@@ -102,7 +110,7 @@ end = struct
     (* record fields are presented in canonical (sorted) order (up to duplicate labels)*)
     | HRecord of string array
     | HVariant of (string * int) array
-  [@@deriving ord]
+  [@@deriving ord, show { with_path = false }]
 
   (* TODO: Unroll incrementally (maybe by returning a type_head Seq.t?) *)
   let unroll : ty list -> type_head list =
@@ -242,7 +250,13 @@ end = struct
       | ModSubscriptTyCon _ -> .
     in
 
-    Difflist.to_list (Difflist.concat_map_list unroll_type types)
+    let result =
+      Difflist.to_list (Difflist.concat_map_list unroll_type types)
+    in
+    trace_instance_trie
+      (lazy
+        ("unrolled: " ^ String.concat " -> " (List.map show_type_head result)));
+    result
 
   module HeadMap = Map.Make (struct
     type t = type_head
@@ -272,9 +286,7 @@ end = struct
           | Some (Node children) ->
               let child_trie = go children rest in
               Node (HeadMap.add head child_trie children)
-          | None ->
-              (* TODO: Should this be (head :: rest) or just rest? *)
-              create_trie_from (head :: rest)
+          | None -> Node (HeadMap.add head (create_trie_from rest) children)
         end
       | [] -> panic __LOC__ "misshapen instance trie"
     in
@@ -300,6 +312,10 @@ end = struct
           List.filter_map
             (fun (head, subtrie) ->
               let rec go head subtrie =
+                trace_class
+                  (lazy
+                    ("matching instance: " ^ show_type_head head ^ " <- "
+                    ^ String.concat ", " (List.map pretty_type types)));
                 match head with
                 | HVariable i -> begin
                     match IntMap.find_opt i !substitution with
@@ -451,6 +467,26 @@ end = struct
     | [] -> `Missing
     | [ instance ] -> `Found instance
     | instances -> `Ambiguous instances
+
+  let pretty =
+    let rec pretty_child depth head trie =
+      let prefix = String.make (depth * 2) ' ' ^ "--> " in
+      match trie with
+      | Leaf _ -> prefix ^ show_type_head head ^ " --> <<instance>>"
+      | Node children ->
+          prefix ^ show_type_head head ^ "\n"
+          ^ String.concat "\n"
+              (List.map
+                 (fun (head, subtrie) -> pretty_child (depth + 1) head subtrie)
+                 (HeadMap.bindings children))
+    in
+    function
+    | Leaf _ -> "<<instance>>"
+    | Node children ->
+        String.concat "\n"
+          (List.map
+             (fun (head, subtrie) -> pretty_child 0 head subtrie)
+             (HeadMap.bindings children))
 end
 
 (* Note [Env in Constraints]
@@ -718,14 +754,24 @@ let emit_givens loc givens (env : local_env) =
     let class_instances =
       NameMap.update given.class_name
         (fun maybe_instance_trie ->
-          let instance_trie =
+          let existing_instance_trie =
             Option.value maybe_instance_trie ~default:InstanceTrie.empty
           in
 
           let instance = { evidence } in
 
-          Some
-            (InstanceTrie.add_instance given.arguments instance instance_trie))
+          let updated_instance_trie =
+            InstanceTrie.add_instance given.arguments instance
+              existing_instance_trie
+          in
+
+          trace_instance_trie
+            (lazy
+              (Name.pretty given.class_name
+              ^ ":\n"
+              ^ InstanceTrie.pretty updated_instance_trie));
+
+          Some updated_instance_trie)
         given_constraints.class_instances
     in
     { given_constraints with class_instances }

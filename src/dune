@@ -11,7 +11,7 @@
   base
   ppx_deriving)
  (preprocess
-  (pps trees_that_grow ppx_deriving.ord)))
+  (pps trees_that_grow ppx_deriving.ord ppx_deriving.show)))
 
 (menhir
  (modules parser))

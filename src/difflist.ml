@@ -9,10 +9,10 @@ let append dl1 dl2 list = dl1 (dl2 list)
 let concat list = List.fold_left append empty list
 
 let concat_map_list f list =
-  List.fold_left (fun difflist x -> append (f x) difflist) empty list
+  List.fold_left (fun difflist x -> append difflist (f x)) empty list
 
 let concat_map_array f array =
-  Array.fold_left (fun difflist x -> append (f x) difflist) empty array
+  Array.fold_left (fun difflist x -> append difflist (f x)) empty array
 
 let snoc dl x = append dl (of_list [ x ])
 let cons x dl = append (of_list [ x ]) dl

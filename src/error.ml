@@ -593,8 +593,8 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
                   ^ String.concat ", "
                       (List.map pretty_type class_constraint.arguments)
                   ^ ")")
-              ^ "\n  Valid instances:" ^ "    -"
-              ^ String.concat "    -"
+              ^ "\n  Matching instances:" ^ "\n    - "
+              ^ String.concat "\n    - "
                   (List.map
                      (fun (universals, arguments) ->
                        pretty_instance universals arguments)

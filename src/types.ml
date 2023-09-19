@@ -62,7 +62,14 @@ module IntMap = Map.Make (Int)
 
 let normalize_unif = Ty.normalize_unif
 
-type class_instance = { evidence : Evidence.source }
+type class_instance = {
+  evidence : Evidence.source;
+  (* We actually only need to keep track of universals and arguments for
+     the sake of error messages. All the interesting bits are already handled
+     by the instance trie*)
+  universals : name list;
+  arguments : ty list;
+}
 
 (** An efficient trie for matching type classes during type class resolution
     This is indexed by the unrolled type constructors for instance parameters
@@ -758,7 +765,13 @@ let emit_givens loc givens (env : local_env) =
     let class_instances =
       NameMap.update given.class_name
         (fun maybe_instance_trie ->
-          let instance = { evidence } in
+          let instance =
+            {
+              evidence;
+              universals = given.variables;
+              arguments = given.arguments;
+            }
+          in
 
           let instance_trie =
             match maybe_instance_trie with
@@ -2225,7 +2238,7 @@ and check_seq_expr :
       (* TODO: Annotate the instance with its given source here *)
       ( emit_givens loc
           [
-            ( { class_name; variables = []; arguments },
+            ( { class_name; variables = universals; arguments },
               given_source,
               entailed_constraints );
           ],
@@ -3037,7 +3050,13 @@ let solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
       | `Ambiguous instances ->
           raise
             (TypeError
-               (wanted_loc, AmbiguousClassConstraint (wanted, todo __LOC__)))
+               ( wanted_loc,
+                 AmbiguousClassConstraint
+                   ( wanted,
+                     List.map
+                       (fun { universals; arguments; _ } ->
+                         (universals, arguments))
+                       instances ) ))
       | `Missing ->
           (* TODO: This should be able to track if the instance might be unblocked by unification variables or skolems
              later and only requeue the wanted constraint in that case. *)

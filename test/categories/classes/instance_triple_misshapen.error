@@ -1,1 +1,8 @@
-aaa
+test/categories/classes/instance_triple_misshapen.pls:12:7: ERROR:
+Ambiguous type class constraint 'C(Number, Bool)'
+  Matching instances:
+    - 'forall a. C(a, Bool)'
+    - 'forall a. C(Number, a)'
+   | 
+12 | print(c(1, true))
+   |       ^

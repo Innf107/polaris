@@ -7,6 +7,7 @@ let _emit_category, trace_emit = Trace.make ~flag:"emit" ~prefix:"Emit"
 let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
 let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix:"Subst"
 let _class_category, trace_class = Trace.make ~flag:"class" ~prefix:"Class"
+let _solve_category, trace_solve = Trace.make ~flag:"solve" ~prefix:"Solve"
 
 let _instance_trie_category, trace_instance_trie =
   Trace.make ~flag:"insttrie" ~prefix:"InstanceTrie"
@@ -72,7 +73,7 @@ type class_instance = { evidence : Evidence.source }
 module InstanceTrie : sig
   type t
 
-  val empty : t
+  val create_from : ty list -> class_instance -> t
   val add_instance : ty list -> class_instance -> t -> t
 
   val match_instance :
@@ -268,25 +269,26 @@ end = struct
     | Leaf of class_instance
     | Node of t HeadMap.t
 
-  (* TODO: This technically does not allow nullary instances. Those are really weird though, so... *)
-  let empty = Node HeadMap.empty
+  let rec create_from_heads heads instance =
+    match heads with
+    | [] -> Leaf instance
+    | head :: rest ->
+        Node (HeadMap.add head (create_from_heads rest instance) HeadMap.empty)
+
+  let create_from types instance = create_from_heads (unroll types) instance
 
   let add_instance types instance trie =
-    let rec create_trie_from = function
-      | [] -> Leaf instance
-      | head :: rest ->
-          Node (HeadMap.add head (create_trie_from rest) HeadMap.empty)
-    in
     let rec go children = function
       | head :: rest -> begin
           match HeadMap.find_opt head children with
           | Some (Leaf _) ->
               panic __LOC__
                 "duplicate type class instance or misshapen instance trie"
-          | Some (Node children) ->
-              let child_trie = go children rest in
+          | Some (Node inner_children) ->
+              let child_trie = go inner_children rest in
               Node (HeadMap.add head child_trie children)
-          | None -> Node (HeadMap.add head (create_trie_from rest) children)
+          | None ->
+              Node (HeadMap.add head (create_from_heads rest instance) children)
         end
       | [] -> panic __LOC__ "misshapen instance trie"
     in
@@ -297,7 +299,10 @@ end = struct
     | Node children -> go children (unroll types)
 
   let all_matching :
-      type_head list lazy_t IntMap.t -> ty list -> t -> (t * ty list * type_head list lazy_t IntMap.t) list =
+      type_head list lazy_t IntMap.t ->
+      ty list ->
+      t ->
+      (t * ty list * type_head list lazy_t IntMap.t) list =
    fun substitution types trie ->
     let normalize_first_unif = function
       | ty :: rest -> normalize_unif ty :: rest
@@ -345,7 +350,8 @@ end = struct
 
                         go first_head extended_subtrie
                   end
-                | head when predicate head -> Some (subtrie, new_types @ rest, substitution)
+                | head when predicate head ->
+                    Some (subtrie, new_types @ rest, substitution)
                 | _ -> None
               in
               go head subtrie)
@@ -443,13 +449,11 @@ end = struct
        BFS rather than backtracking, but since we need to traverse every
        reachable path anyway to detect and report ambiguities, that actually turns
        out to be false!
-       Depth first search is much simpler so that is what we do here. 
-       
+       Depth first search is much simpler so that is what we do here.
+
        TODO: aren't we doing bfs? I'm confused... *)
     let rec go trie types substitution =
-      let subtries_and_remaining_types =
-        all_matching substitution types trie
-      in
+      let subtries_and_remaining_types = all_matching substitution types trie in
 
       let continue (subtrie, remaining, substitution) =
         match remaining with
@@ -754,24 +758,22 @@ let emit_givens loc givens (env : local_env) =
     let class_instances =
       NameMap.update given.class_name
         (fun maybe_instance_trie ->
-          let existing_instance_trie =
-            Option.value maybe_instance_trie ~default:InstanceTrie.empty
-          in
-
           let instance = { evidence } in
 
-          let updated_instance_trie =
-            InstanceTrie.add_instance given.arguments instance
-              existing_instance_trie
+          let instance_trie =
+            match maybe_instance_trie with
+            | None -> InstanceTrie.create_from given.arguments instance
+            | Some trie ->
+                InstanceTrie.add_instance given.arguments instance trie
           in
 
           trace_instance_trie
             (lazy
               (Name.pretty given.class_name
               ^ ":\n"
-              ^ InstanceTrie.pretty updated_instance_trie));
+              ^ InstanceTrie.pretty instance_trie));
 
-          Some updated_instance_trie)
+          Some instance_trie)
         given_constraints.class_instances
     in
     { given_constraints with class_instances }
@@ -3023,8 +3025,7 @@ let solve_interpolatable loc env state ty definition_env =
       false
   | ty -> raise (TypeError (loc, NonInterpolatable ty))
 
-
-let rec solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
+let solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
     local_env evidence_target =
   match NameMap.find_opt wanted.class_name givens.class_instances with
   | None -> todo __LOC__
@@ -3078,6 +3079,8 @@ let solve_constraints :
     List.fold_left
       begin
         fun progress constraint_ ->
+          trace_solve (lazy (pretty_ty_constraint constraint_));
+
           let new_progress =
             match constraint_ with
             | Unify (loc, ty1, ty2, definition_env) ->

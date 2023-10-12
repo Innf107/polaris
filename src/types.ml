@@ -1734,7 +1734,6 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let expr = check env (Promise expr_ty) expr in
       (expr_ty, Await (loc, expr))
   | Match (loc, scrutinee, branches) ->
-      (* TODO: Do exhaustiveness checking. *)
       let scrutinee_type, scrutinee = infer env scrutinee in
       let result_ty = fresh_unif env in
 
@@ -2201,6 +2200,7 @@ and check_seq_expr :
         | Some parameters -> parameters
       in
 
+      (* TODO: skolemize the universals here *)
       let check_method (expected_type_raw, name, parameters, body) =
         let expected_type =
           replace_tvars
@@ -2208,6 +2208,14 @@ and check_seq_expr :
                (List.to_seq (List.combine parameter_names arguments)))
             expected_type_raw
         in
+        let expected_type, sources =
+          skolemize loc env
+            (List.fold_right
+               (fun universal ty -> Forall (universal, ty))
+               universals expected_type)
+        in
+        (* TODO: This might be wrong? I'm not sure *)
+        assert (sources = []);
         let argument_types, body_type =
           split_fun_ty env loc (List.length arguments) expected_type
         in

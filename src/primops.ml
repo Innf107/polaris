@@ -18,6 +18,7 @@ let primops =
          ("print", forall (fun a -> [ a ] --> Ty.unit));
          ("lines", [ String ] --> List String);
          ("split", [ String; String ] --> List String);
+         ("chars", [ String ] --> List String);
          ("replace", [ String; String; String ] --> String);
          ("regexpReplace", [ String; String; String ] --> String);
          ("regexpMatch", [ String; String ] --> List String);

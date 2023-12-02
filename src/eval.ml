@@ -1275,6 +1275,17 @@ and eval_primop ~cap env op args loc =
                     "Expected a single string",
                     loc :: env.call_trace )))
     end
+  | "chars" -> begin
+      match args with
+      | [ StringV arg ] ->
+          ListV
+            (List.of_seq
+               (Seq.map
+                  (fun char ->
+                    StringV (String.of_seq (Seq.cons char Seq.empty)))
+                  (String.to_seq arg)))
+      | _ -> panic __LOC__ "invalid arguments to 'chars' primop"
+    end
   | "split" -> begin
       match args with
       | [ _; StringV "" ] -> ListV []

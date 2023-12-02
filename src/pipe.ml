@@ -25,6 +25,7 @@ let rec compose_pipe ~mgr ~sw ~env (stdin : #Eio.Flow.source option)
           (program_or_local program :: arguments)
       in
       compose_pipe ~mgr ~sw ~env
+        (* fuck you eio *)
         (Some (Obj.magic (pipe_read :> Eio.Flow.source)))
         stdout rest
 

@@ -1043,7 +1043,10 @@ let rename_exports :
               match NameMap.find_opt renamed scope.type_classes with
               | Some (params, fields) ->
                   Renamed.ExportConstructor
-                    ((loc, `Class (params, fields)), renamed)
+                    ( ( loc,
+                        `Class (params, List.map snd (StringMap.to_list fields))
+                      ),
+                      renamed )
               | None -> Renamed.ExportConstructor ((loc, `Type), renamed)
             end
           | None -> (

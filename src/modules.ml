@@ -111,13 +111,8 @@ let build_export_map header exprs rename_scope global_env =
   in
 
   let exported_instances =
-    Util.todo __LOC__
-    (* List.map
-      (function
-        | Types.GivenClass { loc; given; evidence } -> (loc, given, evidence))
-      global_env.given_constraints *)
+    Types.export_instances global_env.given_constraints
   in
-
   trace_exports
     (lazy
       ("Exported variables: ["
@@ -142,6 +137,14 @@ let build_export_map header exprs rename_scope global_env =
           (List.map (fun (x, _) -> Name.pretty x) exported_exceptions)
       ^ "]"));
 
+  trace_exports
+    (lazy
+      ("Classes with exported instances: ["
+      ^ String.concat ", "
+          (List.map
+             (fun (key, _) -> Name.pretty key)
+             (NameMap.bindings exported_instances))
+      ^ "]"));
   Typed.
     {
       exported_variables = StringMap.of_seq (List.to_seq exported_variables);

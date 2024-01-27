@@ -5,6 +5,7 @@ module VarMap = Map.Make (Name)
 module EnvMap = Map.Make (String)
 module RecordVImpl = Multimap.Make (String)
 module UniqueMap = Map.Make (Unique)
+module EvidenceMap = Map.Make (Evidence.Binding)
 
 type eval_capabilities = {
   switch : Eio.Switch.t;
@@ -20,8 +21,12 @@ type eval_env = {
   last_status : int ref;
   module_vars : runtime_module VarMap.t;
   exceptions : (name list * eval_env * expr) VarMap.t;
-  atomic_dictionaries : dictionary_implementation UniqueMap.t;
+  type_class_instances : runtime_instance EvidenceMap.t;
 }
+
+and runtime_instance =
+  | Instance of dictionary_implementation
+  | PartialInstance of (dictionary_implementation list -> runtime_instance)
 
 and dictionary_implementation = { methods : value NameMap.t }
 
@@ -65,9 +70,9 @@ and value =
   | VariantConstructorV of string * value list
   | RefV of value ref
   | SelectorV of name
-  | DictClosureV of eval_env * Unique.t list * expr
+  | DictClosureV of eval_env * Evidence.binding list * expr
   | DictDoubleClosureV of
-      Unique.t list * eval_env lazy_t * Typed.pattern list * Typed.expr
+      Evidence.binding list * eval_env lazy_t * Typed.pattern list * Typed.expr
 
 and exception_trace =
   | NotYetRaised
@@ -145,13 +150,13 @@ module Value = struct
         ^ ")"
     | RefV value -> "<ref: " ^ pretty !value ^ ">"
     | SelectorV name -> "<selector: " ^ pretty_name name ^ ">"
-    | DictClosureV (_, uniques, _) ->
+    | DictClosureV (_, bindings, _) ->
         "<d#closure("
-        ^ String.concat ", " (List.map Unique.display uniques)
+        ^ String.concat ", " (List.map Evidence.pretty_binding bindings)
         ^ ")>"
-    | DictDoubleClosureV (uniques, _, patterns, _) ->
+    | DictDoubleClosureV (bindings, _, patterns, _) ->
         "<d#doubleclosure("
-        ^ String.concat ", " (List.map Unique.display uniques)
+        ^ String.concat ", " (List.map Evidence.pretty_binding bindings)
         ^ ")("
         ^ String.concat ", " (List.map Typed.pretty_pattern patterns)
         ^ ")>"
@@ -1074,89 +1079,103 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
           panic __LOC__
             ("Trying to raise non-exception at runtime: " ^ Value.pretty value)
     end
-  | ExprExt (loc, DictLambda (dictionaries, body)) ->
-      let dict_uniques =
-        List.map (fun (Evidence.Dictionary unique) -> unique) dictionaries
-      in
-      DictClosureV (env, dict_uniques, body)
-  | ExprExt (loc, DictApp (expr, dictionaries)) ->
-      let extract_dictionary_implementation dict =
-        match dict with
-        | Evidence.BoundDictionary { contents = Some (Dictionary unique) } ->
-            let dict =
-              match UniqueMap.find_opt unique env.atomic_dictionaries with
-              | None ->
-                  panic __LOC__
-                    (Loc.pretty loc
-                   ^ ": atomic dictionary not found at runtime: "
-                   ^ Unique.display unique)
-              | Some dict -> dict
-            in
-            dict
-        | Evidence.BoundDictionary { contents = None } ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Unbound target dictionary at runtime")
-      in
-      begin
-        match eval_expr ~cap env expr with
-        | SelectorV method_name -> begin
-            match dictionaries with
-            | [ dict ] ->
-                let implementation = extract_dictionary_implementation dict in
-                begin
-                  match NameMap.find_opt method_name implementation.methods with
-                  | Some value -> value
-                  | None ->
-                      panic __LOC__
-                        (Loc.pretty loc
-                       ^ ": Runtime dictionary does not contain method: "
-                       ^ Name.pretty method_name)
-                end
-            | _ ->
-                panic __LOC__
-                  (Loc.pretty loc
-                 ^ ": Multiple dictionaries passed to selector function '"
-                 ^ Name.pretty method_name ^ "': "
-                  ^ string_of_int (List.length dictionaries))
-          end
-        | DictClosureV (closure_env, uniques, body) ->
-            let implementations =
-              List.map extract_dictionary_implementation dictionaries
-            in
-            assert (List.compare_lengths uniques implementations = 0);
-            let updated_closure_env =
-              List.fold_right2
-                (fun unique impl env ->
-                  {
-                    env with
-                    atomic_dictionaries =
-                      UniqueMap.add unique impl env.atomic_dictionaries;
-                  })
-                uniques implementations env
-            in
-            eval_expr ~cap updated_closure_env body
-        | DictDoubleClosureV (uniques, env, params, body) ->
-          let implementations =
-            List.map extract_dictionary_implementation dictionaries
-          in
+  | ExprExt (loc, DictLambda (bindings, body)) ->
+      DictClosureV (env, bindings, body)
+  | ExprExt (loc, DictApp (expr, dictionaries)) -> begin
+      match eval_expr ~cap env expr with
+      | SelectorV method_name -> begin
+          match dictionaries with
+          | [ dict ] ->
+              let implementation = eval_evidence loc env dict in
+              begin
+                match NameMap.find_opt method_name implementation.methods with
+                | Some value -> value
+                | None ->
+                    panic __LOC__
+                      (Loc.pretty loc
+                     ^ ": Runtime dictionary does not contain method: "
+                     ^ Name.pretty method_name)
+              end
+          | _ ->
+              panic __LOC__
+                (Loc.pretty loc
+               ^ ": Multiple dictionaries passed to selector function '"
+               ^ Name.pretty method_name ^ "': "
+                ^ string_of_int (List.length dictionaries))
+        end
+      | DictClosureV (closure_env, uniques, body) ->
+          let implementations = List.map (eval_evidence loc env) dictionaries in
           assert (List.compare_lengths uniques implementations = 0);
           let updated_closure_env =
             List.fold_right2
-              (fun unique impl env ->
+              (fun binding impl env ->
                 {
                   env with
-                  atomic_dictionaries =
-                    UniqueMap.add unique impl env.atomic_dictionaries;
+                  type_class_instances =
+                    EvidenceMap.add binding (Instance impl)
+                      env.type_class_instances;
                 })
-              uniques implementations (Lazy.force env)
+              uniques implementations closure_env
           in
-          ClosureV(lazy updated_closure_env, params, body)
-    | value ->
-            panic __LOC__
-              (Loc.pretty loc
-             ^ ": Dictionary application of non-selector or non-dictionary \
-                closure: " ^ Value.pretty value)
-      end
+          eval_expr ~cap updated_closure_env body
+      | DictDoubleClosureV (bindings, closure_env, params, body) ->
+          let implementations = List.map (eval_evidence loc env) dictionaries in
+          assert (List.compare_lengths bindings implementations = 0);
+          let updated_closure_env =
+            List.fold_right2
+              (fun binding impl env ->
+                {
+                  env with
+                  type_class_instances =
+                    EvidenceMap.add binding (Instance impl)
+                      env.type_class_instances;
+                })
+              bindings implementations (Lazy.force closure_env)
+          in
+          ClosureV (lazy updated_closure_env, params, body)
+      | value ->
+          panic __LOC__
+            (Loc.pretty loc
+           ^ ": Dictionary application of non-selector or non-dictionary \
+              closure: " ^ Value.pretty value)
+    end
+
+and eval_evidence loc env source =
+  match eval_partial_evidence loc env source with
+  | Instance instance -> instance
+  | PartialInstance _ ->
+      panic __LOC__
+        (Loc.pretty loc ^ ": partially applied type class instance at runtime")
+
+and eval_partial_evidence : loc -> eval_env -> Evidence.t -> runtime_instance =
+ fun loc env evidence ->
+  match Evidence.follow_metas evidence with
+  | Meta meta ->
+      panic __LOC__
+        (Loc.pretty loc ^ ": Evaluating unsubstituted evidence meta: "
+       ^ Evidence.pretty_meta meta)
+  | Dictionary binding -> begin
+      match EvidenceMap.find_opt binding env.type_class_instances with
+      | None ->
+          panic __LOC__
+            (Loc.pretty loc
+           ^ ": type class instance evidence not found at runtime: "
+            ^ Evidence.pretty_binding binding)
+      | Some dict -> dict
+    end
+  | Apply (dict_function, dict_arguments) -> (
+      (* there are no higher order instances (yet? ^^) so we can use eval_source and safely
+         assume that all arguments have already been fully applied *)
+      let argument_instances =
+        List.map (eval_evidence loc env) dict_arguments
+      in
+      match eval_partial_evidence loc env dict_function with
+      | PartialInstance builder -> builder argument_instances
+      | Instance _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": trying to apply atomic instance evidence to "
+            ^ string_of_int (List.length dict_arguments)
+            ^ " arguments"))
 
 and eval_app ~cap env loc fun_v arg_vals =
   match fun_v with
@@ -1230,20 +1249,15 @@ and eval_seq_cont :
       let env_trans = match_pat pat scrut (loc :: env.call_trace) in
       eval_seq_cont ~cap context (env_trans env) exprs cont
       (* We can safely ignore the type annotation since it has been checked by the typechecker already *)
-  | LetRecSeq ((loc, _, evidence), _ty, f, params, e) :: exprs ->
+  | LetRecSeq ((loc, _, evidence_bindings), _ty, f, params, e) :: exprs ->
       let rec env' =
         lazy
           begin
             let closure =
-              match evidence with
+              match evidence_bindings with
               | [] -> ClosureV (env', params, e)
-              | evidence ->
-                  let uniques =
-                    List.map
-                      (fun (Evidence.Dictionary unique) -> unique)
-                      evidence
-                  in
-                  DictDoubleClosureV (uniques, env', params, e)
+              | evidence_bindings ->
+                  DictDoubleClosureV (evidence_bindings, env', params, e)
             in
             insert_var f closure env
           end
@@ -1268,26 +1282,40 @@ and eval_seq_cont :
           methods env
       in
       eval_seq_cont ~cap context updated_env exprs cont
-  | LetInstanceSeq ((loc, given_source), _parameters, _, name, _arguments, methods) :: exprs ->
-      let source_unique =
-        match given_source with
-        | Dictionary unique -> unique
-      in
+  | LetInstanceSeq
+      ( (loc, given_source),
+        _parameters,
+        super_constraint,
+        name,
+        _arguments,
+        methods )
+    :: exprs ->
       let prepare_method (_type, name, params, body) =
         (name, ClosureV (Lazy.from_val env, params, body))
       in
 
-      let dictionary =
-        {
-          methods =
-            NameMap.of_seq (List.to_seq (List.map prepare_method methods));
-        }
+      let instance =
+        match super_constraint with
+        | RecordClosed [||] ->
+            Instance
+              {
+                methods =
+                  NameMap.of_seq (List.to_seq (List.map prepare_method methods));
+              }
+        | _ -> todo __LOC__
       in
+
+      (* let dictionary =
+           {
+             methods =
+               NameMap.of_seq (List.to_seq (List.map prepare_method methods));
+           }
+         in*)
       let updated_env =
         {
           env with
-          atomic_dictionaries =
-            UniqueMap.add source_unique dictionary env.atomic_dictionaries;
+          type_class_instances =
+            EvidenceMap.add given_source instance env.type_class_instances;
         }
       in
       eval_seq_cont ~cap context updated_env exprs cont
@@ -1806,7 +1834,7 @@ and make_eval_env (argv : string list) : eval_env =
     last_status = ref 0;
     module_vars = VarMap.empty;
     exceptions = VarMap.empty;
-    atomic_dictionaries = UniqueMap.empty;
+    type_class_instances = EvidenceMap.empty;
   }
 
 let eval ~cap (argv : string list) (exprs : Typed.expr list) : value =

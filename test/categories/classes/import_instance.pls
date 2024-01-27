@@ -2,6 +2,6 @@
 
 module Base = import("./import_instance_base.pls.skip")
 
-print(f(true))
+print(Base.f(true))
 
 

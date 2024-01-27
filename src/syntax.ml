@@ -9,6 +9,7 @@ type name = {
   name : string;
   index : Unique.t;
 }
+
 type type_constructor_sort =
   | DataConSort
   | TypeAliasSort
@@ -186,7 +187,9 @@ module Template = struct
     exported_exceptions : ty list NameMap.t;
     exported_type_aliases : (name list * ty) NameMap.t;
     exported_type_classes : (name list * (name * ty) list) NameMap.t;
-    exported_instances : (loc * class_constraint * Evidence.source) list;
+    (* this is really a Types.InstanceTrie.t NameMap.t, but since ocaml is to stubborn
+       to support module cycles like that we need to break type safety here *)
+    exported_instances : Obj.t NameMap.t;
   }
 
   type binop =
@@ -340,12 +343,6 @@ module Template = struct
     description : string option;
   }
 
-  (** WARNING: SHOULD YOU EVER FALL TO THE TEMPTATION OF MAKING
-      export_item DIVERGE BETWEEN Renamed AND Typed, **UPDATE typecheck_exports IN types.ml** 
-      IF YOU DON'T, HAVOC WILL ENSUE AS EXPORT ITEMS WILL BE ALIENATED FROM THEIR ORIGIN
-      AND ENSLAVED AS DIFFERENT TYPES! 
-      DARK MAGIC WILL ENGULF THEIR SOULS AND BREAK YOUR INVARIANTS.
-      SEGMENTATION FAULTS WILL ROAM THE LAND! TURN BACK WHILE YOU CAN! *)
   type export_item =
     | ExportVal of loc * name
     | ExportConstructor of ExportConstructorExt.t * name
@@ -809,7 +806,7 @@ module Template = struct
           let expr, state = traversal state expr in
           (Some expr, state)
 
-    class[@warning "-56"] ['state] traversal =
+    class ['state] traversal =
       object (self)
         method expr : 'state -> expr -> expr * 'state =
           fun state expr -> (expr, state)
@@ -1419,7 +1416,7 @@ module Template = struct
                   (FilterClause expr, state)
             in
             self#list_comp_clause state transformed
-      end
+      end [@@warning "-56"]
 
     let transform_type trans ty =
       let traversal =
@@ -1575,11 +1572,11 @@ module Typed = Template (struct
 
   module LetRecExt = struct
     include SubLocationWithTypeAnd (struct
-      type t = Evidence.source list
+      type t = Evidence.binding list
     end)
 
     let pretty (_, _, evidence) =
-      "[" ^ String.concat ", " (List.map Evidence.display_source evidence) ^ "]"
+      "[" ^ String.concat ", " (List.map Evidence.pretty_binding evidence) ^ "]"
   end
 
   module ExportConstructorExt = LocWithNonTy (struct
@@ -1591,7 +1588,7 @@ module Typed = Template (struct
   end)
 
   module InstanceExt = LocWithNonTy (struct
-    type t = Evidence.source
+    type t = Evidence.binding
   end)
 
   module InstanceMethodExt = struct
@@ -1601,8 +1598,8 @@ module Typed = Template (struct
   end
 
   type 'expr expr_ext =
-    | DictLambda of Evidence.source list * 'expr
-    | DictApp of 'expr * Evidence.target list
+    | DictLambda of Evidence.binding list * 'expr
+    | DictApp of 'expr * Evidence.t list
 
   let traverse_expr_ext self state ext =
     match ext with
@@ -1614,13 +1611,13 @@ module Typed = Template (struct
         (DictApp (expr, evidence_targets), state)
 
   let pretty_expr_ext pretty_expr = function
-    | DictLambda (uniques, expr) ->
+    | DictLambda (bindings, expr) ->
         "λ#d["
-        ^ String.concat ", " (List.map Evidence.display_source uniques)
+        ^ String.concat ", " (List.map Evidence.pretty_binding bindings)
         ^ "). " ^ pretty_expr expr
     | DictApp (expr, uniques) ->
         "(" ^ pretty_expr expr ^ ")@#d("
-        ^ String.concat ", " (List.map Evidence.display_target uniques)
+        ^ String.concat ", " (List.map Evidence.pretty uniques)
         ^ ")"
 end)
 [@@ttg_pass]
@@ -1661,7 +1658,7 @@ module Renamed = Template (struct
     type t =
       [ `Type
       | `Exception
-      | `Class of name list * (name * FullTypeDefinition.ty) StringMap.t
+      | `Class of name list * (name * FullTypeDefinition.ty) list
       ]
   end)
 

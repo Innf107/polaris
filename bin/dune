@@ -1,8 +1,7 @@
 (executable
  (public_name polaris)
  (name main)
- (libraries polaris bestline eio_main)
- (link_flags :standard -cclib -static))
+ (libraries polaris bestline eio_main))
 
 (env
  (dev

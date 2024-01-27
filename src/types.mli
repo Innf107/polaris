@@ -3,7 +3,11 @@ open Syntax.Renamed
 
 type unify_context = ty * ty
 
+
 type given_constraints
+
+
+val export_instances : given_constraints -> Obj.t NameMap.t
 
 type type_error =
   | UnableToUnify of (ty * ty) * unify_context option

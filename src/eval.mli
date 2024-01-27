@@ -4,6 +4,7 @@ module VarMap : module type of Map.Make (Name)
 module EnvMap : module type of Map.Make (String)
 module RecordVImpl : module type of Multimap.Make (String)
 module UniqueMap : module type of Map.Make (Unique)
+module EvidenceMap : module type of Map.Make (Evidence.Binding)
 
 type eval_capabilities = {
   switch : Eio.Switch.t;
@@ -19,10 +20,11 @@ type eval_env = {
   last_status : int ref;
   module_vars : runtime_module VarMap.t;
   exceptions : (name list * eval_env * expr) VarMap.t;
-  atomic_dictionaries : dictionary_implementation UniqueMap.t;
+  type_class_instances : runtime_instance EvidenceMap.t;
 }
 
-and dictionary_implementation = { methods : value NameMap.t }
+and runtime_instance
+and dictionary_implementation
 
 and runtime_module = {
   mod_vars : value VarMap.t;
@@ -64,9 +66,9 @@ and value =
   | VariantConstructorV of string * value list
   | RefV of value ref
   | SelectorV of name
-  | DictClosureV of eval_env * Unique.t list * expr
+  | DictClosureV of eval_env * Evidence.binding list * expr
   | DictDoubleClosureV of
-      Unique.t list * eval_env lazy_t * Typed.pattern list * Typed.expr
+      Evidence.binding list * eval_env lazy_t * Typed.pattern list * Typed.expr
 
 and exception_trace =
   | NotYetRaised

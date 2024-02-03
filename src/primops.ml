@@ -51,6 +51,7 @@ let primops =
          ("status", [] --> Number);
          ("mod", [ Number; Number ] --> Number);
          ("floor", [ Number ] --> Number);
+         ("ceil", [ Number ] --> Number);
          ("exceptionMessage", [ Exception ] --> String);
        ])
 

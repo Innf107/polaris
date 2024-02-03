@@ -50,6 +50,7 @@ let primops =
          ("ensure", [ String ] --> Ty.unit);
          ("status", [] --> Number);
          ("mod", [ Number; Number ] --> Number);
+         ("floor", [ Number ] --> Number);
          ("exceptionMessage", [ Exception ] --> String);
        ])
 

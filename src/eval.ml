@@ -1626,6 +1626,11 @@ and eval_primop ~cap env op args loc =
                (PrimOpArgumentError
                   ("mod", args, "Expected two integers", loc :: env.call_trace)))
     end
+  | "floor" -> begin
+    match args with
+    | [NumV x] -> NumV (floor x)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": floor: Non-number argument passed at runtime")
+    end
   | "exceptionMessage" -> begin
       match args with
       | [ ExceptionV (_, _, _, message) ] -> StringV (Lazy.force message)

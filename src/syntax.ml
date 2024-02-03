@@ -780,6 +780,166 @@ module Template = struct
        The syntax tree is always traversed in a bottom-up manner.
     *)
 
+    (** Zip two types together in a top down fashion by applying ?matching to every pair of types with the same structure.
+      Pairs of types that do not have the same shape will have ?non_matching applied to them but will not recurse any further.
+
+      ?alias will be applied to every zipped pair containing a type alias.
+      The traversal will still follow the type alias and separately apply ?matching or ?non_matching to the underlying type.
+
+      This will follow substituted unification variables so all of the provided functions can assume that all unification variables
+      are unsubstituted.
+    *)
+    let zip_type :
+        ?matching:(ty -> ty -> unit) ->
+        ?non_matching:(ty -> ty -> unit) ->
+        ?alias:(ty -> ty -> unit) ->
+        ty ->
+        ty ->
+        unit =
+     fun ?(matching = fun _ _ -> ()) ?(non_matching = fun _ _ -> ())
+         ?(alias = fun _ _ -> ()) ->
+      let rec go ty1 ty2 =
+        let matching () = matching ty1 ty2 in
+        let non_matching () = non_matching ty1 ty2 in
+        (* We separately match on type aliases in ty2 here to avoid
+           needing to do so inside every of the following matches*)
+        match (ty1, ty2) with
+        (* make sure to only call ?alias on pairs of aliases once *)
+        | ( TypeAlias { underlying = underlying1; _ },
+            TypeAlias { underlying = underlying2; _ } ) ->
+            alias ty1 ty2;
+            go underlying1 underlying2
+        | _, TypeAlias { underlying; _ } ->
+            alias ty1 ty2;
+            go ty1 underlying
+        | Unif (typeref1, _), ty2 when Typeref.is_bound typeref1 -> begin
+            match Typeref.get typeref1 with
+            | Unbound _ ->
+                panic __LOC__
+                  "Typeref.is_bound returned true for unbound typeref"
+            | Bound substituted -> go substituted ty2
+          end
+        | ty1, Unif (typeref2, _) when Typeref.is_bound typeref2 -> begin
+            match Typeref.get typeref2 with
+            | Unbound _ ->
+                panic __LOC__
+                  "Typeref.is_bound returned true for unbound typeref"
+            | Bound substituted -> go ty1 substituted
+          end
+        | _ -> begin
+            match ty1 with
+            | Forall (_, ty1) -> begin
+                match ty2 with
+                | Forall (_, ty2) ->
+                    matching ();
+                    go ty1 ty2
+                | _ -> non_matching ()
+              end
+            | Fun (args1, result1) -> begin
+                match ty2 with
+                | Fun (args2, result2) ->
+                    matching ();
+                    List.iter2 go args1 args2;
+                    go result1 result2
+                | _ -> non_matching ()
+              end
+            | Constraint (constraint1, body1) -> begin
+                match ty2 with
+                | Constraint (constraint2, body2) ->
+                    matching ();
+                    go constraint1 constraint2;
+                    go body1 body2
+                | _ -> non_matching ()
+              end
+            | TyVar _ -> begin
+                match ty2 with
+                | TyVar _ -> matching ()
+                | _ -> non_matching ()
+              end
+            | TypeAlias { underlying; _ } ->
+                alias ty1 ty2;
+                go underlying ty2
+            | TyConstructor (name1, arguments1) -> begin
+                match ty2 with
+                | TyConstructor (name2, arguments2) when equal_name name1 name2
+                  ->
+                    matching ();
+                    List.iter2 go arguments1 arguments2
+                | _ -> non_matching ()
+              end
+            (* These are unbound since we already matched on bound unification variables above *)
+            | Unif _ -> begin
+                match ty2 with
+                | Unif _ -> matching ()
+                | _ -> non_matching ()
+              end
+            | Skol _ -> begin
+                match ty2 with
+                | Skol _ -> matching ()
+                | _ -> non_matching ()
+              end
+            | Number -> begin
+                match ty2 with
+                | Number -> matching ()
+                | _ -> non_matching ()
+              end
+            | Bool -> begin
+                match ty2 with
+                | Bool -> matching ()
+                | _ -> non_matching ()
+              end
+            | String -> begin
+                match ty2 with
+                | String -> matching ()
+                | _ -> non_matching ()
+              end
+            | Exception -> begin
+                match ty2 with
+                | Exception -> matching ()
+                | _ -> non_matching ()
+              end
+            | Tuple elements1 -> begin
+                match ty2 with
+                | Tuple elements2
+                  when Array.length elements1 = Array.length elements2 ->
+                    matching ();
+                    Array.iter2 go elements1 elements2
+                | _ -> non_matching ()
+              end
+            | List inner_ty1 -> begin
+                match ty2 with
+                | List inner_ty2 ->
+                    matching ();
+                    go inner_ty1 inner_ty2
+                | _ -> non_matching ()
+              end
+            | Ref ty1 -> begin
+                match ty2 with
+                | Ref ty2 ->
+                    matching ();
+                    go ty1 ty2
+                | _ -> non_matching ()
+              end
+            | Promise ty1 -> begin
+                match ty2 with
+                | Promise ty2 ->
+                    matching ();
+                    go ty1 ty2
+                | _ -> non_matching ()
+              end
+            | RecordClosed _ -> todo __LOC__
+            | RecordUnif _ -> todo __LOC__
+            | RecordSkol _ -> todo __LOC__
+            | RecordVar _ -> todo __LOC__
+            | VariantClosed _ -> todo __LOC__
+            | VariantUnif _ -> todo __LOC__
+            | VariantSkol _ -> todo __LOC__
+            | VariantVar _ -> todo __LOC__
+            | ModSubscriptTyCon _ -> todo __LOC__
+          end
+      in
+      go
+
     let traverse_list :
           'state 'node.
           ('state -> 'node -> 'node * 'state) ->
@@ -1517,6 +1677,7 @@ module Parsed = Template (struct
   type name = string
 
   let pretty_name x = x
+  let equal_name = String.equal
 
   type import_ext = loc
 
@@ -1556,6 +1717,7 @@ module Typed = Template (struct
   type name = Name.t
 
   let pretty_name = Name.pretty
+  let equal_name = Name.equal
 
   type import_ext = loc * module_exports * expr list
 
@@ -1634,6 +1796,7 @@ module Renamed = Template (struct
   type name = Name.t
 
   let pretty_name = Name.pretty
+  let equal_name = Name.equal
 
   type import_ext = loc * Typed.module_exports * Typed.expr list
 

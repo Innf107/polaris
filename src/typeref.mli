@@ -19,3 +19,4 @@ val get : 'a t -> 'a state
 val set : 'a t -> 'a -> unit
 val get_unique : 'a t -> Unique.t
 val equal : 'a t -> 'a t -> bool
+val is_bound : 'a t -> bool

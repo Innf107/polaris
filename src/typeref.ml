@@ -26,3 +26,7 @@ let get_unique (unique, _) = unique
 
 let equal typeref1 typeref2 =
   Unique.equal (get_unique typeref1) (get_unique typeref2)
+
+let is_bound typeref = match get typeref with
+  | Bound _ -> true
+  | Unbound _ -> false

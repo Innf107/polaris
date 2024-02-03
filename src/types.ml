@@ -3110,6 +3110,40 @@ let solve_interpolatable loc env state ty definition_env =
       false
   | ty -> raise (TypeError (loc, NonInterpolatable ty))
 
+let compute_instance_substitution :
+    class_instance -> class_constraint -> Substitution.t =
+ fun instance constraint_ ->
+  let substitution_map = ref NameMap.empty in
+
+  let rec match_type instance_type constraint_type =
+    let matching ty1 ty2 =
+      match (ty1, ty2) with
+      | TyVar name1, TyVar name2 when not (Name.equal name1 name2) ->
+          substitution_map := NameMap.add name1 ty2 !substitution_map
+      | _ -> ()
+    in
+    let non_matching ty1 ty2 =
+      match (ty1, ty2) with
+      | TyVar name, ty ->
+          substitution_map := NameMap.add name ty !substitution_map
+      | _ ->
+          panic __LOC__
+            ("Matched instance does not match the constraint's shape. Cannot \
+              match " ^ pretty_type instance_type ^ " against "
+            ^ pretty_type constraint_type
+            ^ ".\n  Instance arguments: ["
+            ^ String.concat ", " (List.map pretty_type instance.arguments)
+            ^ "].\n  Constraint arguments: ["
+            ^ String.concat ", " (List.map pretty_type constraint_.arguments)
+            ^ "]")
+    in
+    Traversal.zip_type ~matching ~non_matching instance_type constraint_type
+  in
+
+  List.iter2 match_type instance.arguments constraint_.arguments;
+
+  Substitution.of_map !substitution_map
+
 let rec solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
     local_env evidence_target =
   let none_matched () =
@@ -3128,16 +3162,32 @@ let rec solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
           (* TODO: we need to apply the evidence from every entailed constraint to the target here *)
           let entailed_targets =
             instance.entailed
-            |> List.map (fun instance ->
+            |> List.map (fun (entailed_constraint : class_constraint) ->
                    let target = Evidence.make_empty_meta () in
+
+                   let substitute =
+                     Substitution.apply_type
+                       (compute_instance_substitution instance wanted)
+                   in
+
+                   (* TODO: do we need to substitute anything in instances that this entailed instance entails? *)
+                   let substituted_constraint =
+                     {
+                       entailed_constraint with
+                       variables = [];
+                       arguments =
+                         List.map substitute entailed_constraint.arguments;
+                     }
+                   in
+
                    (* TODO: keep some context about where the instance came from here *)
                    trace_class
                      (lazy
                        ("solving entailed constraint: "
-                       ^ pretty_class_constraint instance));
+                       ^ pretty_class_constraint substituted_constraint));
                    let _ =
-                     solve_wanted_class wanted_loc env unify_state instance
-                       givens local_env target
+                     solve_wanted_class wanted_loc env unify_state
+                       substituted_constraint givens local_env target
                    in
                    target)
           in

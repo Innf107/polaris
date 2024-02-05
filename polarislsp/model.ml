@@ -64,10 +64,10 @@ let hover_entry_traversal =
           ( pattern,
             Difflist.append hover_entries
               (Difflist.of_list [ (loc, (loc, VarLike (name, ty))) ]) )
-      | Typed.VariantPat ((loc, ty), name, _) ->
+      | Typed.VariantPat (({ subloc; _ }, ty), name, _) ->
           ( pattern,
             Difflist.append hover_entries
-              (Difflist.of_list [ (loc, (loc, Variant (name, ty))) ]) )
+              (Difflist.of_list [ (subloc, (subloc, Variant (name, ty))) ]) )
       | _ -> (pattern, hover_entries)
   end
 

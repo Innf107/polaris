@@ -314,7 +314,7 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t)
               scope_transformer,
               type_transformer )
         | Some (constructor_name, ExceptionSort) ->
-            ( ExceptionDataPat (loc, constructor_name, [ pattern ]),
+            ( ExceptionDataPat (loc.main, constructor_name, [ pattern ]),
               scope_transformer,
               type_transformer )
         | None ->
@@ -332,9 +332,9 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t)
         | Some (constructor_name, NewtypeConSort) ->
             raise
               (RenameError
-                 (TooManyArgsToDataConPattern (constructor_name, patterns, loc)))
+                 (TooManyArgsToDataConPattern (constructor_name, patterns, loc.main)))
         | Some (constructor_name, ExceptionSort) ->
-            ( ExceptionDataPat (loc, constructor_name, patterns),
+            ( ExceptionDataPat (loc.main, constructor_name, patterns),
               Util.compose scope_transformers,
               Util.compose type_transformers )
         | None ->

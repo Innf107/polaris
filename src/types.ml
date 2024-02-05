@@ -534,7 +534,7 @@ let rec infer_pattern :
         | Some (level, vars, ty) -> (level, vars, ty)
         | None ->
             panic __LOC__
-              (Loc.pretty loc ^ ": Data constructor not found in typechecker: '"
+              (Loc.pretty loc.main ^ ": Data constructor not found in typechecker: '"
               ^ Name.pretty constructor_name
               ^ "'. This should have been caught earlier!")
       in

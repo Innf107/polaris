@@ -194,7 +194,7 @@ let check_and_close_column ~close_variant = function
                 StringSet.of_seq (Array.to_seq (Array.map fst constructors))
             | ty ->
                 panic __LOC__
-                  (Loc.pretty loc ^ ": variant pattern with non-variant type: "
+                  (Loc.pretty loc.main ^ ": variant pattern with non-variant type: "
                  ^ Typed.pretty_type ty)
           in
           let rec missing_constructors variant_constructors = function
@@ -205,7 +205,7 @@ let check_and_close_column ~close_variant = function
                   remaining
             | pattern :: _ ->
                 panic __LOC__
-                  (Loc.pretty loc
+                  (Loc.pretty loc.main
                  ^ ": non-variant and non-wildcard pattern in variant pattern \
                     match")
           in

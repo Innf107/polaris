@@ -158,7 +158,7 @@ module Template = struct
     | BoolPat of loc * bool
     | OrPat of loc * pattern * pattern
     | TypePat of loc * pattern * ty
-    | DataPat of loc * name * pattern
+    | DataPat of SubLocation.t * name * pattern
     | ExceptionDataPat of loc * name * pattern list
     | VariantPat of VariantPatExt.t * string * pattern list
 
@@ -703,7 +703,7 @@ module Template = struct
     | BoolPat (loc, _)
     | OrPat (loc, _, _)
     | TypePat (loc, _, _)
-    | DataPat (loc, _, _)
+    | DataPat ({ main = loc; _ }, _, _)
     | ExceptionDataPat (loc, _, _) ->
         loc
 
@@ -1408,7 +1408,7 @@ module Parsed = Template (struct
 
   module VarExt = LocOnly
   module VarPatExt = LocOnly
-  module VariantPatExt = LocOnly
+  module VariantPatExt = SubLocation
   module DataConExt = LocOnly
   module SubscriptExt = SubLocation
   module ModSubscriptExt = LocOnly
@@ -1430,9 +1430,9 @@ module Typed = Template (struct
 
   type mod_subscript_tycon_ext = void
 
-  module VarExt = WithDefinitionLoc(WithType)
+  module VarExt = WithDefinitionLoc (WithType)
   module VarPatExt = WithType
-  module VariantPatExt = WithType
+  module VariantPatExt = SubLocationWithType
   module DataConExt = WithType
   module SubscriptExt = SubLocationWithType
   module ModSubscriptExt = WithType
@@ -1464,9 +1464,9 @@ module Renamed = Template (struct
 
   type mod_subscript_tycon_ext = void
 
-  module VarExt = WithDefinitionLoc(LocOnly)
+  module VarExt = WithDefinitionLoc (LocOnly)
   module VarPatExt = LocOnly
-  module VariantPatExt = LocOnly
+  module VariantPatExt = SubLocation
   module DataConExt = LocOnly
   module SubscriptExt = SubLocation
   module ModSubscriptExt = LocOnly

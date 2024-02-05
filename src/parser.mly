@@ -110,6 +110,9 @@ semis(p):
 ident_with_loc:
     | IDENT { (loc $startpos $endpos, $1) }
 
+constructor_with_loc:
+    | CONSTRUCTOR { (loc $startpos $endpos, $1) }
+
 export_item:
     | IDENT { ExportVal (loc $startpos $endpos, $1) }
     | CONSTRUCTOR { ExportConstructor (loc $startpos $endpos, $1) }
@@ -321,11 +324,11 @@ pattern3:
 pattern_leaf:
     | "[" sep_trailing(COMMA, pattern) "]" { ListPat(loc $startpos $endpos, $2) }
     | IDENT { VarPat(loc $startpos $endpos, $1) }
-    | CONSTRUCTOR "(" pattern ")" { DataPat(loc $startpos $endpos, $1, $3) }
-    | CONSTRUCTOR "(" sep_trailing(COMMA, pattern) ")"      { VariantPat(loc $startpos $endpos, $1, $3) }
-    | CONSTRUCTOR                                           { VariantPat(loc $startpos $endpos, $1, []) }
-    | "`" CONSTRUCTOR "(" sep_trailing(COMMA, pattern) ")"  { VariantPat(loc $startpos $endpos, $2, $4) }
-    | "`" CONSTRUCTOR                                       { VariantPat(loc $startpos $endpos, $2, []) }        
+    | constructor_with_loc "(" pattern ")" { DataPat({ main = loc $startpos $endpos; subloc = fst $1 }, snd $1, $3) }
+    | constructor_with_loc "(" sep_trailing(COMMA, pattern) ")"      { VariantPat({ main = loc $startpos $endpos; subloc = fst $1}, snd $1, $3) }
+    | constructor_with_loc                                           { VariantPat({ main = loc $startpos $endpos; subloc = fst $1}, snd $1, []) }
+    | "`" constructor_with_loc "(" sep_trailing(COMMA, pattern) ")"  { VariantPat({ main = loc $startpos $endpos; subloc = fst $2}, snd $2, $4) }
+    | "`" constructor_with_loc                                       { VariantPat({ main = loc $startpos $endpos; subloc = fst $2}, snd $2, []) }        
     | INT { NumPat(loc $startpos $endpos, float_of_int $1) }
     | FLOAT { NumPat(loc $startpos $endpos, $1) }
     | STRING { StringPat(loc $startpos $endpos, $1) }

@@ -85,10 +85,11 @@ for(files, \file -> {
     };
 })
 
+let disabled = {let x = !find "test/categories" "-type" "f" "-name" "*.disabled"; x} | wc "-l"
 if errors! == 0 then {
-    print("\e[32m\e[1mAll test passed.\e[0m")
+    print("\e[32m\e[1mAll test passed. (${disabled} disabled)\e[0m")
     ()
 } else {
-    print("\e[31m${toString(errors!)} TESTS FAILED!\e[0m")
+    print("\e[31m${toString(errors!)} TESTS FAILED! (" ~ disabled ~ " disabled)\e[0m")
     exit(errors!)
 }

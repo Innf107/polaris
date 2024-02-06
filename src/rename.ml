@@ -39,7 +39,7 @@ module RenameScope = struct
   open RenameMap
 
   type t = {
-    variables : name RenameMap.t;
+    variables : (name * loc) RenameMap.t;
     module_vars : (name * t) RenameMap.t;
     ty_vars : name RenameMap.t;
     (* Polaris does not have a Haskell-style kind system, so we
@@ -54,7 +54,7 @@ module RenameScope = struct
     {
       variables =
         RenameMap.mapi
-          (fun name _ -> { name; index = Name.primop_index })
+          (fun name _ -> ({ name; index = Name.primop_index }, Loc.internal))
           Primops.primops;
       module_vars = RenameMap.empty;
       ty_vars = RenameMap.empty;
@@ -67,8 +67,9 @@ module RenameScope = struct
       type_classes = NameMap.empty;
     }
 
-  let insert_var (old : string) (renamed : name) (scope : t) : t =
-    { scope with variables = add old renamed scope.variables }
+  let insert_var (old : string) (renamed : name) (definition_loc : loc)
+      (scope : t) : t =
+    { scope with variables = add old (renamed, definition_loc) scope.variables }
 
   let insert_mod_var (old : string) (renamed : name) (contents : t) (scope : t)
       : t =
@@ -103,7 +104,7 @@ module RenameScope = struct
         NameMap.add class_name (params, method_names) scope.type_classes;
     }
 
-  let lookup_var (scope : t) (loc : loc) (var : string) : name =
+  let lookup_var (scope : t) (loc : loc) (var : string) : name * loc =
     try find var scope.variables with
     | Not_found -> raise (RenameError (VarNotFound (var, loc)))
 
@@ -321,14 +322,14 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t)
         | Some bound_var -> bound_var
         | None -> fresh_var var
       in
-      (Renamed.VarPat (loc, var'), insert_var var var', Fun.id)
+      (Renamed.VarPat (loc, var'), insert_var var var' loc, Fun.id)
   | AsPat (loc, pattern, string_name) ->
       let pattern, env_trans, ty_trans =
         rename_pattern or_bound_variables scope pattern
       in
       let name = fresh_var string_name in
       ( AsPat (loc, pattern, name),
-        insert_var string_name name << env_trans,
+        insert_var string_name name loc << env_trans,
         ty_trans )
   | ConsPat (loc, x, xs) ->
       let x', x_trans, x_ty_trans = rename_pattern or_bound_variables scope x in
@@ -352,6 +353,7 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t)
         Util.compose pats_ty_trans )
   | NumPat (loc, f) -> (NumPat (loc, f), (fun x -> x), fun x -> x)
   | StringPat (loc, literal) -> (StringPat (loc, literal), Fun.id, Fun.id)
+  | BoolPat (loc, literal) -> (BoolPat (loc, literal), Fun.id, Fun.id)
   | OrPat (loc, p1, p2) ->
       let p1', p1_trans, p1_ty_trans =
         rename_pattern or_bound_variables scope p1
@@ -360,9 +362,20 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t)
       (* Hacky way to add the variables bound in p1 to the ones bound in the surrounding scope.
          We need this since any variable bound in the first branch should be resolved to exactly the same name
          in the second branch. *)
+      (* TODO: Ugh *)
       let or_bound_variables =
-        (p1_trans RenameScope.{ empty with variables = or_bound_variables })
-          .variables
+        RenameMap.map
+          (fun (name, _) -> name)
+          (p1_trans
+             RenameScope.
+               {
+                 empty with
+                 variables =
+                   RenameMap.map
+                     (fun name -> (name, Loc.internal))
+                     or_bound_variables;
+               })
+            .variables
       in
 
       let p2', p2_trans, p2_ty_trans =
@@ -387,7 +400,7 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t)
               scope_transformer,
               type_transformer )
         | Some (constructor_name, ExceptionSort) ->
-            ( ExceptionDataPat (loc, constructor_name, [ pattern ]),
+            ( ExceptionDataPat (loc.main, constructor_name, [ pattern ]),
               scope_transformer,
               type_transformer )
         | None ->
@@ -405,9 +418,10 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t)
         | Some (constructor_name, NewtypeConSort) ->
             raise
               (RenameError
-                 (TooManyArgsToDataConPattern (constructor_name, patterns, loc)))
+                 (TooManyArgsToDataConPattern
+                    (constructor_name, patterns, loc.main)))
         | Some (constructor_name, ExceptionSort) ->
-            ( ExceptionDataPat (loc, constructor_name, patterns),
+            ( ExceptionDataPat (loc.main, constructor_name, patterns),
               Util.compose scope_transformers,
               Util.compose type_transformers )
         | None ->
@@ -454,7 +468,8 @@ let rec rename_mod_expr :
           let scope =
             RenameScope.empty
             |> StringMap.fold
-                 (fun name renamed r -> RenameScope.insert_var name renamed r)
+                 (fun name (renamed, loc) r ->
+                   RenameScope.insert_var name renamed loc r)
                  mod_exports.exported_variables
             |> StringMap.fold
                  (fun name (renamed, arg_count, sort) r ->
@@ -515,7 +530,9 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
     (scope : RenameScope.t) (expr : Parsed.expr) : Renamed.expr =
   let open RenameScope in
   match expr with
-  | Var (loc, var_name) -> Var (loc, lookup_var scope loc var_name)
+  | Var (loc, var_name) ->
+      let renamed, definition_loc = lookup_var scope loc var_name in
+      Var ((loc, definition_loc), renamed)
   | VariantConstructor (loc, name, args) ->
       let args = List.map (rename_expr exports scope) args in
       VariantConstructor (loc, name, args)
@@ -594,7 +611,9 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
         RenameScope.lookup_mod_var scope loc mod_name
       in
 
-      let key_name = RenameScope.lookup_var module_export_scope loc key in
+      let key_name, definition_loc =
+        RenameScope.lookup_var module_export_scope loc key
+      in
       ModSubscript (loc, mod_name, key_name)
   | Subscript (loc, expr, key) ->
       Subscript (loc, rename_expr exports scope expr, key)
@@ -748,18 +767,18 @@ and rename_seq_state
         rename_seq_state exports (scope_trans scope) exprs
       in
       (LetSeq (loc, p', e') :: exprs', res_scope)
-  | LetRecSeq (loc, mty, x, patterns, e) :: exprs ->
+  | LetRecSeq (locs, mty, x, patterns, e) :: exprs ->
       let x' = fresh_var x in
       let patterns', scope_trans, _param_ty_trans =
         rename_patterns scope patterns
       in
-      let scope' = insert_var x x' scope in
+      let scope' = insert_var x x' locs.subloc scope in
 
       let mty', type_trans =
         match mty with
         | None -> (None, Fun.id)
         | Some ty ->
-            let ty', ty_trans = rename_type loc.main scope ty in
+            let ty', ty_trans = rename_type locs.main scope ty in
             (Some ty', ty_trans)
       in
       let inner_scope = type_trans (scope_trans scope') in
@@ -769,7 +788,7 @@ and rename_seq_state
          (See Note [PatternTypeTransformers] and the case for `LetRec`) *)
       let e' = rename_expr exports inner_scope e in
       let exprs', res_scope = rename_seq_state exports scope' exprs in
-      (LetRecSeq (loc, mty', x', patterns', e') :: exprs', res_scope)
+      (LetRecSeq (locs, mty', x', patterns', e') :: exprs', res_scope)
   | LetEnvSeq (loc, x, e) :: exprs ->
       let e = rename_expr exports scope e in
       let exprs, scope = rename_seq_state exports scope exprs in
@@ -865,21 +884,21 @@ and rename_seq_state
           (fun (name, ty) ->
             let name' = fresh_var name in
             let ty', _ = rename_type loc method_scope ty in
-            (name', ty'))
+            (name', ty', loc))
           methods
       in
 
       let method_map =
         StringMap.of_seq
           (Seq.map
-             (fun (name, ty) -> (name.name, (name, ty)))
+             (fun (name, ty, _) -> (name.name, (name, ty)))
              (List.to_seq methods'))
       in
 
       let scope =
         Util.compose
           (List.map
-             (fun (name, _) scope -> insert_var name.name name scope)
+             (fun (name, _, loc) scope -> insert_var name.name name loc scope)
              methods')
           (insert_type_constructor class_name class_name' (List.length params)
              ClassSort
@@ -889,7 +908,11 @@ and rename_seq_state
       in
 
       let exprs, scope = rename_seq_state exports scope exprs in
-      ( LetClassSeq (loc, class_name', List.map snd renamed_params, methods')
+      ( LetClassSeq
+          ( loc,
+            class_name',
+            List.map snd renamed_params,
+            List.map (fun (name, ty, _loc) -> (name, ty)) methods' )
         :: exprs,
         scope )
   | LetInstanceSeq (loc, parameters, entailed, class_name, args, methods)
@@ -977,7 +1000,7 @@ and rename_seq_state
       let rename_param scope (param_name, ty) =
         let param_name' = fresh_var param_name in
         let ty, _ty_transformer = rename_type loc scope ty in
-        (insert_var param_name param_name' scope, (param_name', ty))
+        (insert_var param_name param_name' loc scope, (param_name', ty))
       in
       let message_scope, params =
         List.fold_left_map rename_param scope params
@@ -1010,19 +1033,27 @@ let rename_option (scope : RenameScope.t) (flag_def : Parsed.flag_def) :
     match flag_def.args with
     | Varargs name ->
         let name' = fresh_var name in
-        (Renamed.Varargs name', RenameScope.insert_var name name' scope)
+        (* TODO: Use the actual locations here *)
+        ( Renamed.Varargs name',
+          RenameScope.insert_var name name' Loc.internal scope )
     | Switch name ->
         let name' = fresh_var name in
-        (Renamed.Switch name', RenameScope.insert_var name name' scope)
+        ( Renamed.Switch name',
+          RenameScope.insert_var name name' Loc.internal scope )
     | Named args ->
         let args' = List.map fresh_var args in
-        let scope = List.fold_right2 RenameScope.insert_var args args' scope in
+        let scope =
+          List.fold_right2
+            (fun original renamed ->
+              RenameScope.insert_var original renamed Loc.internal)
+            args args' scope
+        in
         (Named args', scope)
     | NamedDefault args ->
         let args' = List.map (fun (x, def) -> (fresh_var x, def)) args in
         let scope =
           List.fold_right2
-            (fun (x, _) (y, _) -> RenameScope.insert_var x y)
+            (fun (x, _) (y, _) -> RenameScope.insert_var x y Loc.internal)
             args args' scope
         in
         (NamedDefault args', scope)
@@ -1036,7 +1067,8 @@ let rename_exports :
     begin
       function
       | Parsed.ExportVal (loc, name) ->
-          Renamed.ExportVal (loc, RenameScope.lookup_var scope loc name)
+          let name, definition_loc = RenameScope.lookup_var scope loc name in
+          Renamed.ExportVal (loc, name)
       | Parsed.ExportConstructor (loc, name) -> (
           match RenameMap.find_opt name scope.ty_constructors with
           | Some (renamed, _, _sort) -> begin

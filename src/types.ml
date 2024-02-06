@@ -1193,6 +1193,7 @@ let rec infer_pattern :
         TuplePat (loc, patterns) )
   | NumPat (loc, number) -> (Number, Fun.id, NumPat (loc, number))
   | StringPat (loc, literal) -> (String, Fun.id, StringPat (loc, literal))
+  | BoolPat (loc, literal) -> (Bool, Fun.id, BoolPat (loc, literal))
   | OrPat (loc, left, right) ->
       let left_ty, left_trans, left = infer_pattern env allow_polytype left in
       (* TODO: Make sure both sides bind the same set of variables with the same types *)
@@ -1209,7 +1210,7 @@ let rec infer_pattern :
         | Some (level, vars, ty) -> (level, vars, ty)
         | None ->
             panic __LOC__
-              (Loc.pretty loc ^ ": Data constructor not found in typechecker: '"
+              (Loc.pretty loc.main ^ ": Data constructor not found in typechecker: '"
               ^ Name.pretty constructor_name
               ^ "'. This should have been caught earlier!")
       in
@@ -1391,6 +1392,7 @@ and check_pattern :
   | NumPat _, _ -> defer_to_inference ()
   | StringPat (loc, literal), String -> (Fun.id, StringPat (loc, literal))
   | StringPat _, _ -> defer_to_inference ()
+  | BoolPat _, _ -> defer_to_inference ()
   | OrPat (loc, left, right), _ ->
       let left_trans, left =
         check_pattern env allow_polytype left expected_ty
@@ -1482,12 +1484,12 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
   trace_tc
     (lazy (level_prefix env ^ "inferring expression '" ^ pretty expr ^ "'"));
   match expr with
-  | Var (loc, x) -> begin
+  | Var ((loc, definition_loc), x) -> begin
       match NameMap.find_opt x env.local_types with
       | Some ty ->
           let instantiated_type, targets = instantiate loc env ty in
           ( instantiated_type,
-            apply_targets loc targets (Typed.Var ((loc, ty), x)) )
+            apply_targets loc targets (Typed.Var (((loc, ty),  definition_loc), x)) )
       | None ->
           panic __LOC__
             ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")

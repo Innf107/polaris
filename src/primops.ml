@@ -18,6 +18,7 @@ let primops =
          ("print", forall (fun a -> [ a ] --> Ty.unit));
          ("lines", [ String ] --> List String);
          ("split", [ String; String ] --> List String);
+         ("chars", [ String ] --> List String);
          ("replace", [ String; String; String ] --> String);
          ("regexpReplace", [ String; String; String ] --> String);
          ("regexpMatch", [ String; String ] --> List String);
@@ -49,6 +50,8 @@ let primops =
          ("ensure", [ String ] --> Ty.unit);
          ("status", [] --> Number);
          ("mod", [ Number; Number ] --> Number);
+         ("floor", [ Number ] --> Number);
+         ("ceil", [ Number ] --> Number);
          ("exceptionMessage", [ Exception ] --> String);
        ])
 

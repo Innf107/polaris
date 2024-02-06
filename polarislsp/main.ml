@@ -35,8 +35,9 @@ let on_initialize =
     {|{ 
     "capabilities": {
       "hoverProvider": true,
+      "definitionProvider": true,
       "textDocumentSync": {
-        "openClose": 1,
+        "openClose": true,
         "change": 1
       }
     }, 
@@ -47,6 +48,14 @@ let on_initialize =
   |}
 
 let filename_of_uri file = Base.String.chop_prefix_exn file ~prefix:"file://"
+
+let range_of_loc loc =
+  let open Polaris.Loc in
+  Lsp.
+    {
+      start = { line = loc.start_line - 1; character = loc.start_col - 1 };
+      end_ = { line = loc.end_line - 1; character = loc.end_col - 1 };
+    }
 
 let process_document model_ref file_uri content =
   let filename = filename_of_uri file_uri in
@@ -119,6 +128,22 @@ let on_hover model_ref (hover_params : Lsp.hover_params) =
             ("`" ^ name ^ " : " ^ Polaris.Syntax.Typed.pretty_type ty)
       | None -> no_response ())
 
+let on_definition model_ref (params : Lsp.definition_params) =
+  let no_response () = `Null in
+  match !model_ref with
+  | None -> no_response ()
+  | Some model ->
+      let file_uri = params.textDocument.uri in
+      let file = filename_of_uri file_uri in
+      begin
+        match Model.find_definition_at ~file params.position model with
+        | Some (_, definition_loc) ->
+            let open Polaris.Loc in
+            Lsp.yojson_of_location
+              { uri = file_uri; range = range_of_loc definition_loc }
+        | None -> no_response ()
+      end
+
 let () =
   Eio_posix.run
     begin
@@ -133,6 +158,7 @@ let () =
             match Lsp.parse_client_request request_method body with
             | Some Initialize -> on_initialize
             | Some (Hover params) -> on_hover model_ref params
+            | Some (Definition params) -> on_definition model_ref params
             | None -> Jsonrpc.unsupported_method ()
             | exception
                 Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (error, json) ->

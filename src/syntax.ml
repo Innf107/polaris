@@ -171,16 +171,17 @@ module Template = struct
     | TuplePat of loc * pattern list
     | NumPat of loc * float
     | StringPat of loc * string
+    | BoolPat of loc * bool
     | OrPat of loc * pattern * pattern
     | TypePat of loc * pattern * ty
-    | DataPat of loc * name * pattern
+    | DataPat of SubLocation.t * name * pattern
     | ExceptionDataPat of loc * name * pattern list
     | VariantPat of VariantPatExt.t * string * pattern list
 
   type class_constraint = ty make_class_constraint
 
   type module_exports = {
-    exported_variables : name StringMap.t;
+    exported_variables : (name * loc) StringMap.t;
     exported_variable_types : ty NameMap.t;
     exported_ty_constructors : (name * int * type_constructor_sort) StringMap.t;
     exported_data_definitions : (name list * ty) NameMap.t;
@@ -534,6 +535,7 @@ module Template = struct
         "(" ^ String.concat ", " (List.map pretty_pattern pats) ^ ")"
     | NumPat (_, f) -> Float.to_string f
     | StringPat (_, literal) -> "\"" ^ literal ^ "\""
+    | BoolPat (_, literal) -> string_of_bool literal
     | OrPat (_, p1, p2) ->
         "(" ^ pretty_pattern p1 ^ " | " ^ pretty_pattern p2 ^ ")"
     | TypePat (_, pat, ty) ->
@@ -766,9 +768,10 @@ module Template = struct
     | TuplePat (loc, _)
     | NumPat (loc, _)
     | StringPat (loc, _)
+    | BoolPat (loc, _)
     | OrPat (loc, _, _)
     | TypePat (loc, _, _)
-    | DataPat (loc, _, _)
+    | DataPat ({ main = loc; _ }, _, _)
     | ExceptionDataPat (loc, _, _) ->
         loc
 
@@ -1300,6 +1303,7 @@ module Template = struct
               (* Non-recursive *)
               | NumPat (loc, num) -> (NumPat (loc, num), state)
               | StringPat (loc, num) -> (StringPat (loc, num), state)
+              | BoolPat (loc, bool) -> (BoolPat (loc, bool), state)
               (* Recursive *)
               | VarPat (loc, name) ->
                   let name, state = self#traverse_name state name in
@@ -1609,6 +1613,18 @@ module EmptyExt = struct
   let traverse_ty state _ () = ((), state)
 end
 
+module type Ext = sig
+  type t
+
+  val loc : t -> loc
+
+  val traverse_ty :
+    'state ->
+    ('state -> FullTypeDefinition.ty -> FullTypeDefinition.ty * 'state) ->
+    t ->
+    t * 'state
+end
+
 module LocOnly = struct
   type t = loc
 
@@ -1644,6 +1660,16 @@ module WithType = struct
   let traverse_ty state f (loc, ty) =
     let ty, state = f state ty in
     ((loc, ty), state)
+end
+
+module WithDefinitionLoc (M : Ext) = struct
+  type t = M.t * loc
+
+  let loc (t, _) = M.loc t
+
+  let traverse_ty state f (t, definition_loc) =
+    let t, state = M.traverse_ty state f t in
+    ((t, definition_loc), state)
 end
 
 module SubLocationWithType = struct
@@ -1687,7 +1713,7 @@ module Parsed = Template (struct
 
   module VarExt = LocOnly
   module VarPatExt = LocOnly
-  module VariantPatExt = LocOnly
+  module VariantPatExt = SubLocation
   module DataConExt = LocOnly
   module SubscriptExt = SubLocation
   module ModSubscriptExt = LocOnly
@@ -1725,9 +1751,9 @@ module Typed = Template (struct
 
   type mod_subscript_tycon_ext = void
 
-  module VarExt = WithType
+  module VarExt = WithDefinitionLoc (WithType)
   module VarPatExt = WithType
-  module VariantPatExt = WithType
+  module VariantPatExt = SubLocationWithType
   module DataConExt = WithType
   module SubscriptExt = SubLocationWithType
   module ModSubscriptExt = WithType
@@ -1804,9 +1830,9 @@ module Renamed = Template (struct
 
   type mod_subscript_tycon_ext = void
 
-  module VarExt = LocOnly
+  module VarExt = WithDefinitionLoc (LocOnly)
   module VarPatExt = LocOnly
-  module VariantPatExt = LocOnly
+  module VariantPatExt = SubLocation
   module DataConExt = LocOnly
   module SubscriptExt = SubLocation
   module ModSubscriptExt = LocOnly

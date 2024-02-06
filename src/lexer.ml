@@ -5,6 +5,7 @@ type lex_error =
   | InvalidOperator of Syntax.loc * string
   | InvalidChar of Syntax.loc * char
   | UnterminatedString
+  | InvalidStringEscape of Syntax.loc * string
 
 exception LexError of lex_error
 
@@ -30,14 +31,25 @@ type lex_kind =
   | InConstructor of string
   | InOp of string
   | InString of {
-      str : string;
+      str : Buffer.t;
       is_single : bool;
       is_interp : bool;
     }
   | StringDollar of {
-      str : string;
+      str : Buffer.t;
       is_single : bool;
       is_interp : bool;
+    }
+  | StringEscape of {
+      str : Buffer.t;
+      is_single : bool;
+      is_interp : bool;
+    }
+  | StringHexEscape of {
+      str : Buffer.t;
+      is_single : bool;
+      is_interp : bool;
+      escape : string;
     }
   | InBangStart
   | InProgCall of string
@@ -293,12 +305,18 @@ let token (state : lex_state) (lexbuf : lexbuf) : Parser.token =
             continue ()
         | Some '"' ->
             set_state
-              (InString { str = ""; is_single = false; is_interp = false })
+              (InString
+                 {
+                   str = Buffer.create 16;
+                   is_single = false;
+                   is_interp = false;
+                 })
               state lexbuf;
             continue ()
         | Some '\'' ->
             set_state
-              (InString { str = ""; is_single = true; is_interp = false })
+              (InString
+                 { str = Buffer.create 16; is_single = true; is_interp = false })
               state lexbuf;
             continue ()
         | Some '`' -> Parser.BACKTICK
@@ -328,7 +346,8 @@ let token (state : lex_state) (lexbuf : lexbuf) : Parser.token =
             | `Regular paren -> paren
             | `ClosedInterpolation is_single ->
                 set_state
-                  (InString { str = ""; is_single; is_interp = true })
+                  (InString
+                     { str = Buffer.create 16; is_single; is_interp = true })
                   state lexbuf;
                 INTERPOLATION_END
           end
@@ -386,7 +405,7 @@ let token (state : lex_state) (lexbuf : lexbuf) : Parser.token =
       end
     | InConstructor ident -> begin
         match peek_char lexbuf with
-        | Some c when is_ident c ->
+        | Some c when is_constructor c ->
             let _ = next_char lexbuf in
             set_state (InConstructor (ident ^ string_of_char c)) state lexbuf;
             continue ()
@@ -401,41 +420,41 @@ let token (state : lex_state) (lexbuf : lexbuf) : Parser.token =
         match next_char lexbuf with
         | Some '"' when not is_single ->
             if is_interp then begin
-              match str with
-              | "" ->
+              match Buffer.length str with
+              | 0 ->
                   set_state Default state lexbuf;
                   INTERP_STRING_END
               | _ ->
                   set_state (Defer [ INTERP_STRING_END ]) state lexbuf;
-                  STRING_COMPONENT str
+                  STRING_COMPONENT (Buffer.contents str)
             end
             else begin
               set_state Default state lexbuf;
-              STRING str
+              STRING (Buffer.contents str)
             end
         | Some '\'' when is_single ->
             if is_interp then begin
-              match str with
-              | "" ->
+              match Buffer.length str with
+              | 0 ->
                   set_state Default state lexbuf;
                   INTERP_STRING_END
               | _ ->
                   set_state (Defer [ INTERP_STRING_END ]) state lexbuf;
-                  STRING_COMPONENT str
+                  STRING_COMPONENT (Buffer.contents str)
             end
             else begin
               set_state Default state lexbuf;
-              STRING str
+              STRING (Buffer.contents str)
             end
         | Some '$' ->
             (* This *might* be string interpolation but we don't know for sure yet *)
             set_state (StringDollar { str; is_single; is_interp }) state lexbuf;
             continue ()
+        | Some '\\' ->
+            set_state (StringEscape { str; is_single; is_interp }) state lexbuf;
+            continue ()
         | Some c ->
-            (* TODO: This is quadratic wtf *)
-            set_state
-              (InString { str = str ^ string_of_char c; is_single; is_interp })
-              state lexbuf;
+            Buffer.add_char str c;
             continue ()
         | None -> raise (LexError UnterminatedString)
       end
@@ -446,17 +465,104 @@ let token (state : lex_state) (lexbuf : lexbuf) : Parser.token =
             open_interpolation_block is_single state;
 
             let next_state =
-              match str with
-              | "" -> Defer [ INTERPOLATION_START ]
-              | _ -> Defer [ STRING_COMPONENT str; INTERPOLATION_START ]
+              match Buffer.length str with
+              | 0 -> Defer [ INTERPOLATION_START ]
+              | _ ->
+                  Defer
+                    [
+                      STRING_COMPONENT (Buffer.contents str);
+                      INTERPOLATION_START;
+                    ]
             in
             set_state next_state state lexbuf;
             INTERP_STRING_START
-        (* It's not string interpolation so we defer to regular string handling *)
+        (* It's not string interpolation so we defer to regular string handling
+           (and don't consume the peeked character!) *)
         | _ ->
+            Buffer.add_char str '$';
+            set_state (InString { str; is_single; is_interp }) state lexbuf;
+            continue ()
+      end
+    | StringEscape { str; is_single; is_interp } -> begin
+        match next_char lexbuf with
+        | None -> raise (LexError UnterminatedString)
+        | Some 'x' ->
             set_state
-              (InString { str = str ^ "$"; is_single; is_interp })
+              (StringHexEscape { str; is_single; is_interp; escape = "" })
               state lexbuf;
+            continue ()
+        | Some char ->
+            let escaped =
+              begin
+                match char with
+                | 'a' -> "\x07"
+                | 'b' -> "\x08"
+                | 'e' -> "\x1b"
+                | 'f' -> "\x0C"
+                | 'n' -> "\n"
+                | 'r' -> "\r"
+                | 't' -> "\t"
+                | 'v' -> "\x0B"
+                | '\'' -> "'"
+                | '"' -> "\""
+                | '$' -> "$"
+                | '\\' -> "\\"
+                | _ ->
+                    raise
+                      (LexError
+                         (InvalidStringEscape
+                            (get_loc lexbuf, string_of_char char)))
+              end
+            in
+            Buffer.add_string str escaped;
+            set_state (InString { str; is_single; is_interp }) state lexbuf;
+            continue ()
+      end
+    | StringHexEscape { str; is_single; is_interp; escape } -> begin
+        match peek_char lexbuf with
+        | Some (('0' .. '9' | 'a' .. 'f' | 'A' .. 'F') as digit)
+        (* Unicode escapes should be at most 6 characters *)
+          when String.length escape <= 5 ->
+            let _ = next_char lexbuf in
+            set_state
+              (StringHexEscape
+                 {
+                   str;
+                   is_single;
+                   is_interp;
+                   escape = escape ^ string_of_char digit;
+                 })
+              state lexbuf;
+            continue ()
+        | _ ->
+            let parse_hex str =
+              let rec go i weight =
+                if i < 0 then 0
+                else
+                  let digit_value =
+                    match str.[i] with
+                    | '0' .. '9' as char -> int_of_char char - int_of_char '0'
+                    | 'a' .. 'f' as char ->
+                        10 + int_of_char char - int_of_char 'a'
+                    | 'A' .. 'F' as char ->
+                        10 + int_of_char char - int_of_char 'A'
+                    | char ->
+                        panic __LOC__
+                          ("invalid hex digit lexed: " ^ string_of_char char)
+                  in
+                  (digit_value * weight) + go (i - 1) (weight * 16)
+              in
+              go (String.length str - 1) 1
+            in
+            let uchar =
+              try Uchar.of_int (parse_hex escape) with
+              | Invalid_argument _ ->
+                  raise_notrace
+                    (LexError
+                       (InvalidStringEscape (get_loc lexbuf, "x" ^ escape)))
+            in
+            Buffer.add_utf_8_uchar str uchar;
+            set_state (InString { str; is_single; is_interp }) state lexbuf;
             continue ()
       end
     | InBangStart -> begin

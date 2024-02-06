@@ -11,6 +11,7 @@ type pattern_error =
   | ExceptionWithoutWildcard
   | NumWithoutWildcard
   | StringWithoutWildcard
+  | BoolWithout of bool
   | VariantNonExhaustive of string list
 
 exception PatternError of pattern_error
@@ -51,7 +52,8 @@ let as_pattern_matrix patterns =
     | Typed.TuplePat (loc, elements) ->
         let* elements = Classes.MonadList.traverse flatten_pattern elements in
         [ Typed.TuplePat (loc, elements) ]
-    | (Typed.NumPat _ | Typed.StringPat _) as pattern -> [ pattern ]
+    | (Typed.NumPat _ | Typed.StringPat _ | Typed.BoolPat _) as pattern ->
+        [ pattern ]
     | Typed.ExceptionDataPat (loc, name, patterns) ->
         let* patterns = Classes.MonadList.traverse flatten_pattern patterns in
         [ Typed.ExceptionDataPat (loc, name, patterns) ]
@@ -77,6 +79,7 @@ let wildcard_like = function
   | TuplePat _
   | NumPat _
   | StringPat _
+  | BoolPat _
   | ExceptionDataPat _
   | VariantPat _ ->
       false
@@ -88,6 +91,7 @@ let sub_patterns ?(count = 0) = function
   | TuplePat (_, elements) -> elements
   | NumPat _ -> []
   | StringPat _ -> []
+  | BoolPat _ -> []
   | ExceptionDataPat (_, _, patterns) -> patterns
   | VariantPat (_, _, patterns) -> patterns
   | AsPat _ -> panic __LOC__ "as pattern found after simplification"
@@ -151,6 +155,15 @@ let check_and_close_column ~close_variant = function
       | ExceptionDataPat _ -> raise (PatternError ExceptionWithoutWildcard)
       | NumPat _ -> raise (PatternError NumWithoutWildcard)
       | StringPat _ -> raise (PatternError StringWithoutWildcard)
+      | BoolPat (_, literal) ->
+          if
+            List.exists
+              (function
+                | Typed.BoolPat (_, other) when other = not literal -> true
+                | _ -> false)
+              remaining
+          then ()
+          else raise (PatternError (BoolWithout (not literal)))
       | ConsPat _ ->
           if
             List.exists
@@ -181,7 +194,7 @@ let check_and_close_column ~close_variant = function
                 StringSet.of_seq (Array.to_seq (Array.map fst constructors))
             | ty ->
                 panic __LOC__
-                  (Loc.pretty loc ^ ": variant pattern with non-variant type: "
+                  (Loc.pretty loc.main ^ ": variant pattern with non-variant type: "
                  ^ Typed.pretty_type ty)
           in
           let rec missing_constructors variant_constructors = function
@@ -192,7 +205,7 @@ let check_and_close_column ~close_variant = function
                   remaining
             | pattern :: _ ->
                 panic __LOC__
-                  (Loc.pretty loc
+                  (Loc.pretty loc.main
                  ^ ": non-variant and non-wildcard pattern in variant pattern \
                     match")
           in
@@ -318,6 +331,7 @@ let check_variant_refutability : Typed.pattern -> (path * string) option =
     | ListPat _
     | NumPat _
     | StringPat _
+    | BoolPat _
     | ExceptionDataPat _ ->
         `Refutable
     | OrPat (_, left, right) -> begin

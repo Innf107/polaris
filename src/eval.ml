@@ -331,6 +331,8 @@ let rec match_pat_opt (pat : Typed.pattern) (scrut : value) :
   | NumPat (_, f1), NumV f2 when Float.equal f1 f2 -> Some (fun x -> x)
   | StringPat (_, literal), StringV str when String.equal literal str ->
       Some Fun.id
+  | BoolPat (_, expected), BoolV value when Bool.equal expected value ->
+      Some Fun.id
   | OrPat (_, p1, p2), v -> begin
       match match_pat_opt p1 v with
       | Some t -> Some t
@@ -420,8 +422,9 @@ let raise_command_failure_exception env loc program program_args exit_code
                   (List.map
                      (fun arg -> Value.pretty (StringV arg))
                      program_args)
-              ^ if stdout <> "" then "Output: " ^ Util.abbreviate stdout else ""
-              ) )))
+              ^
+              if stdout <> "" then "\n\nOutput: " ^ Util.abbreviate stdout
+              else "") )))
 
 (* This returns a runtime module *as well as a transformation for the ambient environment*.
    This is necessary since exceptions are flattened by the renamer so this needs to know about
@@ -537,7 +540,7 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
 and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
   let open Typed in
   match expr with
-  | Var ((loc, _ty), x) ->
+  | Var (((loc, _ty), _), x) ->
       if x.index = Name.primop_index then PrimOpV x.name
       else lookup_var env loc x
   | DataConstructor (loc, name) -> PartialDataConV name
@@ -1458,6 +1461,17 @@ and eval_primop ~cap env op args loc =
                     "Expected a single string",
                     loc :: env.call_trace )))
     end
+  | "chars" -> begin
+      match args with
+      | [ StringV arg ] ->
+          ListV
+            (List.of_seq
+               (Seq.map
+                  (fun char ->
+                    StringV (String.of_seq (Seq.cons char Seq.empty)))
+                  (String.to_seq arg)))
+      | _ -> panic __LOC__ "invalid arguments to 'chars' primop"
+    end
   | "split" -> begin
       match args with
       | [ _; StringV "" ] -> ListV []
@@ -1797,6 +1811,16 @@ and eval_primop ~cap env op args loc =
             (EvalError
                (PrimOpArgumentError
                   ("mod", args, "Expected two integers", loc :: env.call_trace)))
+    end
+  | "floor" -> begin
+    match args with
+    | [NumV x] -> NumV (floor x)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": floor: Non-number argument passed at runtime")
+    end
+  | "ceil" -> begin
+    match args with
+    | [NumV x] -> NumV (ceil x)
+    | _ -> panic __LOC__ (Loc.pretty loc ^ ": ceil: Non-number argument passed at runtime")
     end
   | "exceptionMessage" -> begin
       match args with

@@ -227,7 +227,7 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
             ("Runtime error: " ^ msg ^ "\n" ^ pretty_call_trace locs)
       | NonExhaustiveMatch (value, loc :: locs) ->
           print_fun (Some loc)
-            ("Non-exhaustive pattern match does not cover value: "
+            ("PANIC! (this is a bug, please report it)\nNon-exhaustive pattern match does not cover value: "
            ^ Value.pretty value)
       | ArgParseError msg -> print_fun None msg
       | EnsureFailed (path, loc :: locs) ->
@@ -246,6 +246,9 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
           print_fun (Some loc)
             ("Unexpected character "
             ^ text_style.identifier (Base.String.of_char char))
+      | InvalidStringEscape (loc, str) ->
+        print_fun (Some loc)
+          ("Invalid string escape code: " ^ text_style.emphasis ("\\" ^ str))
     end
   | TypeError (loc, err) ->
       print_fun (Some loc)
@@ -516,6 +519,9 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
                       ^ " is missing a wildcard case.\n"
                       ^ "    Pattern matching needs to handle every possible \
                          string."
+                  | BoolWithout missing ->
+                      "    Missing a pattern for "
+                      ^ text_style.emphasis (string_of_bool missing)
                   | VariantNonExhaustive constructors ->
                       "    Unhandled constructors:\n"
                       ^ String.concat "\n"

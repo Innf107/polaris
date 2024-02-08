@@ -284,6 +284,10 @@ let instantiate_type_alias : local_env -> name -> ty list -> ty =
     (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args)))
     underlying_type
 
+let normalize_alias env = function
+  | TypeAlias (name, arguments) -> instantiate_type_alias env name arguments
+  | ty -> ty
+
 let rec instantiate_with_function : local_env -> ty -> ty * (ty -> ty) =
  fun env ty ->
   match normalize_unif ty with
@@ -534,7 +538,8 @@ let rec infer_pattern :
         | Some (level, vars, ty) -> (level, vars, ty)
         | None ->
             panic __LOC__
-              (Loc.pretty loc.main ^ ": Data constructor not found in typechecker: '"
+              (Loc.pretty loc.main
+             ^ ": Data constructor not found in typechecker: '"
               ^ Name.pretty constructor_name
               ^ "'. This should have been caught earlier!")
       in
@@ -2143,7 +2148,7 @@ let solve_refine_variant loc env unify_state ty path variant result_type
         | Some mapped -> mapped
       end
     in
-    match (path, normalize_unif ty) with
+    match (path, normalize_alias env (normalize_unif ty)) with
     | [], VariantClosed constructors ->
         VariantClosed (remove_variant constructors)
     | [], VariantUnif (constructors, ty) ->

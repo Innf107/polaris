@@ -1898,7 +1898,7 @@ let solve_unify :
                        MissingRecordFields
                          (remaining1, remaining2, unify_context) ))
               else begin
-                let new_u, new_name = fresh_unif_raw_with env "µ" in
+                let new_u, new_name = fresh_unif_raw_with definition_env "µ" in
                 bind u1 name1
                   (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
                 bind u2 name2
@@ -1917,7 +1917,7 @@ let solve_unify :
                        MissingVariantConstructors
                          (remaining1, remaining2, unify_context) ))
               else begin
-                let new_u, new_name = fresh_unif_raw_with env "µ" in
+                let new_u, new_name = fresh_unif_raw_with definition_env "µ" in
 
                 bind u1 name1
                   (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
@@ -2050,6 +2050,12 @@ let solve_unify :
     | ty1, VariantSkol (_, (skolem_unique, skolem_level, skolem_name))
     | ty1, RecordSkol (_, (skolem_unique, skolem_level, skolem_name)) ->
         go ty1 (Skol (skolem_unique, skolem_level, skolem_name))
+    | VariantUnif ([||], (typeref, name)), ty2
+    | RecordUnif ([||], (typeref, name)), ty2 ->
+        go (Unif (typeref, name)) ty2
+    | ty1, VariantUnif (_, (typeref, name))
+    | ty1, RecordUnif (_, (typeref, name)) ->
+        go ty1 (Unif (typeref, name))    
     | RecordVar _, _
     | _, RecordVar _
     | VariantVar _, _

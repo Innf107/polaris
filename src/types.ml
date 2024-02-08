@@ -2042,9 +2042,14 @@ let solve_unify :
                  ( loc,
                    MissingVariantConstructors
                      (remaining1, remaining2, unify_context) )))
-        (* closed, skolem *)
-        (* skolem, closed *)
-        (* Unifying a skolem and closed record is always impossible so we don't need a dedicated case here. *)
+    (* If a record/variant doesn't mention any types we can remove the record/variant wrapper and process it as
+       a regular skolem. *)
+    | VariantSkol (_, (skolem_unique, skolem_level, skolem_name)), ty2
+    | RecordSkol (_, (skolem_unique, skolem_level, skolem_name)), ty2 ->
+        go (Skol (skolem_unique, skolem_level, skolem_name)) ty2
+    | ty1, VariantSkol (_, (skolem_unique, skolem_level, skolem_name))
+    | ty1, RecordSkol (_, (skolem_unique, skolem_level, skolem_name)) ->
+        go ty1 (Skol (skolem_unique, skolem_level, skolem_name))
     | RecordVar _, _
     | _, RecordVar _
     | VariantVar _, _

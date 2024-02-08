@@ -2044,8 +2044,8 @@ let solve_unify :
                      (remaining1, remaining2, unify_context) )))
     (* If a record/variant doesn't mention any types we can remove the record/variant wrapper and process it as
        a regular skolem. *)
-    | VariantSkol (_, (skolem_unique, skolem_level, skolem_name)), ty2
-    | RecordSkol (_, (skolem_unique, skolem_level, skolem_name)), ty2 ->
+    | VariantSkol ([||], (skolem_unique, skolem_level, skolem_name)), ty2
+    | RecordSkol ([||], (skolem_unique, skolem_level, skolem_name)), ty2 ->
         go (Skol (skolem_unique, skolem_level, skolem_name)) ty2
     | ty1, VariantSkol (_, (skolem_unique, skolem_level, skolem_name))
     | ty1, RecordSkol (_, (skolem_unique, skolem_level, skolem_name)) ->

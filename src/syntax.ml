@@ -124,7 +124,7 @@ module Template = struct
           VariantVar (Array.append fields fields2, var)
       | ty ->
           panic __LOC__
-            "Variant extension variable replaced with non-variant type"
+            ("Variant extension variable replaced with non-variant type")
 
     let rec normalize_unif : ty -> ty = function
       | Unif (typeref, name) as ty -> begin

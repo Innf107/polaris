@@ -196,6 +196,7 @@ let rename_type loc (scope : RenameScope.t) original_type =
       | VariantSkol _ ->
           panic __LOC__
             "Skolem row found after parsing. How did this happen wtf?"
+      | Unwrap ty -> Unwrap (rename_nonbinding scope ty)
     in
     match ty with
     | Parsed.Forall (tv, ty) ->

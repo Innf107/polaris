@@ -85,6 +85,7 @@ struct
        where mod_subscript_tycon_ext is instantiated to void *)
     | ModSubscriptTyCon of
         Ext.mod_subscript_tycon_ext * Ext.name * Ext.name * ty list
+    | Unwrap of ty
 end
 
 module Template = struct
@@ -124,7 +125,7 @@ module Template = struct
           VariantVar (Array.append fields fields2, var)
       | ty ->
           panic __LOC__
-            ("Variant extension variable replaced with non-variant type")
+            "Variant extension variable replaced with non-variant type"
 
     let rec normalize_unif : ty -> ty = function
       | Unif (typeref, name) as ty -> begin
@@ -445,6 +446,7 @@ module Template = struct
                     ^ ")")
                   fields))
         ^ " | " ^ pretty_name name ^ " >"
+    | Unwrap ty -> pretty_type ty ^ "!"
 
   let rec pretty_type ty =
     pretty_type_with (Lazy.force default_pretty_type_config) ty
@@ -1259,6 +1261,9 @@ module Template = struct
                   in
                   ( Ty.replace_variant_extension (Array.of_list fields) var,
                     state )
+              | Unwrap ty ->
+                  let ty, state = self#traverse_type state ty in
+                  (Unwrap ty, state)
             in
             self#ty state transformed
 

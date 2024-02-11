@@ -99,6 +99,12 @@ let run in_channel out_channel ~handler ~notification_handler =
               notification_handler ~notification_method:request_method
                 request_params
             with
+            | UnsupportedMethod ->
+                send_response out_channel
+                  (rpc_error
+                     ?data:(Some (`String request_method))
+                     `Null (-32601)
+                     ("Unsupported method: '" ^ request_method ^ "'"))
             | ParseError message ->
                 send_response out_channel
                   (rpc_error `Null (-32700) ("Parse error: " ^ message))

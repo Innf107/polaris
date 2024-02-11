@@ -354,6 +354,7 @@ ty:
 
 ty1:
     | "(" ")"                                               { Ty.unit }
+    | ty1 "!"                                               { Unwrap $1 }
     | ty2                                                   { $1 }
 
 ty2:    

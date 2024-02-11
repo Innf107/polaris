@@ -53,7 +53,11 @@ let primops =
          ("floor", [ Number ] --> Number);
          ("ceil", [ Number ] --> Number);
          ("exceptionMessage", [ Exception ] --> String);
-         ("compareString", [ String; String ] --> Number)
+         ( "compareString",
+           forall' (fun a ->
+               [ String; String ]
+               --> VariantVar
+                     ([| ("Less", []); ("Equal", []); ("Greater", []) |], a)) );
        ])
 
 let is_primop name = PrimOpMap.mem name primops

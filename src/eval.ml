@@ -1627,14 +1627,18 @@ and eval_primop ~cap env op args loc =
                   ("mod", args, "Expected two integers", loc :: env.call_trace)))
     end
   | "floor" -> begin
-    match args with
-    | [NumV x] -> NumV (floor x)
-    | _ -> panic __LOC__ (Loc.pretty loc ^ ": floor: Non-number argument passed at runtime")
+      match args with
+      | [ NumV x ] -> NumV (floor x)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": floor: Non-number argument passed at runtime")
     end
   | "ceil" -> begin
-    match args with
-    | [NumV x] -> NumV (ceil x)
-    | _ -> panic __LOC__ (Loc.pretty loc ^ ": ceil: Non-number argument passed at runtime")
+      match args with
+      | [ NumV x ] -> NumV (ceil x)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": ceil: Non-number argument passed at runtime")
     end
   | "exceptionMessage" -> begin
       match args with
@@ -1645,9 +1649,16 @@ and eval_primop ~cap env op args loc =
            ^ ": exceptionMessage: Non-exception passed at runtime")
     end
   | "compareString" -> begin
-    match args with
-    | [ StringV string1; StringV string2 ] -> NumV (float_of_int (String.compare string1 string2))
-    | _ -> panic __LOC__ (Loc.pretty loc ^ ": compareString: Non-strings passed at runtime")
+      match args with
+      | [ StringV string1; StringV string2 ] -> begin
+          match String.compare string1 string2 with
+          | x when x < 0 -> VariantConstructorV ("Less", [])
+          | x when x > 0 -> VariantConstructorV ("Greater", [])
+          | _ -> VariantConstructorV ("Equal", [])
+        end
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": compareString: Non-strings passed at runtime")
     end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 

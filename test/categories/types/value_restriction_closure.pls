@@ -16,6 +16,7 @@ let unsafeCoerce(x) = {
 
     match reference.read() {
         [y] -> y
+        _ -> fail("A")
     }
 }
 

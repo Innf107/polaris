@@ -7,6 +7,7 @@ let unsafeCoerce(x) = {
 
     match reference! {
         [y] -> y
+        _ -> fail("AA")
     }
 }
 

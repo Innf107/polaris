@@ -1,4 +1,4 @@
-test/categories/records/missing.pls:3:3: ERROR:
+test/categories/records/missing.pls:3:11: ERROR:
 Mismatched record fields.
 Missing mutual record fields '{ y : Number }'
                          and '()'
@@ -6,5 +6,5 @@ Missing mutual record fields '{ y : Number }'
     While trying to unify '{ x : Number, z : Number }'
                       and '{ x : Number, y : Number | ?µ }'
   | 
-3 | f({ x = 5, z = 6 })
-  |   ^^^^^^^^^^^^^^^^
+3 | let _ = f({ x = 5, z = 6 })
+  |           ^^^^^^^^^^^^^^^^

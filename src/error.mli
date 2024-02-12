@@ -6,12 +6,12 @@ type t =
   | SpecificParseError of Parserprelude.specific_parse_error
   | SysError of string
   | RenameError of Rename.rename_error
-  | TypeError of Loc.t * Types.type_error
+  | TypeErrors of (Loc.t * Types.type_error) list
   | EvalError of Eval.eval_error
 
 val handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a
 
 val pretty_error :
-  Errormessage.text_style -> (Loc.t option -> string -> 'a) -> t -> 'a
+  Errormessage.text_style -> (Loc.t option -> string -> unit) -> t -> unit
 
 val as_exn : ('a, t) result -> 'a

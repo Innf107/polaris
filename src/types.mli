@@ -20,7 +20,6 @@ type type_error =
   | FunctionsWithDifferentArgCounts of ty list * ty list * unify_context
   | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
   | IncorrectNumberOfArgsInLambda of int * ty list * ty
-  | NonProgCallInPipe of expr
   | MissingRecordFields of
       (string * ty) list * (string * ty) list * unify_context
   | MissingVariantConstructors of
@@ -42,7 +41,7 @@ type type_error =
   | NonInterpolatable of ty
   | AmbiguousClassConstraint of class_constraint * (name list * ty list) list
 
-exception TypeError of loc * type_error
+type errors
 
 type global_env = {
   var_types : Typed.ty NameMap.t;
@@ -60,6 +59,6 @@ val typecheck :
   Renamed.header ->
   Renamed.expr list ->
   global_env ->
-  global_env * Typed.header * Typed.expr list * (loc * type_error) list
+  (global_env * Typed.header * Typed.expr list, (loc * type_error) list) These.t
 
 val empty_env : global_env

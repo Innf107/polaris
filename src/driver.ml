@@ -110,10 +110,18 @@ let rec parse_rename_typecheck :
           print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~"
         end;
 
+        let ( let* ) = Result.bind in
+
         trace_driver (lazy "Typechecking...");
-        let type_env, typed_header, typed_exprs, type_errors =
-          Types.typecheck check_or_infer_top_level renamed_header renamed
-            type_env
+        let* type_env, typed_header, typed_exprs, type_errors =
+          match
+            Types.typecheck check_or_infer_top_level renamed_header renamed
+              type_env
+          with
+          | This (env, header, exprs) -> Ok (env, header, exprs, [])
+          | Both ((env, header, exprs), errors) ->
+              Ok (env, header, exprs, errors)
+          | That errors -> Error (Error.TypeErrors errors)
         in
 
         if options.print_typed then begin
@@ -149,11 +157,7 @@ let run_env :
                ?check_or_infer_top_level type_env)
         in
         match type_errors with
-        | _ :: _ ->
-            Error
-              (List.map
-                 (fun (loc, err) -> Error.TypeError (loc, err))
-                 type_errors)
+        | _ :: _ -> Error [ Error.TypeErrors type_errors ]
         | [] ->
             trace_driver (lazy "Evaluating...");
             let env = Eval.eval_header env renamed_header in

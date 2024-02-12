@@ -10,4 +10,5 @@ generalizeRef() := ["Oh no"]
 
 match generalizeRef()! {
     [x] -> print(x + 1)
+    _ -> fail("AA")
 }

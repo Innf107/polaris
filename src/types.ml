@@ -25,7 +25,6 @@ type type_error =
   | FunctionsWithDifferentArgCounts of ty list * ty list * unify_context
   | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
   | IncorrectNumberOfArgsInLambda of int * ty list * ty
-  | NonProgCallInPipe of expr
   | MissingRecordFields of
       (string * ty) list * (string * ty) list * unify_context
   | MissingVariantConstructors of
@@ -47,7 +46,17 @@ type type_error =
   | NonInterpolatable of ty
   | AmbiguousClassConstraint of class_constraint * (name list * ty list) list
 
-exception TypeError of loc * type_error
+type errors = { mutable values : (loc * type_error) list }
+
+exception FatalTypeError of (loc * type_error) list
+
+let type_error : errors -> loc -> type_error -> unit =
+ fun errors loc error -> errors.values <- (loc, error) :: errors.values
+
+let fatal_type_error : 'a. errors -> loc -> type_error -> 'a =
+ fun errors loc error ->
+  errors.values <- (loc, error) :: errors.values;
+  raise (FatalTypeError errors.values)
 
 module TyperefOrd = struct
   type t = ty Typeref.t * name
@@ -576,6 +585,7 @@ and global_env = {
 }
 
 and local_env = {
+  errors : errors;
   local_types : ty NameMap.t;
   constraints : ty_constraint Difflist.t ref;
   given_constraints : given_constraints;
@@ -1210,7 +1220,8 @@ let rec infer_pattern :
         | Some (level, vars, ty) -> (level, vars, ty)
         | None ->
             panic __LOC__
-              (Loc.pretty loc.main ^ ": Data constructor not found in typechecker: '"
+              (Loc.pretty loc.main
+             ^ ": Data constructor not found in typechecker: '"
               ^ Name.pretty constructor_name
               ^ "'. This should have been caught earlier!")
       in
@@ -1257,11 +1268,9 @@ let rec infer_pattern :
       | Some param_types -> begin
           match Base.List.zip patterns param_types with
           | Unequal_lengths ->
-              raise
-                (TypeError
-                   ( loc,
-                     IncorrectNumberOfExceptionArgs
-                       (name, List.length patterns, param_types) ))
+              fatal_type_error env.errors loc
+                (IncorrectNumberOfExceptionArgs
+                   (name, List.length patterns, param_types))
           | Ok patterns_and_types ->
               let env_transformers, patterns =
                 List.split
@@ -1332,7 +1341,8 @@ and check_pattern :
      ^ pretty_type expected_ty));
 
   if (not allow_polytype) && is_polytype expected_ty then begin
-    raise (TypeError (get_pattern_loc pattern, ValueRestriction expected_ty))
+    type_error env.errors (get_pattern_loc pattern)
+      (ValueRestriction expected_ty)
   end;
 
   let defer_to_inference () =
@@ -1382,9 +1392,8 @@ and check_pattern :
         with
         | Ok transformers_and_patterns -> List.split transformers_and_patterns
         | Unequal_lengths ->
-            raise
-              (TypeError
-                 (loc, TupleLiteralOfWrongLength (List.length patterns, arg_tys)))
+            fatal_type_error env.errors loc
+              (TupleLiteralOfWrongLength (List.length patterns, arg_tys))
       in
       (Util.compose transformers, TuplePat (loc, patterns))
   | TuplePat _, _ -> defer_to_inference ()
@@ -1403,7 +1412,7 @@ and check_pattern :
       (right_trans << left_trans, OrPat (loc, left, right))
   | TypePat (loc, pattern, ty), expected_ty ->
       if (not allow_polytype) && is_polytype ty then begin
-        raise (TypeError (loc, ValueRestriction ty))
+        type_error env.errors loc (ValueRestriction ty)
       end;
 
       let bindings, targets = subsumes env loc ty expected_ty in
@@ -1489,7 +1498,8 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       | Some ty ->
           let instantiated_type, targets = instantiate loc env ty in
           ( instantiated_type,
-            apply_targets loc targets (Typed.Var (((loc, ty),  definition_loc), x)) )
+            apply_targets loc targets
+              (Typed.Var (((loc, ty), definition_loc), x)) )
       | None ->
           panic __LOC__
             ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")
@@ -1556,11 +1566,9 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
         match Base.List.map2 param_tys args ~f:(check env) with
         | Ok args -> args
         | Unequal_lengths ->
-            raise
-              (TypeError
-                 ( loc,
-                   PassedIncorrectNumberOfArgsToFun
-                     (List.length args, param_tys, result_type) ))
+            fatal_type_error env.errors loc
+              (PassedIncorrectNumberOfArgsToFun
+                 (List.length args, param_tys, result_type))
       in
       let result_type, targets = instantiate loc env result_type in
 
@@ -1761,7 +1769,10 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
             let _, expr = infer env expr in
             let exprs = check_progcalls exprs in
             expr :: exprs
-        | expr :: _ -> raise (TypeError (loc, NonProgCallInPipe expr))
+        | expr :: _ ->
+            panic __LOC__
+              (Loc.pretty loc ^ ": non program call expression in pipe: "
+             ^ Renamed.pretty expr)
       in
       let expr =
         match exprs with
@@ -1873,11 +1884,9 @@ and check : local_env -> ty -> expr -> Typed.expr =
             with
             | Ok typed_pats -> List.split typed_pats
             | Unequal_lengths ->
-                raise
-                  (TypeError
-                     ( loc,
-                       IncorrectNumberOfArgsInLambda
-                         (List.length param_patterns, param_tys, result_ty) ))
+                fatal_type_error env.errors loc
+                  (IncorrectNumberOfArgsInLambda
+                     (List.length param_patterns, param_tys, result_ty))
           in
           let env_transformer = Util.compose transformers in
           let body = check (env_transformer env) result_ty body in
@@ -1895,11 +1904,8 @@ and check : local_env -> ty -> expr -> Typed.expr =
             with
             | Ok elems -> elems
             | Unequal_lengths ->
-                raise
-                  (TypeError
-                     ( loc,
-                       TupleLiteralOfWrongLength (List.length elems, elem_tys)
-                     ))
+                fatal_type_error env.errors loc
+                  (TupleLiteralOfWrongLength (List.length elems, elem_tys))
           in
           TupleLit (loc, elems)
           (* Record literals would be hard to check directly since the fields are order independent,
@@ -2125,11 +2131,9 @@ and check_seq_expr :
               | Ok transformers_and_patterns ->
                   List.split transformers_and_patterns
               | Unequal_lengths ->
-                  raise
-                    (TypeError
-                       ( loc.main,
-                         ArgCountMismatchInDefinition
-                           (fun_name, arg_tys, List.length patterns) ))
+                  fatal_type_error env.errors loc.main
+                    (ArgCountMismatchInDefinition
+                       (fun_name, arg_tys, List.length patterns))
             in
             ( arg_tys,
               transformers,
@@ -2139,7 +2143,8 @@ and check_seq_expr :
               env_transformer,
               bindings )
         | Some (ty, _, _, _) ->
-            raise (TypeError (loc.main, NonFunTypeInLetRec (fun_name, ty)))
+            fatal_type_error env.errors loc.main
+              (NonFunTypeInLetRec (fun_name, ty))
       in
       let env = env_trans env in
 
@@ -2437,8 +2442,16 @@ let datacon_level : name -> local_env -> Typeref.level =
   | Some (level, _, _) -> level
 
 (* Perform an occurs check and adjust levels (See Note [Levels]) *)
-let occurs_and_adjust needle name full_ty loc definition_env
-    optional_unify_context =
+let occurs_and_adjust :
+    ty Typeref.t ->
+    name ->
+    ty ->
+    loc ->
+    local_env ->
+    unify_context option ->
+    errors ->
+    bool =
+ fun needle name full_ty loc definition_env optional_unify_context errors ->
   let traversal =
     object
       inherit [bool] Traversal.traversal
@@ -2470,14 +2483,13 @@ let occurs_and_adjust needle name full_ty loc definition_env
                     ~unif_level:needle_level
                 then (ty, state)
                 else
-                  raise
-                    (TypeError
-                       ( loc,
-                         SkolemUnifyEscape
-                           ( Unif (needle, name),
-                             skol,
-                             full_ty,
-                             optional_unify_context ) ))
+                  (* TODO: does this really need to be fatal? *)
+                  fatal_type_error errors loc
+                    (SkolemUnifyEscape
+                       ( Unif (needle, name),
+                         skol,
+                         full_ty,
+                         optional_unify_context ))
           end
         | TyConstructor (constructor_name, _) -> begin
             match Typeref.get needle with
@@ -2493,14 +2505,12 @@ let occurs_and_adjust needle name full_ty loc definition_env
                     ~unif_level:needle_level
                 then (ty, state)
                 else
-                  raise
-                    (TypeError
-                       ( loc,
-                         DataConUnifyEscape
-                           ( Unif (needle, name),
-                             constructor_name,
-                             full_ty,
-                             optional_unify_context ) ))
+                  fatal_type_error errors loc
+                    (DataConUnifyEscape
+                       ( Unif (needle, name),
+                         constructor_name,
+                         full_ty,
+                         optional_unify_context ))
           end
         | ty -> (ty, state)
     end
@@ -2540,15 +2550,21 @@ let bind_directly :
     unify_context option ->
     unit =
  fun loc typeref name ty definition_env unify_context ->
-  if occurs_and_adjust typeref name ty loc definition_env unify_context then
-    raise (TypeError (loc, OccursCheck (typeref, name, ty, unify_context)))
+  if
+    occurs_and_adjust typeref name ty loc definition_env unify_context
+      definition_env.errors
+  then
+    fatal_type_error definition_env.errors loc
+      (OccursCheck (typeref, name, ty, unify_context))
   else bind_unchecked typeref name ty
 
 let solve_unify :
     loc -> local_env -> unify_state -> ty -> ty -> local_env -> bool =
- fun loc env state original_type1 original_type2 definition_env ->
+ fun loc top_level_env unify_state original_type1 original_type2 definition_env ->
   trace_unify
     (lazy (pretty_type original_type1 ^ " ~ " ^ pretty_type original_type2));
+
+  let errors = top_level_env.errors in
 
   let unify_context = (original_type1, original_type2) in
 
@@ -2611,11 +2627,9 @@ let solve_unify :
     in
     let go_variant constructor_name params1 params2 =
       if List.compare_lengths params1 params2 <> 0 then
-        raise
-          (TypeError
-             ( loc,
-               DifferentVariantConstrArgs
-                 (constructor_name, params1, params2, unify_context) ))
+        type_error errors loc
+          (DifferentVariantConstrArgs
+             (constructor_name, params1, params2, unify_context))
       else
         List.iter2
           (fun ty1 ty2 ->
@@ -2637,10 +2651,11 @@ let solve_unify :
             true
       end
     | TyConstructor (name1, args1), TyConstructor (name2, args2) ->
-        if Name.compare name1 name2 <> 0 then
-          raise
-            (TypeError
-               (loc, MismatchedTyCon (name1, name2, optional_unify_context)))
+        if Name.compare name1 name2 <> 0 then begin
+          type_error errors loc
+            (MismatchedTyCon (name1, name2, optional_unify_context));
+          true
+        end
         else begin
           if List.compare_lengths args1 args2 <> 0 then
             panic __LOC__
@@ -2654,10 +2669,11 @@ let solve_unify :
           end
         end
     | Fun (dom1, cod1), Fun (dom2, cod2) ->
-        if List.compare_lengths dom1 dom2 != 0 then
-          raise
-            (TypeError
-               (loc, FunctionsWithDifferentArgCounts (dom1, dom2, unify_context)))
+        if List.compare_lengths dom1 dom2 != 0 then begin
+          type_error errors loc
+            (FunctionsWithDifferentArgCounts (dom1, dom2, unify_context));
+          true
+        end
         else begin
           let progress1 = List.exists2 go dom1 dom2 in
           let progress2 = go cod1 cod2 in
@@ -2671,12 +2687,13 @@ let solve_unify :
     | Forall (var1, body1), Forall (var2, body2) ->
         (* Foralls are unified through α-conversion, by replacing
            the type variables in both types with the same fresh skolem. *)
-        let skolem = fresh_skolem_with env var1 in
+        let skolem = fresh_skolem_with top_level_env var1 in
         go (replace_tvar var1 skolem body1) (replace_tvar var2 skolem body2)
     | Forall _, _
     | _, Forall _ ->
-        raise
-          (TypeError (loc, Impredicative ((ty1, ty2), optional_unify_context)))
+        type_error errors loc
+          (Impredicative ((ty1, ty2), optional_unify_context));
+        true
     | Number, Number
     | Bool, Bool
     | String, String
@@ -2693,19 +2710,13 @@ let solve_unify :
             ())
           fields1 fields2
           (fun remaining1 remaining2 ->
-            raise
-              (TypeError
-                 ( loc,
-                   MissingRecordFields (remaining1, remaining2, unify_context)
-                 )));
+            type_error errors loc
+              (MissingRecordFields (remaining1, remaining2, unify_context)));
         true
     | VariantClosed fields1, VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
-            raise
-              (TypeError
-                 ( loc,
-                   MissingVariantConstructors
-                     (remaining1, remaining2, unify_context) )));
+            type_error errors loc
+              (MissingVariantConstructors (remaining1, remaining2, unify_context)));
         true
     (* unif, closed *)
     | RecordUnif (fields1, (u, name)), RecordClosed fields2 ->
@@ -2719,9 +2730,8 @@ let solve_unify :
               match remaining1 with
               | [] -> bind u name (RecordClosed (Array.of_list remaining2))
               | _ ->
-                  raise
-                    (TypeError
-                       (loc, MissingRecordFields (remaining1, [], unify_context)))
+                  type_error errors loc
+                    (MissingRecordFields (remaining1, [], unify_context))
           end;
         true
     | VariantUnif (fields1, (typeref, name)), VariantClosed fields2 ->
@@ -2732,11 +2742,8 @@ let solve_unify :
               | [] ->
                   bind typeref name (VariantClosed (Array.of_list remaining2))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingVariantConstructors
-                           (remaining1, [], unify_context) ))
+                  type_error errors loc
+                    (MissingVariantConstructors (remaining1, [], unify_context))
           end;
         true
     (* closed, unif *)
@@ -2751,9 +2758,8 @@ let solve_unify :
               match remaining2 with
               | [] -> bind u name (RecordClosed (Array.of_list remaining1))
               | _ ->
-                  raise
-                    (TypeError
-                       (loc, MissingRecordFields ([], remaining2, unify_context)))
+                  type_error errors loc
+                    (MissingRecordFields ([], remaining2, unify_context))
           end;
         true
     | VariantClosed fields1, VariantUnif (fields2, (u, name)) ->
@@ -2763,11 +2769,8 @@ let solve_unify :
               match remaining2 with
               | [] -> bind u name (VariantClosed (Array.of_list remaining1))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingVariantConstructors
-                           ([], remaining2, unify_context) ))
+                  type_error errors loc
+                    (MissingVariantConstructors ([], remaining2, unify_context))
           end;
         true
     (* unif, unif *)
@@ -2781,13 +2784,10 @@ let solve_unify :
             fun remaining1 remaining2 ->
               if Typeref.equal u1 u2 then
                 (* TODO: Maybe this should have a more specific error message? *)
-                raise
-                  (TypeError
-                     ( loc,
-                       MissingRecordFields
-                         (remaining1, remaining2, unify_context) ))
+                type_error errors loc
+                  (MissingRecordFields (remaining1, remaining2, unify_context))
               else begin
-                let new_u, new_name = fresh_unif_raw_with env "µ" in
+                let new_u, new_name = fresh_unif_raw_with definition_env "µ" in
                 bind u1 name1
                   (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
                 bind u2 name2
@@ -2801,13 +2801,11 @@ let solve_unify :
             fun remaining1 remaining2 ->
               if Typeref.equal u1 u2 then
                 (* TODO: Maybe this should have a more specific error message? *)
-                raise
-                  (TypeError
-                     ( loc,
-                       MissingVariantConstructors
-                         (remaining1, remaining2, unify_context) ))
+                type_error errors loc
+                  (MissingVariantConstructors
+                     (remaining1, remaining2, unify_context))
               else begin
-                let new_u, new_name = fresh_unif_raw_with env "µ" in
+                let new_u, new_name = fresh_unif_raw_with definition_env "µ" in
 
                 bind u1 name1
                   (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
@@ -2836,9 +2834,8 @@ let solve_unify :
                        ( Array.of_list remaining2,
                          (skol_unique, skol_level, skol_name) ))
               | _ ->
-                  raise
-                    (TypeError
-                       (loc, MissingRecordFields (remaining1, [], unify_context)))
+                  type_error errors loc
+                    (MissingRecordFields (remaining1, [], unify_context))
           end;
         true
     | ( VariantUnif (fields1, (unif_unique, unif_name)),
@@ -2854,11 +2851,8 @@ let solve_unify :
                        ( Array.of_list remaining2,
                          (skol_unique, skol_level, skol_name) ))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingVariantConstructors
-                           (remaining1, [], unify_context) ))
+                  type_error errors loc
+                    (MissingVariantConstructors (remaining1, [], unify_context))
           end;
         true
     (* skolem, unif *)
@@ -2881,9 +2875,8 @@ let solve_unify :
                        ( Array.of_list remaining1,
                          (skolem_unique, skol_level, skolem_name) ))
               | _ ->
-                  raise
-                    (TypeError
-                       (loc, MissingRecordFields ([], remaining2, unify_context)))
+                  type_error errors loc
+                    (MissingRecordFields ([], remaining2, unify_context))
           end;
         true
     | ( VariantSkol (fields1, (skolem_unique, skolem_level, skolem_name)),
@@ -2899,11 +2892,8 @@ let solve_unify :
                        ( Array.of_list remaining1,
                          (skolem_unique, skolem_level, skolem_name) ))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingVariantConstructors
-                           ([], remaining2, unify_context) ))
+                  type_error errors loc
+                    (MissingVariantConstructors ([], remaining2, unify_context))
           end;
         true
     (* skolem, skolem *)
@@ -2925,11 +2915,8 @@ let solve_unify :
             ())
           fields1 fields2
           (fun remaining1 remaining2 ->
-            raise
-              (TypeError
-                 ( loc,
-                   MissingRecordFields (remaining1, remaining2, unify_context)
-                 )));
+            type_error errors loc
+              (MissingRecordFields (remaining1, remaining2, unify_context)));
         true
     | ( VariantSkol (fields1, (skolem1_unique, skolem1_level, skolem1_name)),
         VariantSkol (fields2, (skolem2_unique, skolem2_level, skolem2_name)) )
@@ -2943,11 +2930,8 @@ let solve_unify :
             (Skol (skolem2_unique, skolem2_level, skolem2_name))
         in
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
-            raise
-              (TypeError
-                 ( loc,
-                   MissingVariantConstructors
-                     (remaining1, remaining2, unify_context) )));
+            type_error errors loc
+              (MissingVariantConstructors (remaining1, remaining2, unify_context)));
         true
         (* closed, skolem *)
         (* skolem, closed *)
@@ -2971,9 +2955,14 @@ let solve_unify :
         go underlying other_type
     | other_type, TypeAlias { underlying; _ } -> go other_type underlying
     | _ ->
-        raise
-          (TypeError (loc, UnableToUnify ((ty1, ty2), optional_unify_context)))
+        (* TODO: keep track of the unify context here *)
+        unify_state.deferred_constraints :=
+          Difflist.snoc
+            !(unify_state.deferred_constraints)
+            (Unify (loc, ty1, ty2, definition_env));
+        false
   in
+
   go_with_original None original_type1 original_type2
 
 let solve_unwrap :
@@ -3012,11 +3001,11 @@ let solve_unwrap :
           (Unwrap (loc, ty, ty2, definition_env));
       false
   | ty ->
-      (* TODO: this shouldn't raise, should it? we really don't want other errors to disappear as a result*)
       trace_tc
         (lazy "immediately throwing unsolvable CannotUnwrapNonData error");
       (* We know this constraint is unsolvable so we can just throw a type error *)
-      raise (TypeError (loc, CannotUnwrapNonData ty))
+      type_error env.errors loc (CannotUnwrapNonData ty);
+      true
 
 let rec solve_program_arg :
     loc -> local_env -> unify_state -> ty -> local_env -> bool =
@@ -3035,8 +3024,8 @@ let rec solve_program_arg :
       false
   | ty ->
       (* We know the constraint is unsolvable so we don't need to try solving it again *)
-      (* TODO: Collect a list of errors *)
-      raise (TypeError (loc, NonProgramArgument ty))
+      type_error env.errors loc (NonProgramArgument ty);
+      true
 
 let solve_refine_variant loc env unify_state ty path variant result_type
     definition_env =
@@ -3110,7 +3099,9 @@ let solve_interpolatable loc env state ty definition_env =
           !(state.deferred_constraints)
           (Interpolatable (loc, ty, env));
       false
-  | ty -> raise (TypeError (loc, NonInterpolatable ty))
+  | ty ->
+      type_error env.errors loc (NonInterpolatable ty);
+      true
 
 let compute_instance_substitution :
     class_instance -> class_constraint -> Substitution.t =
@@ -3146,8 +3137,8 @@ let compute_instance_substitution :
 
   Substitution.of_map !substitution_map
 
-let rec solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
-    local_env evidence_target =
+let rec solve_wanted_class (wanted_loc : loc) (env : local_env) unify_state
+    wanted givens (local_env : local_env) evidence_target =
   let none_matched () =
     unify_state.deferred_constraints :=
       Difflist.snoc
@@ -3206,15 +3197,13 @@ let rec solve_wanted_class (wanted_loc : loc) env unify_state wanted givens
           Evidence.set_meta evidence_target instance_evidence;
           true
       | `Ambiguous instances ->
-          raise
-            (TypeError
-               ( wanted_loc,
-                 AmbiguousClassConstraint
-                   ( wanted,
-                     List.map
-                       (fun { universals; arguments; _ } ->
-                         (universals, arguments))
-                       instances ) ))
+          type_error env.errors wanted_loc
+            (AmbiguousClassConstraint
+               ( wanted,
+                 List.map
+                   (fun { universals; arguments; _ } -> (universals, arguments))
+                   instances ));
+          true
       | `Missing ->
           (* TODO: This should be able to track if the instance might be unblocked by unification variables or skolems
              later and only requeue the wanted constraint in that case. *)
@@ -3238,9 +3227,8 @@ let residuals_to_errors : ty_constraint list -> (loc * type_error) list =
 
   List.map residual_to_error residuals
 
-let solve_constraints :
-    local_env -> ty_constraint list -> (loc * type_error) list =
- fun env constraints ->
+let solve_constraints : local_env -> errors -> ty_constraint list -> unit =
+ fun env errors constraints ->
   let go unify_state constraints =
     List.fold_left
       begin
@@ -3271,13 +3259,17 @@ let solve_constraints :
   in
 
   let rec actually_solve_constraints = function
-    | [] -> []
+    | [] -> ()
     | constraints ->
         let unify_state = { deferred_constraints = ref Difflist.empty } in
         let progress = go unify_state constraints in
-        if not progress then
-          residuals_to_errors
-            (Difflist.to_list !(unify_state.deferred_constraints))
+        if not progress then begin
+          let new_errors =
+            residuals_to_errors
+              (Difflist.to_list !(unify_state.deferred_constraints))
+          in
+          errors.values <- new_errors @ errors.values
+        end
         else
           actually_solve_constraints
             (Difflist.to_list !(unify_state.deferred_constraints))
@@ -3332,7 +3324,7 @@ let close_variant ty =
       bind_unchecked ref name (VariantClosed [||])
   | _ -> ()
 
-let check_exhaustiveness_and_close_variants_in_exprs expr =
+let check_exhaustiveness_and_close_variants_in_exprs errors expr =
   let check_column loc patterns =
     begin
       match
@@ -3340,7 +3332,7 @@ let check_exhaustiveness_and_close_variants_in_exprs expr =
       with
       | () -> ()
       | exception Pattern.PatternError err ->
-          raise (TypeError (loc, PatternError err))
+          type_error errors loc (PatternError err)
     end
   in
 
@@ -3381,10 +3373,11 @@ let check_exhaustiveness_and_close_variants_in_exprs expr =
 
 let typecheck_top_level :
     global_env ->
+    errors ->
     [ `Check | `Infer ] ->
     expr ->
-    global_env * Typed.expr * (loc * type_error) Difflist.t =
- fun global_env check_or_infer expr ->
+    global_env * Typed.expr =
+ fun global_env errors check_or_infer expr ->
   let data_definitions_with_levels =
     NameMap.map
       (fun (params, underlying) ->
@@ -3394,6 +3387,7 @@ let typecheck_top_level :
 
   let local_env =
     {
+      errors;
       local_types = global_env.var_types;
       module_var_contents = global_env.module_var_contents;
       constraints = ref Difflist.empty;
@@ -3418,6 +3412,7 @@ let typecheck_top_level :
   let temp_local_env =
     local_env_trans
       {
+        errors;
         local_types = NameMap.empty;
         module_var_contents = NameMap.empty;
         constraints = local_env.constraints;
@@ -3430,11 +3425,9 @@ let typecheck_top_level :
       }
   in
 
-  let errors =
-    solve_constraints local_env (Difflist.to_list !(local_env.constraints))
-  in
+  solve_constraints local_env errors (Difflist.to_list !(local_env.constraints));
 
-  check_exhaustiveness_and_close_variants_in_exprs typed_expr;
+  check_exhaustiveness_and_close_variants_in_exprs errors typed_expr;
 
   let local_types =
     if binds_value expr then
@@ -3475,7 +3468,7 @@ let typecheck_top_level :
       given_constraints = temp_local_env.given_constraints;
     }
   in
-  (global_env, typed_expr, Difflist.of_list errors)
+  (global_env, typed_expr)
 
 let typecheck_exports : Renamed.export_item list -> Typed.export_item list =
   List.map (function
@@ -3519,26 +3512,34 @@ let typecheck_header header env =
       } )
 
 let typecheck check_or_infer_top_level header exprs global_env =
-  trace_tc
-    (lazy
-      ((match check_or_infer_top_level with
-       | `Infer -> "Inferring"
-       | `Check -> "Checking")
-      ^ " top level definitions"));
+  let go () =
+    trace_tc
+      (lazy
+        ((match check_or_infer_top_level with
+         | `Infer -> "Inferring"
+         | `Check -> "Checking")
+        ^ " top level definitions"));
 
-  let global_env, header = typecheck_header header global_env in
+    let global_env, header = typecheck_header header global_env in
 
-  let (global_env, errors), exprs =
-    List.fold_left_map
-      (fun (env, errors) expr ->
-        let env, expr, new_errors =
-          typecheck_top_level env check_or_infer_top_level expr
-        in
-        ((env, Difflist.append errors new_errors), expr))
-      (global_env, Difflist.empty)
-      exprs
+    let errors = { values = [] } in
+
+    let global_env, exprs =
+      List.fold_left_map
+        (fun env expr ->
+          let (env : global_env), expr =
+            typecheck_top_level env errors check_or_infer_top_level expr
+          in
+          (env, expr))
+        global_env exprs
+    in
+    (global_env, header, exprs, errors.values)
   in
-  (global_env, header, exprs, Difflist.to_list errors)
+  match go () with
+  | global_env, header, exprs, [] -> These.This (global_env, header, exprs)
+  | global_env, header, exprs, errors ->
+      These.Both ((global_env, header, exprs), errors)
+  | exception FatalTypeError errors -> These.That errors
 
 let prim_types =
   NameMap.of_seq

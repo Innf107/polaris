@@ -5,6 +5,10 @@ open Util
 let _tc_category, trace_tc = Trace.make ~flag:"types" ~prefix:"Types"
 let _emit_category, trace_emit = Trace.make ~flag:"emit" ~prefix:"Emit"
 let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
+
+let _recursive_unify_category, trace_recursive_unify =
+  Trace.make ~flag:"recursive-unify" ~prefix:"RecUnify"
+
 let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix:"Subst"
 let _class_category, trace_class = Trace.make ~flag:"class" ~prefix:"Class"
 let _solve_category, trace_solve = Trace.make ~flag:"solve" ~prefix:"Solve"
@@ -2637,10 +2641,16 @@ let solve_unify :
             ())
           params1 params2
     in
+    trace_recursive_unify
+      (lazy
+        (pretty_type (normalize_unif ty1)
+        ^ " ~ "
+        ^ pretty_type (normalize_unif ty2)));
     match (normalize_unif ty1, normalize_unif ty2) with
     | Unif (typeref, name), ty
     | ty, Unif (typeref, name) -> begin
         (* Thanks to normalize_unif, we know that these have to be unbound unification variables *)
+        trace_unify (lazy (pretty_type (normalize_unif ty)));
         match ty with
         (* Ignore 'a ~ a' constraints. These are mostly harmless,
            but might hang the type checker if they become part of the substitution
@@ -2665,7 +2675,7 @@ let solve_unify :
              ^ "' to different numbers of arguments.\n    ty1: "
              ^ pretty_type ty1 ^ "\n    ty2: " ^ pretty_type ty2)
           else begin
-            List.exists2 go args1 args2
+            List.exists Fun.id (List.map2 go args1 args2)
           end
         end
     | Fun (dom1, cod1), Fun (dom2, cod2) ->

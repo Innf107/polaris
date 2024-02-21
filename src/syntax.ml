@@ -1802,7 +1802,7 @@ module Typed = Template (struct
     | DictLambda (bindings, expr) ->
         "λ#d["
         ^ String.concat ", " (List.map Evidence.pretty_binding bindings)
-        ^ "). " ^ pretty_expr expr
+        ^ "]. " ^ pretty_expr expr
     | DictApp (expr, uniques) ->
         "(" ^ pretty_expr expr ^ ")@#d("
         ^ String.concat ", " (List.map Evidence.pretty uniques)

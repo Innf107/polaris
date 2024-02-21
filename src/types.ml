@@ -16,6 +16,13 @@ let _solve_category, trace_solve = Trace.make ~flag:"solve" ~prefix:"Solve"
 let _instance_trie_category, trace_instance_trie =
   Trace.make ~flag:"insttrie" ~prefix:"ITrie"
 
+let any_forcing : 'a. ('a -> bool) -> 'a list -> bool =
+ fun predicate list -> List.exists Fun.id (List.map predicate list)
+
+let any_forcing2 : 'a 'b. ('a -> 'b -> bool) -> 'a list -> 'b list -> bool =
+ fun predicate list1 list2 ->
+  List.exists Fun.id (List.map2 predicate list1 list2)
+
 type unify_context = ty * ty
 
 type type_error =
@@ -1862,7 +1869,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
     let bindings, targets = subsumes env (Typed.get_loc expr) ty expected_ty in
     (* infer infers a monotype, so targets shoulda always be empty here *)
     assert (targets = []);
-    abstract_evidence (Typed.get_loc expr) sources expr
+    abstract_evidence (Typed.get_loc expr) bindings expr
   in
 
   abstract_evidence (get_loc expr) sources
@@ -2127,6 +2134,18 @@ and check_seq_expr :
         | Some
             (Fun (arg_tys, result_ty), ty_skolemizer, env_transformer, bindings)
           ->
+            trace_tc
+              (lazy
+                ("let " ^ Name.pretty fun_name ^ "(...) =ev> ["
+                ^ String.concat ", "
+                    (List.map
+                       (fun bindings ->
+                         "["
+                         ^ String.concat ", "
+                             (List.map Evidence.pretty_binding bindings)
+                         ^ "]")
+                       bindings)
+                ^ "]"));
             let transformers, patterns =
               match
                 Base.List.map2 patterns arg_tys
@@ -2675,7 +2694,7 @@ let solve_unify :
              ^ "' to different numbers of arguments.\n    ty1: "
              ^ pretty_type ty1 ^ "\n    ty2: " ^ pretty_type ty2)
           else begin
-            List.exists Fun.id (List.map2 go args1 args2)
+            any_forcing2 go args1 args2
           end
         end
     | Fun (dom1, cod1), Fun (dom2, cod2) ->
@@ -2685,12 +2704,12 @@ let solve_unify :
           true
         end
         else begin
-          let progress1 = List.exists2 go dom1 dom2 in
+          let progress1 = any_forcing2 go dom1 dom2 in
           let progress2 = go cod1 cod2 in
           progress1 || progress2
         end
     | Tuple tys1, Tuple tys2 when Array.length tys1 = Array.length tys2 ->
-        List.exists2 go (Array.to_list tys1) (Array.to_list tys2)
+        any_forcing2 go (Array.to_list tys1) (Array.to_list tys2)
     | List ty1, List ty2 -> go ty1 ty2
     | Promise ty1, Promise ty2 -> go ty1 ty2
     | Ref ty1, Ref ty2 -> go ty1 ty2
@@ -3107,8 +3126,12 @@ let solve_interpolatable loc env state ty definition_env =
       state.deferred_constraints :=
         Difflist.snoc
           !(state.deferred_constraints)
-          (Interpolatable (loc, ty, env));
+          (Interpolatable (loc, ty, definition_env));
       false
+  | TyVar name ->
+      panic __LOC__
+        ("unbound type variable in interpolatable constraint: "
+       ^ pretty_name name)
   | ty ->
       type_error env.errors loc (NonInterpolatable ty);
       true

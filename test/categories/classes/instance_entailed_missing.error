@@ -1,1 +1,5 @@
-AAA
+test/categories/classes/instance_entailed_missing.pls:9:7: ERROR:
+Missing instance 'Eq(Number)'
+  | 
+9 | print(eq([1, 2], [3, 4]))
+  |       ^^

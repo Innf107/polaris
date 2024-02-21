@@ -655,8 +655,9 @@ module Template = struct
                (fun (name, ty) -> pretty_name name ^ " : " ^ pretty_type ty)
                methods)
         ^ "\n}"
-    | LetInstanceSeq (_, parameters, entailed, classname, arguments, methods) ->
-        "instance (forall "
+    | LetInstanceSeq (ext, parameters, entailed, classname, arguments, methods)
+      ->
+        "instance" ^ pretty_instance_ext ext ^ "(forall "
         ^ String.concat " " (List.map pretty_name parameters)
         ^ ". " ^ pretty_type entailed ^ " => " ^ pretty_name classname ^ "("
         ^ String.concat ", " (List.map pretty_type arguments)
@@ -1726,6 +1727,9 @@ module Parsed = Template (struct
 
   module ExportConstructorExt = LocOnly
   module InstanceExt = LocOnly
+
+  let pretty_instance_ext _ = " "
+
   module InstanceMethodExt = EmptyExt
 
   type expr_ext = void
@@ -1776,8 +1780,18 @@ module Typed = Template (struct
   end)
 
   module InstanceExt = LocWithNonTy (struct
-    type t = Evidence.binding
+    type t = Evidence.binding * Evidence.binding list
   end)
+
+  let pretty_instance_ext (_, (binding, entailed)) =
+    match entailed with
+    | [] -> "[" ^ Evidence.pretty_binding binding ^ "]"
+    | _ ->
+        "["
+        ^ Evidence.pretty_binding binding
+        ^ " <== "
+        ^ String.concat ", " (List.map Evidence.pretty_binding entailed)
+        ^ "]"
 
   module InstanceMethodExt = struct
     type t = FullTypeDefinition.ty
@@ -1852,6 +1866,8 @@ module Renamed = Template (struct
   end)
 
   module InstanceExt = LocOnly
+
+  let pretty_instance_ext _ = " "
 
   (* Renamed instance methods contain the type that was declared in their class definition.
      Notably this *does not* contain the type class constraint yet. *)

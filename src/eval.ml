@@ -1286,26 +1286,53 @@ and eval_seq_cont :
       in
       eval_seq_cont ~cap context updated_env exprs cont
   | LetInstanceSeq
-      ( (loc, given_source),
+      ( (loc, (given_binding, entailed_bindings)),
         _parameters,
         super_constraint,
         name,
         _arguments,
         methods )
     :: exprs ->
-      let prepare_method (_type, name, params, body) =
+      let prepare_method env (_type, name, params, body) =
         (name, ClosureV (Lazy.from_val env, params, body))
       in
 
       let instance =
-        match super_constraint with
-        | RecordClosed [||] ->
+        match entailed_bindings with
+        | [] ->
             Instance
               {
                 methods =
-                  NameMap.of_seq (List.to_seq (List.map prepare_method methods));
+                  NameMap.of_seq
+                    (List.to_seq (List.map (prepare_method env) methods));
               }
-        | _ -> todo __LOC__
+        | _ ->
+            let rec own_instance =
+              PartialInstance
+                (fun implementations ->
+                  let applied_instance_env =
+                    {
+                      env with
+                      type_class_instances =
+                        EvidenceMap.add given_binding own_instance
+                          (List.fold_left2
+                             (fun env binding impl ->
+                               EvidenceMap.add binding (Instance impl) env)
+                             env.type_class_instances entailed_bindings
+                             implementations);
+                    }
+                  in
+                  Instance
+                    {
+                      methods =
+                        NameMap.of_seq
+                          (List.to_seq
+                             (List.map
+                                (prepare_method applied_instance_env)
+                                methods));
+                    })
+            in
+            own_instance
       in
 
       (* let dictionary =
@@ -1318,7 +1345,7 @@ and eval_seq_cont :
         {
           env with
           type_class_instances =
-            EvidenceMap.add given_source instance env.type_class_instances;
+            EvidenceMap.add given_binding instance env.type_class_instances;
         }
       in
       eval_seq_cont ~cap context updated_env exprs cont
@@ -1813,14 +1840,18 @@ and eval_primop ~cap env op args loc =
                   ("mod", args, "Expected two integers", loc :: env.call_trace)))
     end
   | "floor" -> begin
-    match args with
-    | [NumV x] -> NumV (floor x)
-    | _ -> panic __LOC__ (Loc.pretty loc ^ ": floor: Non-number argument passed at runtime")
+      match args with
+      | [ NumV x ] -> NumV (floor x)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": floor: Non-number argument passed at runtime")
     end
   | "ceil" -> begin
-    match args with
-    | [NumV x] -> NumV (ceil x)
-    | _ -> panic __LOC__ (Loc.pretty loc ^ ": ceil: Non-number argument passed at runtime")
+      match args with
+      | [ NumV x ] -> NumV (ceil x)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": ceil: Non-number argument passed at runtime")
     end
   | "exceptionMessage" -> begin
       match args with

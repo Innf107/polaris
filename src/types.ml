@@ -808,7 +808,7 @@ let emit_givens loc givens (env : local_env) =
         ^ Name.pretty given.class_name
         ^ "("
         ^ String.concat ", " (List.map pretty_type given.arguments)
-        ^ ") ==> ("
+        ^ ") <== ("
         ^ String.concat ", " (List.map pretty_class_constraint entailed)
         ^ ") #d = " ^ Evidence.pretty evidence));
 
@@ -1858,7 +1858,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
     (lazy
       (level_prefix env ^ "checking expression '" ^ pretty expr ^ "' : "
       ^ pretty_type polymorphic_expected_ty));
-  let expected_ty, _, env_trans, sources =
+  let expected_ty, _, env_trans, bindings =
     skolemize_with_function (get_loc expr) env polymorphic_expected_ty
   in
 
@@ -1872,7 +1872,7 @@ and check : local_env -> ty -> expr -> Typed.expr =
     abstract_evidence (Typed.get_loc expr) bindings expr
   in
 
-  abstract_evidence (get_loc expr) sources
+  abstract_evidence (get_loc expr) bindings
     begin
       match (expr, expected_ty) with
       | Var _, _ -> defer_to_inference ()
@@ -2089,7 +2089,7 @@ and check_seq_expr :
   | LetSeq (loc, pat, body) ->
       let generalizable = is_value body in
       let ty, env_trans, pat = infer_pattern env generalizable pat in
-      let ty, skolemizer, skolem_env_trans, expr_trans =
+      let ty, skolemizer, skolem_env_trans, bindings =
         skolemize_with_function loc env ty
       in
       let env = skolem_env_trans env in
@@ -2109,7 +2109,7 @@ and check_seq_expr :
       let body =
         enter_level env
           begin
-            fun env -> check env ty body
+            fun env -> abstract_evidence loc bindings (check env ty body)
           end
       in
 
@@ -2282,6 +2282,22 @@ and check_seq_expr :
         | Some parameters -> parameters
       in
 
+      let given_binding = Evidence.make_binding () in
+
+      let entailed_final_constraints, _ =
+        collect_atomic_given_constraints universals entailed
+      in
+
+      let entailed_final_constraints =
+        List.map fst entailed_final_constraints
+      in
+
+      let final_given =
+        ( { class_name; variables = universals; arguments },
+          Evidence.Dictionary given_binding,
+          entailed_final_constraints )
+      in
+
       let skolemization_map =
         NameMap.of_list
           (List.map
@@ -2293,6 +2309,26 @@ and check_seq_expr :
       let skolemized_arguments =
         List.map (replace_tvars skolemization_map) arguments
       in
+
+      let skolemized_entailed = replace_tvars skolemization_map entailed in
+
+      let entailed_inner_constraints, entailed_inner_evidence =
+        collect_atomic_given_constraints universals skolemized_entailed
+      in
+
+      let to_given (constraint_, binding) =
+        (constraint_, Evidence.Dictionary binding, [])
+      in
+      let inner_givens =
+        ( { class_name; variables = []; arguments = skolemized_arguments },
+          Evidence.Apply
+            ( Evidence.Dictionary given_binding,
+              List.map (fun x -> Evidence.Dictionary x) entailed_inner_evidence
+            ),
+          [] )
+        :: List.map to_given entailed_inner_constraints
+      in
+
       let check_method (expected_type_raw, name, parameters, body) =
         let expected_type =
           replace_tvars
@@ -2319,7 +2355,9 @@ and check_seq_expr :
 
         (* Methods can be recursive, but recursive calls should use the *class* method (which is already in scope),
            rather than the one in this specific instance! *)
-        let inner_env = Util.compose env_transformers env in
+        let inner_env =
+          Util.compose env_transformers (emit_givens loc inner_givens env)
+        in
 
         let body = check inner_env body_type body in
 
@@ -2327,22 +2365,9 @@ and check_seq_expr :
       in
       let methods = List.map check_method methods in
 
-      let given_binding = Evidence.make_binding () in
-
-      let entailed_constraints, entailed_evidence =
-        collect_atomic_given_constraints universals entailed
-      in
-
-      let entailed_constraints = List.map fst entailed_constraints in
-
-      ( emit_givens loc
-          [
-            ( { class_name; variables = universals; arguments },
-              Evidence.Dictionary given_binding,
-              entailed_constraints );
-          ],
+      ( emit_givens loc [ final_given ],
         LetInstanceSeq
-          ( (loc, given_binding),
+          ( (loc, (given_binding, entailed_inner_evidence)),
             universals,
             entailed,
             class_name,
@@ -3185,6 +3210,8 @@ let rec solve_wanted_class (wanted_loc : loc) (env : local_env) unify_state
   | Some trie -> (
       match InstanceTrie.match_instance trie wanted.arguments with
       | `Found instance ->
+          trace_class
+            (lazy ("Found instance for " ^ pretty_class_constraint wanted));
           (* TODO: we need to apply the evidence from every entailed constraint to the target here *)
           let entailed_targets =
             instance.entailed

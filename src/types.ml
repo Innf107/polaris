@@ -2041,7 +2041,10 @@ and abstract_evidence :
     loc -> Evidence.binding list list -> Typed.expr -> Typed.expr =
  fun loc bindings expr ->
   List.fold_right
-    (fun bindings expr -> Typed.ExprExt (loc, DictLambda (bindings, expr)))
+    (fun bindings expr ->
+      match bindings with
+      | [] -> expr
+      | _ -> Typed.ExprExt (loc, DictLambda (bindings, expr)))
     bindings expr
 
 and apply_targets : loc -> Evidence.meta list list -> Typed.expr -> Typed.expr =
@@ -3287,7 +3290,9 @@ let residuals_to_errors : ty_constraint list -> (loc * type_error) list =
 
   List.map residual_to_error residuals
 
-let solve_constraints : local_env -> errors -> ty_constraint list -> unit =
+(* This returns any residual constraints that couldn't be solved *)
+let solve_constraints :
+    local_env -> errors -> ty_constraint list -> ty_constraint list =
  fun env errors constraints ->
   let go unify_state constraints =
     List.fold_left
@@ -3319,16 +3324,12 @@ let solve_constraints : local_env -> errors -> ty_constraint list -> unit =
   in
 
   let rec actually_solve_constraints = function
-    | [] -> ()
+    | [] -> []
     | constraints ->
         let unify_state = { deferred_constraints = ref Difflist.empty } in
         let progress = go unify_state constraints in
         if not progress then begin
-          let new_errors =
-            residuals_to_errors
-              (Difflist.to_list !(unify_state.deferred_constraints))
-          in
-          errors.values <- new_errors @ errors.values
+          Difflist.to_list !(unify_state.deferred_constraints)
         end
         else
           actually_solve_constraints
@@ -3356,26 +3357,97 @@ let free_unifs : ty -> TyperefSet.t =
     forall-bound type variables. 
     Generalize takes an environment since it is not allowed to generalize
     type variables at a lower level  *)
-let generalize : local_env -> ty -> ty =
- fun env ty ->
-  let ty' =
-    TyperefSet.fold
-      (fun (typeref, name) r ->
-        match Typeref.get typeref with
-        | Bound _ ->
-            panic __LOC__
-              ("Trying to generalize bound type variable: "
-              ^ pretty_type (Unif (typeref, name)))
-        | Unbound level
-          when Typeref.generalizable_level ~ambient:env.level level ->
-            let new_name = Name.refresh name in
-            bind_unchecked typeref name (TyVar new_name);
-            Forall (new_name, r)
-        | Unbound _ -> r)
-      (free_unifs ty) ty
+let generalize :
+    local_env ->
+    ty_constraint list ref ->
+    Evidence.binding Difflist.t ref ->
+    ty ->
+    ty =
+ fun env residuals bindings ty ->
+  let generalized_variables = ref [] in
+  let duplicate_names = Hashtbl.create 4 in
+
+  TyperefSet.iter
+    (fun (typeref, name) ->
+      match Typeref.get typeref with
+      | Bound _ ->
+          panic __LOC__
+            ("Trying to generalize bound type variable: "
+            ^ pretty_type (Unif (typeref, name)))
+      | Unbound level when Typeref.generalizable_level ~ambient:env.level level
+        ->
+          let new_name =
+            match Hashtbl.find_opt duplicate_names name.name with
+            | None ->
+                Hashtbl.add duplicate_names name.name 0;
+                Name.refresh name
+            | Some count ->
+                Hashtbl.add duplicate_names name.name (count + 1);
+                Name.fresh (name.name ^ string_of_int count)
+          in
+          generalized_variables := new_name :: !generalized_variables;
+          bind_unchecked typeref name (TyVar new_name)
+      | Unbound _ -> ())
+    (free_unifs ty);
+
+  let is_generalizable_traversal =
+    object
+      inherit [[ `Never | `Maybe | `Yes ]] Traversal.traversal
+
+      method! ty state ty =
+        match (state, ty) with
+        | `Never, ty -> (ty, `Never)
+        | _, Unif _ -> (ty, `Never)
+        | `Maybe, TyVar name
+          when List.exists (Name.equal name) !generalized_variables ->
+            (ty, `Yes)
+        | state, ty -> (ty, state)
+    end
   in
-  trace_tc (lazy ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type ty'));
-  ty'
+  let is_generalizable type_ =
+    match
+      Traversal.traverse_list is_generalizable_traversal#traverse_type `Maybe
+        type_
+    with
+    | _, `Never
+    | _, `Maybe ->
+        false
+    | _, `Yes -> true
+  in
+
+  let rec try_generalize_residuals type_ = function
+    | [] -> (type_, [])
+    | WantedClass { wanted; evidence_target; _ } :: rest
+      when is_generalizable wanted.arguments ->
+        let generalized_binding = Evidence.make_binding () in
+        Evidence.set_meta evidence_target
+          (Evidence.Dictionary generalized_binding);
+        bindings := Difflist.snoc !bindings generalized_binding;
+
+        let constraint_type =
+          TyConstructor (wanted.class_name, wanted.arguments)
+        in
+        (Constraint (constraint_type, type_), rest)
+    | constraint_ :: rest ->
+        let generalized_type, rest = try_generalize_residuals type_ rest in
+        (generalized_type, constraint_ :: rest)
+  in
+
+  let type_with_constraints, remaining_residuals =
+    try_generalize_residuals ty !residuals
+  in
+  residuals := remaining_residuals;
+
+  let generalized_type =
+    List.fold_right
+      (fun var_name type_ -> Forall (var_name, type_))
+      !generalized_variables type_with_constraints
+  in
+
+  trace_tc
+    (lazy
+      ("[generalize] " ^ pretty_type ty ^ " ==> " ^ pretty_type generalized_type));
+  generalized_type
 
 let close_variant ty =
   match normalize_unif ty with
@@ -3485,14 +3557,45 @@ let typecheck_top_level :
       }
   in
 
-  solve_constraints local_env errors (Difflist.to_list !(local_env.constraints));
+  let residuals =
+    ref
+      (solve_constraints local_env errors
+         (Difflist.to_list !(local_env.constraints)))
+  in
 
   check_exhaustiveness_and_close_variants_in_exprs errors typed_expr;
 
+  let generalized_bindings = ref Difflist.empty in
+
+  (* TODO: this only generalizes the type in the environment, not in the AST, so the
+     LSP doesn't show any foralls or constraints *)
   let local_types =
     if binds_value expr then
-      NameMap.map (generalize temp_local_env) temp_local_env.local_types
+      NameMap.map
+        (generalize temp_local_env residuals generalized_bindings)
+        temp_local_env.local_types
     else temp_local_env.local_types
+  in
+
+  errors.values <- residuals_to_errors !residuals @ errors.values;
+
+  let typed_expr =
+    match typed_expr with
+    | Typed.LetSeq (loc, name, body) ->
+        Typed.LetSeq
+          ( loc,
+            name,
+            abstract_evidence loc
+              [ Difflist.to_list !generalized_bindings ]
+              body )
+    | LetRecSeq ((loc, ty, bindings), typesig, name, patterns, body) ->
+        Typed.LetRecSeq
+          ( (loc, ty, Difflist.append_to_list !generalized_bindings bindings),
+            typesig,
+            name,
+            patterns,
+            body )
+    | _ -> typed_expr
   in
 
   let data_definitions_without_levels =

@@ -230,24 +230,78 @@ let full_env_vars : eval_env -> string array =
        (Seq.map (fun (x, y) -> x ^ "=" ^ y) (EnvMap.to_seq env.env_vars)))
 
 let rec val_eq (x : value) (y : value) : bool =
-  match (x, y) with
-  | StringV x, StringV y -> String.compare x y = 0
-  | NumV x, NumV y -> Float.equal x y
+  match x with
+  | StringV x -> begin
+      match y with
+      | StringV y -> String.compare x y = 0
+      | _ -> false
+    end
+  | NumV x -> begin
+      match y with
+      | NumV y -> Float.equal x y
+      | _ -> false
+    end
   (* Closure comparison always evaluates to false.
       We're not going to solve the halting problem for this. *)
-  | ClosureV _, _
-  | _, ClosureV _ ->
+  | ClosureV _
+  | PrimOpV _ ->
       false
-  | BoolV x, BoolV y -> x = y
-  (* Lists are compared elements-wise, *not* by reference
-     (whatever that would even mean with polaris' (more or less)
-     referentially transparent semantics) *)
-  | ListV xs, ListV ys ->
-      if List.compare_lengths xs ys != 0 then false
-      else List.for_all2 val_eq xs ys
-  | RecordV m1, RecordV m2 -> RecordVImpl.equal val_eq m1 m2
-  (* Comparisons of different values are always false *)
-  | _, _ -> false
+  | BoolV x -> begin
+      match y with
+      | BoolV y -> x = y
+      | _ -> false
+    end
+  | ListV xs -> begin
+      match y with
+      | ListV ys when List.compare_lengths xs ys = 0 ->
+          List.for_all2 val_eq xs ys
+      | _ -> false
+    end
+  | TupleV values1 -> begin
+      match y with
+      | TupleV values2 when Array.length values1 = Array.length values2 ->
+          Array.for_all2 val_eq values1 values2
+      | _ -> false
+    end
+  (* Promises can't generally be compared for equality since they're effectively
+     functions *)
+  | PromiseV _ -> false
+  | DataConV (name1, value1) -> begin
+      match y with
+      | DataConV (name2, value2) ->
+          Name.equal name1 name2 && val_eq value1 value2
+      | _ -> false
+    end
+  (* Partial data constructors are treated like functions and therefore not equatable*)
+  | PartialDataConV _ -> false
+  | PartialExceptionV _ -> false
+  | VariantConstructorV (constructor1, arguments1) -> begin
+      match y with
+      | VariantConstructorV (constructor2, arguments2) ->
+          String.equal constructor1 constructor2
+          && List.compare_lengths arguments1 arguments2 = 0
+          && List.for_all2 val_eq arguments1 arguments2
+      | _ -> false
+    end
+  | RefV value_ref1 -> begin
+      match y with
+      (* This uses reference equality *on purpose* since that is the only way to
+         reasonably compare two, well, references *)
+      | RefV value_ref2 -> value_ref1 == value_ref2
+      | _ -> false
+    end
+  (* Selectors are just functions *)
+  | SelectorV _ -> false
+  | DictClosureV _ -> false
+  | DictDoubleClosureV _ -> false
+  | RecordV m1 -> begin
+      match y with
+      | RecordV m2 -> RecordVImpl.equal val_eq m1 m2
+      | _ -> false
+    end
+  (* Exceptions are not comparable since they rely on stack traces and things
+     TODO: Maybe this should also use reference equality? *)
+  | ExceptionV _ -> false
 
 let trim_output = function
   | "" -> ""

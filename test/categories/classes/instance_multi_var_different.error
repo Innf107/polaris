@@ -1,0 +1,5 @@
+test/categories/classes/instance_multi_var_different.pls:9:7: ERROR:
+Missing instance 'Eq((List(String), List(Number)))'
+  | 
+9 | print(eq((["a"], [5]), (["a"], [5])))
+  |       ^^

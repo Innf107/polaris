@@ -1915,6 +1915,18 @@ and eval_primop ~cap env op args loc =
             (Loc.pretty loc
            ^ ": exceptionMessage: Non-exception passed at runtime")
     end
+  | "compareString" -> begin
+      match args with
+      | [ StringV string1; StringV string2 ] -> begin
+          match String.compare string1 string2 with
+          | x when x < 0 -> VariantConstructorV ("Less", [])
+          | x when x > 0 -> VariantConstructorV ("Greater", [])
+          | _ -> VariantConstructorV ("Equal", [])
+        end
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": compareString: Non-strings passed at runtime")
+    end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
 and progs_of_exprs ~cap env = function

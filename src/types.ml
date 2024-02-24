@@ -277,6 +277,7 @@ end = struct
       | VariantVar _ ->
           panic __LOC__
             "Uninstantiated (variant) type variable in wanted constraint"
+      | Unwrap _ -> todo __LOC__
       | ModSubscriptTyCon _ -> .
     in
 
@@ -491,6 +492,7 @@ end = struct
                 (function
                 | HPromise -> true
                 | _ -> false)
+          | Unwrap _ :: rest -> todo __LOC__
           | ModSubscriptTyCon _ :: _ -> .
         end
 
@@ -912,6 +914,10 @@ let rec collect_atomic_wanted_constraints :
   | ty ->
       panic __LOC__
         ("Non type constructor in constraint: " ^ Typed.pretty_type ty)
+
+let rec normalize_alias = function
+  | TypeAlias { underlying; _ } -> normalize_alias underlying
+  | ty -> ty
 
 let rec instantiate_with_function :
     loc -> local_env -> ty -> ty * (ty -> ty) * Evidence.meta list list =
@@ -2990,9 +2996,13 @@ let solve_unify :
             type_error errors loc
               (MissingVariantConstructors (remaining1, remaining2, unify_context)));
         true
-        (* closed, skolem *)
-        (* skolem, closed *)
-        (* Unifying a skolem and closed record is always impossible so we don't need a dedicated case here. *)
+    (* Unifying a skolem and closed record is always impossible so we don't need a dedicated case here. *)
+    | VariantUnif ([||], (typeref, name)), ty2
+    | RecordUnif ([||], (typeref, name)), ty2 ->
+        go (Unif (typeref, name)) ty2
+    | ty1, VariantUnif ([||], (typeref, name))
+    | ty1, RecordUnif ([||], (typeref, name)) ->
+        go ty1 (Unif (typeref, name))
     | RecordVar (_, name), _
     | _, RecordVar (_, name)
     | VariantVar (_, name), _
@@ -3110,7 +3120,7 @@ let solve_refine_variant loc env unify_state ty path variant result_type
         | Some mapped -> mapped
       end
     in
-    match (path, normalize_unif ty) with
+    match (path, normalize_alias (normalize_unif ty)) with
     | [], VariantClosed constructors ->
         VariantClosed (remove_variant constructors)
     | [], VariantUnif (constructors, ty) ->

@@ -363,6 +363,13 @@ module Template = struct
 
   let rec pretty_type_with options ty =
     let pretty_type = pretty_type_with options in
+    let pretty_variant_constructor constructor = function
+      | [] -> constructor
+      | arguments ->
+          constructor ^ "("
+          ^ String.concat ", " (List.map pretty_type arguments)
+          ^ ")"
+    in
     match Ty.normalize_unif ty with
     | Forall (var, ty) -> "∀" ^ pretty_name var ^ ". " ^ pretty_type ty
     | Fun (args, res) ->
@@ -435,10 +442,7 @@ module Template = struct
         ^ String.concat ", "
             (Array.to_list
                (Array.map
-                  (fun (x, tys) ->
-                    x ^ "("
-                    ^ String.concat ", " (List.map pretty_type tys)
-                    ^ ")")
+                  (fun (x, tys) -> pretty_variant_constructor x tys)
                   fields))
         ^ " >"
     | VariantUnif (fields, (typeref, name)) ->
@@ -446,10 +450,7 @@ module Template = struct
         ^ String.concat ", "
             (Array.to_list
                (Array.map
-                  (fun (x, tys) ->
-                    x ^ "("
-                    ^ String.concat ", " (List.map pretty_type tys)
-                    ^ ")")
+                  (fun (x, tys) -> pretty_variant_constructor x tys)
                   fields))
         ^ " | "
         ^ pretty_type (Unif (typeref, name))
@@ -459,10 +460,7 @@ module Template = struct
         ^ String.concat ", "
             (Array.to_list
                (Array.map
-                  (fun (x, tys) ->
-                    x ^ "("
-                    ^ String.concat ", " (List.map pretty_type tys)
-                    ^ ")")
+                  (fun (x, tys) -> pretty_variant_constructor x tys)
                   fields))
         ^ " | "
         ^ pretty_type (Skol (u, level, name))
@@ -472,10 +470,7 @@ module Template = struct
         ^ String.concat ", "
             (Array.to_list
                (Array.map
-                  (fun (x, tys) ->
-                    x ^ "("
-                    ^ String.concat ", " (List.map pretty_type tys)
-                    ^ ")")
+                  (fun (x, tys) -> pretty_variant_constructor x tys)
                   fields))
         ^ " | " ^ pretty_name name ^ " >"
     | Unwrap ty -> pretty_type ty ^ "!"

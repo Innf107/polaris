@@ -133,6 +133,7 @@ module Value = struct
         constructor_name.name ^ "(" ^ pretty value ^ ")"
     | PartialDataConV constructor_name ->
         "<constructor: " ^ Name.pretty constructor_name ^ ">"
+    | VariantConstructorV (constructor_name, []) -> "<" ^ constructor_name ^ ">"
     | VariantConstructorV (constructor_name, args) ->
         "<" ^ constructor_name ^ "("
         ^ String.concat ", " (List.map pretty args)

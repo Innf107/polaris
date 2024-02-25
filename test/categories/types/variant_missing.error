@@ -1,10 +1,10 @@
 test/categories/types/variant_missing.pls:7:9: ERROR:
 Mismatched variant constructors.
 Missing mutual variant constructors '<  >'
-                                and '< C() >'
+                                and '< C >'
                                 respectively.
-    While trying to unify '< C() | ?α >'
-                      and '< A(), B() >'
+    While trying to unify '< C | ?α >'
+                      and '< A, B >'
   | 
 7 | print(f(x))
   |         ^

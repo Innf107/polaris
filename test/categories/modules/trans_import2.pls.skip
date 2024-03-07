@@ -1,0 +1,5 @@
+export { x }
+
+module M3 = import("trans_import3.pls.skip")
+
+let x = M3.T(5)

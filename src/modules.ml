@@ -27,13 +27,26 @@ let build_export_map header exprs rename_scope global_env =
         in
         `Val (name_entry, ty_entry)
     | Typed.ExportConstructor ((_, `Type), name) -> begin
-        match NameMap.find_opt name Types.(global_env.data_definitions) with
-        | Some (params, underlying) ->
+        (* TODO: the scope at the end doesn't necessarily contain the definition we want since it might have been shadowed.
+           RenameScope should really only map strings to names and have a separate map for all metadata that is keyed on the actual name *)
+        match
+          StringMap.find_opt name.name
+            Rename.RenameScope.(rename_scope.ty_constructors)
+        with
+        | Some (_name, params, _level, DataConSort) ->
             let tycon_entry =
-              (name.name, (name, List.length params, DataConSort))
+              (name.name, (name, params, DataConSort))
+            in
+            let underlying =
+              Rename.RenameScope.underlying_data_implementation name
+                rename_scope
             in
             let data_con_entry = (name, (params, underlying)) in
             `DataCon (tycon_entry, data_con_entry)
+        | Some _ ->
+            Util.panic __LOC__
+              "trying to export non-data type constructor marked as data type \
+               constructor"
         | None -> begin
             match NameMap.find_opt name Types.(global_env.type_aliases) with
             | None ->
@@ -42,7 +55,7 @@ let build_export_map header exprs rename_scope global_env =
                  ^ Name.pretty name)
             | Some (params, underlying) ->
                 let tycon_entry =
-                  (name.name, (name, List.length params, TypeAliasSort))
+                  (name.name, (name, params, TypeAliasSort))
                 in
                 let data_con_entry = (name, (params, underlying)) in
                 `TypeAlias (tycon_entry, data_con_entry)

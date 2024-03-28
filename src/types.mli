@@ -46,7 +46,6 @@ type errors
 type global_env = {
   var_types : Typed.ty NameMap.t;
   module_var_contents : global_env NameMap.t;
-  data_definitions : (name list * Typed.ty) NameMap.t;
   type_aliases : (name list * Typed.ty) NameMap.t;
   ambient_level : Typeref.level;
   exception_definitions : ty list NameMap.t;

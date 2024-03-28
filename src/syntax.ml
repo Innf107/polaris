@@ -48,28 +48,25 @@ module NameMap = Map.Make (Name)
 
 (* Types only diverge between parsed and everything else, so we use a separate functor for these
    to avoid unnecessary coercions *)
-module MakeTy (Ext : sig
-  type name
-  type mod_subscript_tycon_ext
-end) =
-struct
+module MakeTy = struct
   type ty =
-    | Forall of Ext.name * ty
+    | Forall of name * ty
     | Fun of ty list * ty
     (* This *doesn't* validate kinds yet *)
     | Constraint of ty * ty
-    | TyVar of Ext.name
-    | TyConstructor of Ext.name * ty list
+    | TyVar of name
+    (* IMPORTANT: tycon_ext should only hold meta data and nothing that the traversal needs to traverse *)
+    | TyConstructor of tycon_ext * name * ty list
     (* Type aliases are kept around as long as possible to improve error messages.
        We store a pointer the actual underlying type to make these very cheap *)
     | TypeAlias of {
-        name : Ext.name;
+        name : name;
         arguments : ty list;
         underlying : ty;
       }
     (* The 'name' is just kept around for error messages but *completely ignored* when typechecking *)
-    | Unif of ty Typeref.t * Ext.name
-    | Skol of Unique.t * Typeref.level * Ext.name
+    | Unif of ty Typeref.t * name
+    | Skol of Unique.t * Typeref.level * name
     | Number
     | Bool
     | String
@@ -79,21 +76,21 @@ struct
     | Ref of ty
     | Promise of ty
     | RecordClosed of (string * ty) array
-    | RecordUnif of (string * ty) array * (ty Typeref.t * Ext.name)
-    | RecordSkol of (string * ty) array * (Unique.t * Typeref.level * Ext.name)
-    | RecordVar of (string * ty) array * Ext.name
+    | RecordUnif of (string * ty) array * (ty Typeref.t * name)
+    | RecordSkol of (string * ty) array * (Unique.t * Typeref.level * name)
+    | RecordVar of (string * ty) array * name
     | VariantClosed of (string * ty list) array
-    | VariantUnif of (string * ty list) array * (ty Typeref.t * Ext.name)
+    | VariantUnif of (string * ty list) array * (ty Typeref.t * name)
     | VariantSkol of
-        (string * ty list) array * (Unique.t * Typeref.level * Ext.name)
-    | VariantVar of (string * ty list) array * Ext.name
+        (string * ty list) array * (Unique.t * Typeref.level * name)
+    | VariantVar of (string * ty list) array * name
     (* We keep subscript type constructors before renaming, but just replace them
        by their (unique!) type constructor in the original module afterwards,
        where mod_subscript_tycon_ext is instantiated to void *)
-    | ModSubscriptTyCon of
-        Ext.mod_subscript_tycon_ext * Ext.name * Ext.name * ty list
+    | ModSubscriptTyCon of mod_subscript_tycon_ext * name * name * ty list
     | Unwrap of ty
 end
+[@@ttg_template]
 
 type 'ty make_class_constraint = {
   variables : name list;
@@ -175,7 +172,7 @@ module Template = struct
     | BoolPat of loc * bool
     | OrPat of loc * pattern * pattern
     | TypePat of loc * pattern * ty
-    | DataPat of SubLocation.t * name * pattern
+    | DataPat of DataPatExt.t * name * pattern
     | ExceptionDataPat of loc * name * pattern list
     | VariantPat of VariantPatExt.t * string * pattern list
 
@@ -184,7 +181,7 @@ module Template = struct
   type module_exports = {
     exported_variables : (name * loc) StringMap.t;
     exported_variable_types : ty NameMap.t;
-    exported_ty_constructors : (name * int * type_constructor_sort) StringMap.t;
+    exported_ty_constructors : (name * name list * type_constructor_sort) StringMap.t;
     exported_data_definitions : (name list * ty) NameMap.t;
     exported_exceptions : ty list NameMap.t;
     exported_type_aliases : (name list * ty) NameMap.t;
@@ -378,8 +375,8 @@ module Template = struct
         ^ ") -> " ^ pretty_type res
     | Constraint (constraint_, ty) ->
         "(" ^ pretty_type constraint_ ^ ") => " ^ pretty_type ty
-    | TyConstructor (name, []) -> pretty_name name
-    | TyConstructor (name, args) ->
+    | TyConstructor (_ext, name, []) -> pretty_name name
+    | TyConstructor (_ext, name, args) ->
         pretty_name name ^ "("
         ^ String.concat ", " (List.map pretty_type args)
         ^ ")"
@@ -760,6 +757,7 @@ module Template = struct
   let get_pattern_loc = function
     | VarPat (ext, _) -> VarPatExt.loc ext
     | VariantPat (ext, _, _) -> VariantPatExt.loc ext
+    | DataPat (ext, _, _) -> DataPatExt.loc ext
     | AsPat (loc, _, _)
     | ConsPat (loc, _, _)
     | ListPat (loc, _)
@@ -769,7 +767,6 @@ module Template = struct
     | BoolPat (loc, _)
     | OrPat (loc, _, _)
     | TypePat (loc, _, _)
-    | DataPat ({ main = loc; _ }, _, _)
     | ExceptionDataPat (loc, _, _) ->
         loc
 
@@ -860,10 +857,10 @@ module Template = struct
             | TypeAlias { underlying; _ } ->
                 alias ty1 ty2;
                 go underlying ty2
-            | TyConstructor (name1, arguments1) -> begin
+            | TyConstructor (_ext1, name1, arguments1) -> begin
                 match ty2 with
-                | TyConstructor (name2, arguments2) when equal_name name1 name2
-                  ->
+                | TyConstructor (_ext2, name2, arguments2)
+                  when equal_name name1 name2 ->
                     matching ();
                     List.iter2 go arguments1 arguments2
                 | _ -> non_matching ()
@@ -1391,12 +1388,12 @@ module Template = struct
               | TyVar name ->
                   let name, state = self#traverse_name state name in
                   (TyVar name, state)
-              | TyConstructor (name, arg_types) ->
+              | TyConstructor (ext, name, arg_types) ->
                   let name, state = self#traverse_name state name in
                   let arg_types, state =
                     traverse_list self#traverse_type state arg_types
                   in
-                  (TyConstructor (name, arg_types), state)
+                  (TyConstructor (ext, name, arg_types), state)
               | TypeAlias { name; arguments; underlying } ->
                   let name, state = self#traverse_name state name in
                   let arguments, state =
@@ -1602,12 +1599,33 @@ end
 module ParsedTypeDefinition = MakeTy (struct
   type name = string
   type mod_subscript_tycon_ext = unit
+  type tycon_ext = unit
 end)
+[@@ttg_pass]
+
+type 'underlying make_type_constructor_metadata = {
+  level : Typeref.level;
+  parameters : name list;
+  underlying : 'underlying;
+}
 
 module FullTypeDefinition = MakeTy (struct
   type name = Name.t
   type mod_subscript_tycon_ext = void
+  type tycon_ext = [ `Data of ty | `Class ] make_type_constructor_metadata
 end)
+[@@ttg_pass]
+
+type type_constructor_metadata =
+  [ `Data of FullTypeDefinition.ty | `Class ] make_type_constructor_metadata
+
+module DataConstructorMetadata = struct
+  type t = [ `Data of FullTypeDefinition.ty ] make_type_constructor_metadata
+
+  let traverse_ty state f { level; parameters; underlying = `Data underlying } =
+    let underlying, state = f state underlying in
+    ({ level; parameters; underlying = `Data underlying }, state)
+end
 
 module EmptyExt = struct
   type t = unit
@@ -1619,6 +1637,16 @@ module type Ext = sig
   type t
 
   val loc : t -> loc
+
+  val traverse_ty :
+    'state ->
+    ('state -> FullTypeDefinition.ty -> FullTypeDefinition.ty * 'state) ->
+    t ->
+    t * 'state
+end
+
+module type ExtArgument = sig
+  type t
 
   val traverse_ty :
     'state ->
@@ -1644,6 +1672,17 @@ struct
   let traverse_ty state _ loc = (loc, state)
 end
 
+module And (A : Ext) (B : ExtArgument) = struct
+  type t = A.t * B.t
+
+  let loc (with_loc, _) = A.loc with_loc
+
+  let traverse_ty state f (a, b) =
+    let a, state = A.traverse_ty state f a in
+    let b, state = B.traverse_ty state f b in
+    ((a, b), state)
+end
+
 module SubLocation = struct
   type t = {
     main : loc;
@@ -1664,6 +1703,17 @@ module WithType = struct
     ((loc, ty), state)
 end
 
+module WithTypeAnd (M : ExtArgument) = struct
+  type t = loc * FullTypeDefinition.ty * M.t
+
+  let loc (loc, _, _) = loc
+
+  let traverse_ty state f (loc, ty, ext) =
+    let ty, state = f state ty in
+    let ext, state = M.traverse_ty state f ext in
+    ((loc, ty, ext), state)
+end
+
 module WithDefinitionLoc (M : Ext) = struct
   type t = M.t * loc
 
@@ -1672,6 +1722,25 @@ module WithDefinitionLoc (M : Ext) = struct
   let traverse_ty state f (t, definition_loc) =
     let t, state = M.traverse_ty state f t in
     ((t, definition_loc), state)
+end
+
+module SubLocationWith (M : sig
+  type t
+
+  val traverse_ty :
+    'state ->
+    ('state -> FullTypeDefinition.ty -> FullTypeDefinition.ty * 'state) ->
+    t ->
+    t * 'state
+end) =
+struct
+  type t = SubLocation.t * M.t
+
+  let loc (subloc, _) = SubLocation.loc subloc
+
+  let traverse_ty state f (subloc, t) =
+    let t, state = M.traverse_ty state f t in
+    ((subloc, t), state)
 end
 
 module SubLocationWithType = struct
@@ -1719,6 +1788,7 @@ module Parsed = Template (struct
   module DataConExt = LocOnly
   module SubscriptExt = SubLocation
   module ModSubscriptExt = LocOnly
+  module DataPatExt = SubLocation
 
   module LetRecExt = struct
     include SubLocation
@@ -1759,9 +1829,10 @@ module Typed = Template (struct
   module VarExt = WithDefinitionLoc (WithType)
   module VarPatExt = WithType
   module VariantPatExt = SubLocationWithType
-  module DataConExt = WithType
+  module DataConExt = WithTypeAnd (DataConstructorMetadata)
   module SubscriptExt = SubLocationWithType
   module ModSubscriptExt = WithType
+  module DataPatExt = SubLocationWith (DataConstructorMetadata)
 
   module LetRecExt = struct
     include SubLocationWithTypeAnd (struct
@@ -1848,9 +1919,10 @@ module Renamed = Template (struct
   module VarExt = WithDefinitionLoc (LocOnly)
   module VarPatExt = LocOnly
   module VariantPatExt = SubLocation
-  module DataConExt = LocOnly
+  module DataConExt = And (LocOnly) (DataConstructorMetadata)
   module SubscriptExt = SubLocation
   module ModSubscriptExt = LocOnly
+  module DataPatExt = SubLocationWith (DataConstructorMetadata)
 
   module LetRecExt = struct
     include SubLocation

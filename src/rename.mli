@@ -32,11 +32,27 @@ type rename_error =
 exception RenameError of rename_error
 
 module FilePathMap : module type of Map.Make (String)
+module RenameMap : module type of Map.Make (String)
 
 module RenameScope : sig
-  type t
+  type t = {
+    level : Typeref.level;
+    variables : (name * loc) RenameMap.t;
+    module_vars : (name * t) RenameMap.t;
+    ty_vars : name RenameMap.t;
+    (* Polaris does not have a Haskell-style kind system, so we
+       just check that type constructors are always fully applied in the renamer. *)
+    ty_constructors :
+      (name * name list * Typeref.level * type_constructor_sort) RenameMap.t;
+    type_aliases : (name list * Renamed.ty) NameMap.t;
+    underlying_data_constructor_implementations : Renamed.ty NameMap.t;
+    data_constructors : (name * data_constructor_sort) RenameMap.t;
+    type_classes : (name list * (name * Renamed.ty) StringMap.t) NameMap.t;
+  }
 
   val empty : t
+
+  val underlying_data_implementation : name -> t -> Renamed.ty
 end
 
 val rename_scope :

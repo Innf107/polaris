@@ -35,23 +35,60 @@ type rename_error =
 
 exception RenameError of rename_error
 
+(* TODO: switch to using a trie instead of dumb string maps here *)
 module RenameScope = struct
   open RenameMap
 
   type t = {
+    level : Typeref.level;
     variables : (name * loc) RenameMap.t;
     module_vars : (name * t) RenameMap.t;
     ty_vars : name RenameMap.t;
     (* Polaris does not have a Haskell-style kind system, so we
        just check that type constructors are always fully applied in the renamer. *)
-    ty_constructors : (name * int * type_constructor_sort) RenameMap.t;
+    ty_constructors :
+      (name * name list * Typeref.level * type_constructor_sort) RenameMap.t;
     type_aliases : (name list * Renamed.ty) NameMap.t;
+    underlying_data_constructor_implementations : Renamed.ty NameMap.t;
     data_constructors : (name * data_constructor_sort) RenameMap.t;
     type_classes : (name list * (name * Renamed.ty) StringMap.t) NameMap.t;
   }
 
+  let underlying_data_implementation name scope =
+    match
+      NameMap.find_opt name scope.underlying_data_constructor_implementations
+    with
+    | Some underlying -> underlying
+    | None ->
+        panic __LOC__
+          ("underlying data constructor implementation not found for: "
+         ^ Name.pretty name)
+
+  let data_constructor_metadata constructor_name_string scope =
+    match RenameMap.find_opt constructor_name_string scope.ty_constructors with
+    | Some (constructor_name, parameters, level, DataConSort) ->
+        {
+          parameters;
+          level;
+          underlying =
+            `Data (underlying_data_implementation constructor_name scope);
+        }
+    | Some _ ->
+        panic __LOC__
+          ("data constructor corresponding to non-data constructor: "
+         ^ constructor_name_string)
+    | None ->
+        panic __LOC__
+          ("data constructor without corresponding type constructor: "
+         ^ constructor_name_string)
+
+  (* Process the continuation in a higher level *)
+  let enter_level scope cont =
+    cont { scope with level = Typeref.next_level scope.level }
+
   let empty : t =
     {
+      level = Typeref.initial_top_level;
       variables =
         RenameMap.mapi
           (fun name _ -> ({ name; index = Name.primop_index }, Loc.internal))
@@ -60,6 +97,7 @@ module RenameScope = struct
       ty_vars = RenameMap.empty;
       ty_constructors = RenameMap.empty;
       type_aliases = NameMap.empty;
+      underlying_data_constructor_implementations = NameMap.empty;
       data_constructors =
         RenameMap.map
           (fun (name, _) -> (name, ExceptionSort))
@@ -78,10 +116,11 @@ module RenameScope = struct
   let insert_type_var (old : string) (renamed : name) (scope : t) : t =
     { scope with ty_vars = add old renamed scope.ty_vars }
 
-  let insert_type_constructor old renamed arg_count sort scope =
+  let insert_type_constructor old renamed params level sort scope =
     {
       scope with
-      ty_constructors = add old (renamed, arg_count, sort) scope.ty_constructors;
+      ty_constructors =
+        add old (renamed, params, level, sort) scope.ty_constructors;
     }
 
   let insert_type_alias name parameters underlying scope =
@@ -163,14 +202,16 @@ let rename_type_constructor :
     string ->
     Parsed.ty list ->
     Renamed.ty =
- fun rename_nonbinding loc scope name args ->
-  let name, arg_count, sort =
-    match RenameMap.find_opt name scope.ty_constructors with
-    | None -> raise (RenameError (TyConNotFound (name, loc)))
-    | Some (name, arg_count, sort) -> (name, arg_count, sort)
+ fun rename_nonbinding loc scope string_name args ->
+  let name, parameters, level, sort =
+    match RenameMap.find_opt string_name scope.ty_constructors with
+    | None -> raise (RenameError (TyConNotFound (string_name, loc)))
+    | Some (name, params, level, sort) -> (name, params, level, sort)
   in
-  if List.compare_length_with args arg_count <> 0 then begin
-    raise (RenameError (WrongNumberOfTyConArgs (name, arg_count, args, loc)))
+  if List.compare_lengths args parameters <> 0 then begin
+    raise
+      (RenameError
+         (WrongNumberOfTyConArgs (name, List.length parameters, args, loc)))
   end;
   let arguments = List.map rename_nonbinding args in
   begin
@@ -178,8 +219,24 @@ let rename_type_constructor :
     | TypeAliasSort ->
         let underlying = instantiate_type_alias scope name arguments in
         TypeAlias { name; arguments; underlying }
-    | DataConSort -> TyConstructor (name, arguments)
-    | ClassSort -> TyConstructor (name, arguments)
+    | DataConSort ->
+        let underlying =
+          match
+            NameMap.find_opt name
+              scope.underlying_data_constructor_implementations
+          with
+          | Some underlying -> underlying
+          | None ->
+              panic __LOC__
+                (Loc.pretty loc
+               ^ ": Missing underlying implementation of data constructor '"
+               ^ Name.pretty name ^ "'")
+        in
+        TyConstructor
+          ({ level; parameters; underlying = `Data underlying }, name, arguments)
+    | ClassSort ->
+        TyConstructor
+          ({ level; parameters; underlying = `Class }, name, arguments)
   end
 
 let rename_type loc (scope : RenameScope.t) original_type =
@@ -202,7 +259,7 @@ let rename_type loc (scope : RenameScope.t) original_type =
 
           let class_name, args =
             match class_constraint with
-            | TyConstructor (class_name, args) -> (class_name, args)
+            | TyConstructor (_metadata, class_name, args) -> (class_name, args)
             | _ ->
                 raise
                   (RenameError (NonClassInConstraint (class_constraint, loc)))
@@ -241,7 +298,7 @@ let rename_type loc (scope : RenameScope.t) original_type =
                   varname )
           | None -> raise (RenameError (TyVarNotFound (varname, loc)))
         end
-      | TyConstructor (name, args) ->
+      | TyConstructor ((), name, args) ->
           rename_type_constructor (rename_nonbinding scope) loc scope name args
       | ModSubscriptTyCon ((), mod_name, name, args) ->
           let _, module_export_scope =
@@ -390,22 +447,48 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t)
       let p', p_trans, p_ty_trans = rename_pattern or_bound_variables scope p in
       let ty', ty_trans = rename_type loc scope ty in
       (TypePat (loc, p', ty'), p_trans, fun scope -> ty_trans (p_ty_trans scope))
-  | DataPat (loc, constructor_name, pattern) ->
+  | DataPat (loc, constructor_name_string, pattern) ->
       let pattern, scope_transformer, type_transformer =
         rename_pattern or_bound_variables scope pattern
       in
       begin
-        match RenameMap.find_opt constructor_name scope.data_constructors with
-        | Some (constructor_name, NewtypeConSort) ->
-            ( DataPat (loc, constructor_name, pattern),
-              scope_transformer,
-              type_transformer )
+        match
+          RenameMap.find_opt constructor_name_string scope.data_constructors
+        with
+        | Some (constructor_name, NewtypeConSort) -> begin
+            match
+              RenameMap.find_opt constructor_name_string scope.ty_constructors
+            with
+            | None ->
+                panic __LOC__
+                  ("data constructor without corresponding type constructor: "
+                  ^ Name.pretty constructor_name)
+            | Some (name, parameters, level, DataConSort) ->
+                ( DataPat
+                    ( ( loc,
+                        {
+                          level;
+                          parameters;
+                          underlying =
+                            `Data
+                              (RenameScope.underlying_data_implementation name
+                                 scope);
+                        } ),
+                      constructor_name,
+                      pattern ),
+                  scope_transformer,
+                  type_transformer )
+            | Some _ ->
+                panic __LOC__
+                  ("data constructor corresponds to non-data type: "
+                  ^ Name.pretty constructor_name)
+          end
         | Some (constructor_name, ExceptionSort) ->
             ( ExceptionDataPat (loc.main, constructor_name, [ pattern ]),
               scope_transformer,
               type_transformer )
         | None ->
-            ( VariantPat (loc, constructor_name, [ pattern ]),
+            ( VariantPat (loc, constructor_name_string, [ pattern ]),
               scope_transformer,
               type_transformer )
       end
@@ -473,9 +556,10 @@ let rec rename_mod_expr :
                    RenameScope.insert_var name renamed loc r)
                  mod_exports.exported_variables
             |> StringMap.fold
-                 (fun name (renamed, arg_count, sort) r ->
-                   RenameScope.insert_type_constructor name renamed arg_count
-                     sort
+                 (fun name (renamed, parameters, sort) r ->
+                   RenameScope.insert_type_constructor name renamed parameters
+                     (* The type is exported so it has to be defined at the top level anyway *)
+                     Typeref.initial_top_level sort
                      (match sort with
                      | DataConSort ->
                          RenameScope.insert_data_constructor name renamed
@@ -490,8 +574,9 @@ let rec rename_mod_expr :
                  mod_exports.exported_exceptions
             |> NameMap.fold
                  (fun name (params, methods) r ->
-                   RenameScope.insert_type_constructor name.name name
-                     (List.length params) ClassSort
+                   (* the class is exported so it has to be defined at the top level anyway *)
+                   RenameScope.insert_type_constructor name.name name params
+                     Typeref.initial_top_level ClassSort
                      (RenameScope.insert_type_class name params
                         (StringMap.of_seq
                            (Seq.map
@@ -537,13 +622,17 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
   | VariantConstructor (loc, name, args) ->
       let args = List.map (rename_expr exports scope) args in
       VariantConstructor (loc, name, args)
-  | DataConstructor (loc, constructor_name) -> begin
-      match RenameMap.find_opt constructor_name scope.data_constructors with
+  | DataConstructor (loc, constructor_name_string) -> begin
+      match
+        RenameMap.find_opt constructor_name_string scope.data_constructors
+      with
       | Some (constructor_name, NewtypeConSort) ->
-          DataConstructor (loc, constructor_name)
+          DataConstructor
+            ( (loc, data_constructor_metadata constructor_name_string scope),
+              constructor_name )
       | Some (constructor_name, ExceptionSort) ->
           ExceptionConstructor (loc, constructor_name)
-      | None -> VariantConstructor (loc, constructor_name, [])
+      | None -> VariantConstructor (loc, constructor_name_string, [])
     end
   | ExceptionConstructor (loc, _) ->
       panic __LOC__
@@ -551,30 +640,47 @@ let rec rename_expr (exports : (module_exports * Typed.expr list) FilePathMap.t)
   (* We need this special case since data constructors are represented as unapplied values
      (similar to variables), whereas variant constructors always have to appear fully applied.
      (Otherwise their type would be ambiguous if we want to allow `A to be equivalent to `A() ) *)
-  | App (loc, DataConstructor (constructor_loc, constructor_name), args) ->
+  | App (loc, DataConstructor (constructor_loc, constructor_name_string), args)
+    ->
       let args = List.map (rename_expr exports scope) args in
       begin
-        match RenameMap.find_opt constructor_name scope.data_constructors with
+        match
+          RenameMap.find_opt constructor_name_string scope.data_constructors
+        with
         | Some (constructor_name, NewtypeConSort) ->
-            App (loc, DataConstructor (constructor_loc, constructor_name), args)
+            App
+              ( loc,
+                DataConstructor
+                  ( ( constructor_loc,
+                      RenameScope.data_constructor_metadata
+                        constructor_name_string scope ),
+                    constructor_name ),
+                args )
         | Some (constructor_name, ExceptionSort) ->
             App
               ( loc,
                 ExceptionConstructor (constructor_loc, constructor_name),
                 args )
-        | None -> VariantConstructor (loc, constructor_name, args)
+        | None -> VariantConstructor (loc, constructor_name_string, args)
       end
-  | ModSubscriptDataCon ((), loc, mod_name, name) ->
+  | ModSubscriptDataCon ((), loc, mod_name, name_string) ->
       let _, module_export_scope =
         RenameScope.lookup_mod_var scope loc mod_name
       in
 
-      let name, sort = RenameScope.lookup_data module_export_scope loc name in
+      let name, sort =
+        RenameScope.lookup_data module_export_scope loc name_string
+      in
       (* We get rid of the module subscript expression part, since the data constructor name
          is guaranteed to be unique among all modules so we don't need it after the renamer anymore *)
       begin
         match sort with
-        | NewtypeConSort -> DataConstructor (loc, name)
+        | NewtypeConSort ->
+            DataConstructor
+              ( ( loc,
+                  RenameScope.data_constructor_metadata name_string
+                    module_export_scope ),
+                name )
         | ExceptionSort -> ExceptionConstructor (loc, name)
       end
   | App (loc, f, args) ->
@@ -763,7 +869,9 @@ and rename_seq_state
       (* Regular lets are non-recursive, so e' is *not* evaluated in the new scope.
          We still need to bind type variables in the inner scope though
          (See Note [PatternTypeTransformers] and the case for `Let`) *)
-      let e' = rename_expr exports (ty_trans scope) e in
+      let e' =
+        enter_level scope (fun scope -> rename_expr exports (ty_trans scope) e)
+      in
       let exprs', res_scope =
         rename_seq_state exports (scope_trans scope) exprs
       in
@@ -787,7 +895,10 @@ and rename_seq_state
          only concerns the parameters, but we need to include the type transformer for the
          (potential) type annotation!
          (See Note [PatternTypeTransformers] and the case for `LetRec`) *)
-      let e' = rename_expr exports inner_scope e in
+      let e' =
+        enter_level inner_scope (fun inner_scope ->
+            rename_expr exports inner_scope e)
+      in
       let exprs', res_scope = rename_seq_state exports scope' exprs in
       (LetRecSeq (locs, mty', x', patterns', e') :: exprs', res_scope)
   | LetEnvSeq (loc, x, e) :: exprs ->
@@ -804,12 +915,9 @@ and rename_seq_state
       (LetModuleSeq (loc, x', mod_expr) :: exprs, scope)
   | LetDataSeq (loc, data_name, params, ty) :: exprs ->
       let data_name' = fresh_var data_name in
-      (* We insert the type constructor immediately to support recursion *)
-      let scope =
-        insert_type_constructor data_name data_name' (List.length params)
-          DataConSort scope
-      in
 
+      (* TODO: add the data constructor to underlying_data_constructor_implementations.
+         you're going to need to ty the knot and use add the underlying type to the scope used in it's own renaming *)
       let renamed_params =
         List.map
           (fun param ->
@@ -817,6 +925,14 @@ and rename_seq_state
             (param, param'))
           params
       in
+
+      (* We insert the type constructor immediately to support recursion *)
+      let scope =
+        insert_type_constructor data_name data_name'
+          (List.map snd renamed_params)
+          scope.level DataConSort scope
+      in
+
       let type_scope =
         List.fold_right
           (fun (param, param') scope -> insert_type_var param param' scope)
@@ -852,8 +968,9 @@ and rename_seq_state
       let underlying_type', _ = rename_type loc type_scope underlying_type in
 
       let scope =
-        insert_type_constructor alias_name alias_name' (List.length params)
-          TypeAliasSort
+        insert_type_constructor alias_name alias_name'
+          (List.map snd renamed_params)
+          scope.level TypeAliasSort
           (insert_type_alias alias_name'
              (List.map snd renamed_params)
              underlying_type' scope)
@@ -901,8 +1018,9 @@ and rename_seq_state
           (List.map
              (fun (name, _, loc) scope -> insert_var name.name name loc scope)
              methods')
-          (insert_type_constructor class_name class_name' (List.length params)
-             ClassSort
+          (insert_type_constructor class_name class_name'
+             (List.map snd renamed_params)
+             scope.level ClassSort
              (insert_type_class class_name'
                 (List.map snd renamed_params)
                 method_map scope))
@@ -931,19 +1049,20 @@ and rename_seq_state
 
       let class_name', arg_count =
         match RenameMap.find_opt class_name scope.ty_constructors with
-        | Some (class_name', arg_count, ClassSort)
-          when List.compare_length_with args arg_count <> 0 ->
+        | Some (class_name', parameters, _level, ClassSort)
+          when List.compare_lengths args parameters <> 0 ->
             raise
               (RenameError
                  (WrongNumberOfClassArgs
                     {
                       class_name = class_name';
-                      expected = arg_count;
+                      expected = List.length parameters;
                       actual = List.length args;
                       loc;
                     }))
-        | Some (class_name', arg_count, ClassSort) -> (class_name', arg_count)
-        | Some (class_name', _, _) ->
+        | Some (class_name', parameters, _level, ClassSort) ->
+            (class_name', List.length parameters)
+        | Some (class_name', _, _, _) ->
             raise (RenameError (NonClassInInstance (class_name', loc)))
         | None ->
             raise_notrace (RenameError (DataConNotFound (class_name, loc)))
@@ -969,7 +1088,10 @@ and rename_seq_state
                     let patterns, scope_trans, _type_trans =
                       rename_patterns scope patterns
                     in
-                    let body = rename_expr exports (scope_trans scope) body in
+                    let body =
+                      enter_level scope (fun scope ->
+                          rename_expr exports (scope_trans scope) body)
+                    in
                     Right (ty, name', patterns, body))
               methods
           in
@@ -1072,7 +1194,7 @@ let rename_exports :
           Renamed.ExportVal (loc, name)
       | Parsed.ExportConstructor (loc, name) -> (
           match RenameMap.find_opt name scope.ty_constructors with
-          | Some (renamed, _, _sort) -> begin
+          | Some (renamed, _, _, _sort) -> begin
               match NameMap.find_opt renamed scope.type_classes with
               | Some (params, fields) ->
                   Renamed.ExportConstructor

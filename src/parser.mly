@@ -391,7 +391,7 @@ ty2:
                                                                 | "Bool" -> Bool
                                                                 | "String" -> String
                                                                 | "Exception" -> Exception
-                                                                | _ -> TyConstructor($1, [])
+                                                                | _ -> TyConstructor((), $1, [])
                                                             }
     | CONSTRUCTOR "." CONSTRUCTOR                           { ModSubscriptTyCon((), $1, $3, []) }
     | IDENT                                                 { TyVar($1) }
@@ -406,7 +406,7 @@ ty2:
                                                                         end
                                                                     | _ -> Util.panic __LOC__ (Loc.pretty (loc $startpos $endpos) ^ ": Type constructor " ^ $1 ^ " should take exactly one argument.\nThis is a known bug, please do NOT report it! The compiler just needs some work to report this correctly. It is trying its best!")
                                                                     end
-                                                                | _ -> TyConstructor($1, $3)
+                                                                | _ -> TyConstructor((), $1, $3)
                                                             }
     | CONSTRUCTOR "." CONSTRUCTOR "(" sep_trailing(COMMA, ty) ")"   { ModSubscriptTyCon((), $1, $3, $5) }
     | "{" sep_trailing(COMMA, record_entry) "}"                     { RecordClosed(Array.of_list $2) }

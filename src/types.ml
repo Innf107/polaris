@@ -166,7 +166,7 @@ end = struct
               Difflist.cons (HVariable level) Difflist.empty
           | Some level -> Difflist.cons (HVariable level) Difflist.empty
         end
-      | TyConstructor (name, arguments) ->
+      | TyConstructor (_ext, name, arguments) ->
           Difflist.cons (HConstructor name)
             (Difflist.concat_map_list unroll_type arguments)
       | TypeAlias { underlying; _ } ->
@@ -438,7 +438,7 @@ end = struct
                ^ Name.pretty name ^ ". rest: ["
                 ^ String.concat ", " (List.map pretty_type rest)
                 ^ "]")
-          | (TyConstructor (name, arguments) as original_type) :: rest ->
+          | (TyConstructor (_ext, name, arguments) as original_type) :: rest ->
               filter_children ~new_types:arguments ~rest ~original_type
                 (function
                 | HConstructor constr_name when Name.equal name constr_name ->
@@ -589,7 +589,6 @@ type ty_constraint =
 and global_env = {
   var_types : Typed.ty NameMap.t;
   module_var_contents : global_env NameMap.t;
-  data_definitions : (name list * Typed.ty) NameMap.t;
   type_aliases : (name list * Typed.ty) NameMap.t;
   ambient_level : Typeref.level;
   exception_definitions : ty list NameMap.t;
@@ -603,7 +602,6 @@ and local_env = {
   constraints : ty_constraint Difflist.t ref;
   given_constraints : given_constraints;
   module_var_contents : global_env NameMap.t;
-  data_definitions : (Typeref.level * name list * ty) NameMap.t;
   type_aliases : (name list * ty) NameMap.t;
   (* We do not need carry type information about the type class methods here.
      These have already been matched up with the correct instance methods by the renamer *)
@@ -759,17 +757,6 @@ let enter_level env cont = cont (increase_ambient_level env)
 let insert_var : name -> ty -> local_env -> local_env =
  fun x ty env -> { env with local_types = NameMap.add x ty env.local_types }
 
-let insert_data_definition :
-    Typeref.level -> name -> name list -> ty -> local_env -> local_env =
- fun level constructor params underlying_type env ->
-  {
-    env with
-    data_definitions =
-      NameMap.add constructor
-        (level, params, underlying_type)
-        env.data_definitions;
-  }
-
 let insert_type_alias : name -> name list -> ty -> local_env -> local_env =
  fun constructor params underlying_type env ->
   {
@@ -886,7 +873,7 @@ let rec collect_atomic_given_constraints :
     ty ->
     (class_constraint * Evidence.binding) list * Evidence.binding list =
  fun variables -> function
-  | TyConstructor (name, arguments) ->
+  | TyConstructor (_ext, name, arguments) ->
       let binding = Evidence.make_binding () in
       ([ ({ variables; class_name = name; arguments }, binding) ], [ binding ])
   | TypeAlias { name = _; arguments = _; underlying } ->
@@ -903,7 +890,7 @@ let rec collect_atomic_wanted_constraints :
     ty ->
     (class_constraint * Evidence.meta) list * Evidence.meta list =
  fun env -> function
-  | TyConstructor (name, arguments) ->
+  | TyConstructor (_ext, name, arguments) ->
       let target = Evidence.make_empty_meta () in
 
       ( [ ({ variables = []; class_name = name; arguments }, target) ],
@@ -1146,7 +1133,6 @@ let rec eval_module_env :
           var_types = mod_exports.exported_variable_types;
           (* TODO: Allow modules to export other modules and include them here *)
           module_var_contents = NameMap.empty;
-          data_definitions = mod_exports.exported_data_definitions;
           exception_definitions = mod_exports.exported_exceptions;
           type_aliases = mod_exports.exported_type_aliases;
           type_classes = NameMap.map fst mod_exports.exported_type_classes;
@@ -1231,24 +1217,21 @@ let rec infer_pattern :
       let env_trans, pattern = check_pattern env allow_polytype pattern ty in
 
       (ty, env_trans, TypePat (loc, pattern, ty))
-  | DataPat (loc, constructor_name, pattern) ->
-      let datacon_level, type_variables, underlying_type_raw =
-        match NameMap.find_opt constructor_name env.data_definitions with
-        | Some (level, vars, ty) -> (level, vars, ty)
-        | None ->
-            panic __LOC__
-              (Loc.pretty loc.main
-             ^ ": Data constructor not found in typechecker: '"
-              ^ Name.pretty constructor_name
-              ^ "'. This should have been caught earlier!")
-      in
+  | DataPat ((loc, metadata), constructor_name, pattern) ->
       let vars_with_unifs =
-        List.map (fun var -> (var, fresh_unif_with env var.name)) type_variables
+        List.map
+          (fun var -> (var, fresh_unif_with env var.name))
+          metadata.parameters
       in
 
       let data_type =
-        TyConstructor (constructor_name, List.map snd vars_with_unifs)
+        TyConstructor
+          ( (metadata :> type_constructor_metadata),
+            constructor_name,
+            List.map snd vars_with_unifs )
       in
+
+      let (`Data underlying_type_raw) = metadata.underlying in
 
       let underlying_type =
         replace_tvars
@@ -1260,7 +1243,9 @@ let rec infer_pattern :
         check_pattern env allow_polytype pattern underlying_type
       in
 
-      (data_type, env_trans, DataPat (loc, constructor_name, pattern))
+      ( data_type,
+        env_trans,
+        DataPat ((loc, metadata), constructor_name, pattern) )
   | VariantPat (loc, constructor_name, patterns) ->
       (* See Note [Inferring Variant Patterns] *)
       let pattern_types, env_transformers, patterns =
@@ -1437,22 +1422,20 @@ and check_pattern :
       assert (targets = []);
       (* TODO: Yeah no these are *not* empty *)
       check_pattern env allow_polytype pattern ty
-  | ( DataPat (loc, data_name, underlying_pattern),
-      TyConstructor (constr_name, args) )
+  | ( DataPat ((loc, metadata), data_name, underlying_pattern),
+      TyConstructor (_, constr_name, args) )
     when Name.equal data_name constr_name -> begin
-      match NameMap.find_opt data_name env.data_definitions with
-      | None -> panic __LOC__ "Unbound data constructor in type checker"
-      | Some (_datacon_level, type_params, underlying_type_raw) ->
-          let underlying_type =
-            replace_tvars
-              (NameMap.of_seq
-                 (Seq.zip (List.to_seq type_params) (List.to_seq args)))
-              underlying_type_raw
-          in
-          let env_trans, underlying_pattern =
-            check_pattern env allow_polytype underlying_pattern underlying_type
-          in
-          (env_trans, DataPat (loc, data_name, underlying_pattern))
+      let (`Data underlying_type_raw) = metadata.underlying in
+      let underlying_type =
+        replace_tvars
+          (NameMap.of_seq
+             (Seq.zip (List.to_seq metadata.parameters) (List.to_seq args)))
+          underlying_type_raw
+      in
+      let env_trans, underlying_pattern =
+        check_pattern env allow_polytype underlying_pattern underlying_type
+      in
+      (env_trans, DataPat ((loc, metadata), data_name, underlying_pattern))
     end
   | DataPat _, _ -> defer_to_inference ()
   | VariantPat _, _ -> defer_to_inference ()
@@ -1521,33 +1504,28 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
           panic __LOC__
             ("Unbound variable in type checker: '" ^ Name.pretty x ^ "'")
     end
-  | DataConstructor (loc, data_name) -> begin
-      match NameMap.find_opt data_name env.data_definitions with
-      | Some (_datacon_level, params, ty) ->
-          let data_constructor_type =
-            List.fold_right
-              (fun param ty -> Forall (param, ty))
-              params
-              (Fun
-                 ( [ ty ],
-                   TyConstructor (data_name, List.map (fun x -> TyVar x) params)
-                 ))
-          in
-          (* Sources should *currently* always be empty since data constructors cannot contain
-             constraints (We are not going to copy that mistake from old Haskell).
-             However, this might change if we ever get GADTs so let's make sure this already
-             handles that case correctly *)
-          let instantiated, targets =
-            instantiate loc env data_constructor_type
-          in
-          ( instantiated,
-            apply_targets loc targets
-              (Typed.DataConstructor ((loc, data_constructor_type), data_name))
-          )
-      | None ->
-          panic __LOC__
-            ("Unbound data constructor in type checker: '"
-           ^ Name.pretty data_name ^ "'")
+  | DataConstructor ((loc, metadata), data_name) -> begin
+      let (`Data underlying) = metadata.underlying in
+      let data_constructor_type =
+        List.fold_right
+          (fun param ty -> Forall (param, ty))
+          metadata.parameters
+          (Fun
+             ( [ underlying ],
+               TyConstructor
+                 ( (metadata :> type_constructor_metadata),
+                   data_name,
+                   List.map (fun x -> TyVar x) metadata.parameters ) ))
+      in
+      (* Sources should *currently* always be empty since data constructors cannot contain
+          constraints (We are not going to copy that mistake from old Haskell).
+          However, this might change if we ever get GADTs so let's make sure this already
+          handles that case correctly *)
+      let instantiated, targets = instantiate loc env data_constructor_type in
+      ( instantiated,
+        apply_targets loc targets
+          (Typed.DataConstructor
+             ((loc, data_constructor_type, metadata), data_name)) )
     end
   | ExceptionConstructor (loc, exception_name) -> begin
       match NameMap.find_opt exception_name env.exception_definitions with
@@ -2236,20 +2214,11 @@ and check_seq_expr :
          so we *need to merge these* with the current environment.
          (This is fine since data constructor names are always unique, even across modules)
       *)
-      let data_definitions_with_levels =
-        NameMap.map
-          (fun (params, underlying) -> (env.level, params, underlying))
-          module_env.data_definitions
-      in
       ( (fun env ->
           {
             env with
             module_var_contents =
               NameMap.add name module_env env.module_var_contents;
-            data_definitions =
-              NameMap.union
-                (fun _ _ x -> Some x)
-                env.data_definitions data_definitions_with_levels;
             exception_definitions =
               NameMap.union
                 (fun _ _ x -> Some x)
@@ -2257,15 +2226,17 @@ and check_seq_expr :
           }),
         LetModuleSeq (loc, name, mod_expr) )
   | LetDataSeq (loc, data_name, params, ty) ->
-      ( insert_data_definition env.level data_name params ty,
-        LetDataSeq (loc, data_name, params, ty) )
+      (Fun.id, LetDataSeq (loc, data_name, params, ty))
   | LetTypeSeq (loc, alias_name, params, ty) ->
       ( insert_type_alias alias_name params ty,
         LetTypeSeq (loc, alias_name, params, ty) )
   | LetClassSeq (loc, class_name, params, methods) ->
-      let insert_method (name, ty) env =
+      let insert_method (name, ty) (env : local_env) =
         let class_constraint =
-          TyConstructor (class_name, List.map (fun x -> TyVar x) params)
+          TyConstructor
+            ( { level = env.level; parameters = params; underlying = `Class },
+              class_name,
+              List.map (fun x -> TyVar x) params )
         in
         let type_with_class =
           List.fold_right
@@ -2368,7 +2339,10 @@ and check_seq_expr :
           Util.compose env_transformers (emit_givens loc inner_givens env)
         in
 
-        let body = check inner_env body_type body in
+        let body =
+          enter_level inner_env (fun inner_env ->
+              check inner_env body_type body)
+        in
 
         (expected_type, name, parameters, body)
       in
@@ -2489,15 +2463,6 @@ and check_match_patterns env result_type scrutinee_type = function
       let rest = check_match_patterns env result_type scrutinee_type branches in
       (pattern, expr) :: rest
 
-let datacon_level : name -> local_env -> Typeref.level =
- fun constructor env ->
-  match NameMap.find_opt constructor env.data_definitions with
-  | None ->
-      panic __LOC__
-        ("Trying to look up level of unbound data constructor "
-       ^ Name.pretty constructor)
-  | Some (level, _, _) -> level
-
 (* Perform an occurs check and adjust levels (See Note [Levels]) *)
 let occurs_and_adjust :
     ty Typeref.t ->
@@ -2548,7 +2513,7 @@ let occurs_and_adjust :
                          full_ty,
                          optional_unify_context ))
           end
-        | TyConstructor (constructor_name, _) -> begin
+        | TyConstructor (metadata, constructor_name, _) -> begin
             match Typeref.get needle with
             | Bound _ ->
                 panic __LOC__
@@ -2557,8 +2522,7 @@ let occurs_and_adjust :
                   ^ pretty_type (Unif (needle, Name.fresh "unknown")))
             | Unbound needle_level ->
                 if
-                  Typeref.unifiable_level
-                    ~type_level:(datacon_level constructor_name definition_env)
+                  Typeref.unifiable_level ~type_level:metadata.level
                     ~unif_level:needle_level
                 then (ty, state)
                 else
@@ -2713,7 +2677,7 @@ let solve_unify :
             bind_with_context typeref name ty optional_unify_context;
             true
       end
-    | TyConstructor (name1, args1), TyConstructor (name2, args2) ->
+    | TyConstructor (_, name1, args1), TyConstructor (_, name2, args2) ->
         if Name.compare name1 name2 <> 0 then begin
           type_error errors loc
             (MismatchedTyCon (name1, name2, optional_unify_context));
@@ -3036,23 +3000,21 @@ let solve_unwrap :
     loc -> local_env -> unify_state -> ty -> ty -> local_env -> bool =
  fun loc env state ty1 ty2 definition_env ->
   match normalize_unif ty1 with
-  | TyConstructor (name, args) ->
-      let data_level, var_names, underlying_type_raw =
+  | TyConstructor (metadata, name, args) ->
+      let underlying_type_raw =
         begin
-          match NameMap.find_opt name definition_env.data_definitions with
-          | None ->
+          match metadata.underlying with
+          | `Data underlying -> underlying
+          | `Class ->
               panic __LOC__
-                (Loc.pretty loc ^ ": Data constructor '" ^ Name.pretty name
-               ^ "' not found in unwrap expression. This should have been \
-                  caught earlier!")
-          | Some (data_level, var_names, underlying_type_raw) ->
-              (data_level, var_names, underlying_type_raw)
+                (Loc.pretty loc ^ ": Class constructor in unwrap constraint")
         end
       in
       (* TODO: Can local types escape this way? *)
       let underlying_type =
         replace_tvars
-          (NameMap.of_seq (Seq.zip (List.to_seq var_names) (List.to_seq args)))
+          (NameMap.of_seq
+             (Seq.zip (List.to_seq metadata.parameters) (List.to_seq args)))
           underlying_type_raw
       in
       let _ = solve_unify loc env state underlying_type ty2 definition_env in
@@ -3434,8 +3396,16 @@ let generalize :
           (Evidence.Dictionary generalized_binding);
         bindings := Difflist.snoc !bindings generalized_binding;
 
+        (* TODO: wanted constraitns should probably carry parameter and level information *)
         let constraint_type =
-          TyConstructor (wanted.class_name, wanted.arguments)
+          TyConstructor
+            ( {
+                underlying = `Class;
+                parameters = todo __LOC__;
+                level = todo __LOC__;
+              },
+              wanted.class_name,
+              wanted.arguments )
         in
         (Constraint (constraint_type, type_), rest)
     | constraint_ :: rest ->
@@ -3520,13 +3490,6 @@ let typecheck_top_level :
     expr ->
     global_env * Typed.expr =
  fun global_env errors check_or_infer expr ->
-  let data_definitions_with_levels =
-    NameMap.map
-      (fun (params, underlying) ->
-        (global_env.ambient_level, params, underlying))
-      global_env.data_definitions
-  in
-
   let local_env =
     {
       errors;
@@ -3534,7 +3497,6 @@ let typecheck_top_level :
       module_var_contents = global_env.module_var_contents;
       constraints = ref Difflist.empty;
       given_constraints = global_env.given_constraints;
-      data_definitions = data_definitions_with_levels;
       exception_definitions = global_env.exception_definitions;
       type_aliases = global_env.type_aliases;
       type_classes = global_env.type_classes;
@@ -3559,7 +3521,6 @@ let typecheck_top_level :
         module_var_contents = NameMap.empty;
         constraints = local_env.constraints;
         given_constraints = local_env.given_constraints;
-        data_definitions = NameMap.empty;
         exception_definitions = NameMap.empty;
         type_aliases = NameMap.empty;
         type_classes = NameMap.empty;
@@ -3608,11 +3569,6 @@ let typecheck_top_level :
     | _ -> typed_expr
   in
 
-  let data_definitions_without_levels =
-    NameMap.map
-      (fun (_level, params, underlying) -> (params, underlying))
-      temp_local_env.data_definitions
-  in
   let global_env =
     {
       var_types =
@@ -3621,10 +3577,6 @@ let typecheck_top_level :
         NameMap.union
           (fun _ _ x -> Some x)
           global_env.module_var_contents temp_local_env.module_var_contents;
-      data_definitions =
-        NameMap.union
-          (fun _ _ x -> Some x)
-          global_env.data_definitions data_definitions_without_levels;
       exception_definitions =
         NameMap.union
           (fun _ _ x -> Some x)
@@ -3725,7 +3677,6 @@ let empty_env =
   {
     var_types = prim_types;
     module_var_contents = NameMap.empty;
-    data_definitions = NameMap.empty;
     exception_definitions =
       NameMap.of_seq
         (Seq.map

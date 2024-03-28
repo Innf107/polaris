@@ -77,7 +77,7 @@ let extract_source_fragment loc in_channel text_style error_or_warning =
           (String.length line - (loc.end_col - 1)) )
   in
   let underline_string =
-    color (String.make (String.length line_at_error) '^')
+    color (String.concat "" (List.init (String.length line_at_error) (fun _ -> "▔")))
   in
   let underline =
     String.make (String.length line_before) ' '

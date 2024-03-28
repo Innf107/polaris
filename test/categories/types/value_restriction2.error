@@ -1,6 +1,6 @@
 test/categories/types/value_restriction2.pls:5:12: ERROR:
 Unable to unify types 'Bool'
                   and 'Number'
-  | 
-5 | let _ = c!(true)
-  |            ^^^^
+  ┃ 
+5 ┃ let _ = c!(true)
+  ┃            ▔▔▔▔

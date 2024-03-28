@@ -1,6 +1,6 @@
 test/categories/types/occurs_direct.pls:2:12: ERROR:
 Unable to construct the infinite type '?α'
                                     ~ 'List(?α)'
-  | 
-2 | let f(x) = [f(x)]
-  |            ^^^^^^
+  ┃ 
+2 ┃ let f(x) = [f(x)]
+  ┃            ▔▔▔▔▔▔

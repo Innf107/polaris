@@ -3,6 +3,6 @@ Unable to construct the infinite type '?α'
                                     ~ '{ tail : { head : ?α1 | ?α } | ?µ }'
     While trying to unify '{ head : ?α1 | ?α }'
                       and '{ tail : { head : ?α1 | ?α } | ?α2 }'
-  | 
-2 | let infinite_map(f, seq) = f(seq.head) :: infinite_map(f, seq.tail)
-  |                                                           ^^^
+  ┃ 
+2 ┃ let infinite_map(f, seq) = f(seq.head) :: infinite_map(f, seq.tail)
+  ┃                                                           ▔▔▔

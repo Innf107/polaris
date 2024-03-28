@@ -5,6 +5,6 @@ Missing mutual record fields '{ y : Number }'
                          respectively.
     While trying to unify '{ x : Number, z : Number }'
                       and '{ x : Number, y : Number | ?µ }'
-  | 
-3 | f({ x = 5, z = 6 })
-  |   ^^^^^^^^^^^^^^^^
+  ┃ 
+3 ┃ f({ x = 5, z = 6 })
+  ┃   ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔

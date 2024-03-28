@@ -5,6 +5,6 @@ Missing mutual variant constructors '< A() >'
                                 respectively.
     While trying to unify '(< A(), B() | ?r >) -> < B() | ?r >'
                       and '(< A(), B() | ?r >) -> < A(), B() | ?r >'
-  | 
-9 | let _ = g(f)
-  |           ^
+  ┃ 
+9 ┃ let _ = g(f)
+  ┃           ▔

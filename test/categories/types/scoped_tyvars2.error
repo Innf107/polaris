@@ -1,5 +1,5 @@
 test/categories/types/scoped_tyvars2.pls:3:1: ERROR:
 Type variable not found: 'a'
-  | 
-3 | let g : a = fail("aaa")
-  | ^^^^^^^^^^^^^^^^^^^^^^^
+  ┃ 
+3 ┃ let g : a = fail("aaa")
+  ┃ ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔

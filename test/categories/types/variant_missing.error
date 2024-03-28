@@ -5,6 +5,6 @@ Missing mutual variant constructors '<  >'
                                 respectively.
     While trying to unify '< C() | ?α >'
                       and '< A(), B() >'
-  | 
-7 | print(f(x))
-  |         ^
+  ┃ 
+7 ┃ print(f(x))
+  ┃         ▔

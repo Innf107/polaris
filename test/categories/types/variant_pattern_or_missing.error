@@ -2,6 +2,6 @@ test/categories/types/variant_pattern_or_missing.pls:1:5: ERROR:
 Non-exhaustive pattern match
     Unhandled constructors:
     - C
-  | 
-1 | let A | B = C
-  |     ^^^^^
+  ┃ 
+1 ┃ let A | B = C
+  ┃     ▔▔▔▔▔

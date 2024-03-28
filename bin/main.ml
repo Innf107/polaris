@@ -49,9 +49,9 @@ let fatal_error maybe_loc (message : string) =
     let line_color = text_style.custom ~color:"\x1b[34m" in
 
     "\n"
-    ^ text_style.bold (line_color (padding   ^ " | ")) ^ previous_line ^ "\n"
-    ^ text_style.bold (line_color (line_text ^ " | ")) ^ line       ^ "\n"
-    ^ text_style.bold (line_color (padding   ^ " | ")) ^ next_line
+    ^ text_style.bold (line_color (padding   ^ " ┃ ")) ^ previous_line ^ "\n"
+    ^ text_style.bold (line_color (line_text ^ " ┃ ")) ^ line       ^ "\n"
+    ^ text_style.bold (line_color (padding   ^ " ┃ ")) ^ next_line
   in
 
   print_endline (prefix ^ text_style.error "ERROR" ^ ":\n" ^ message ^ suffix);

@@ -2,6 +2,6 @@ test/categories/types/alias_param_missing.pls:5:1: ERROR:
 Invalid number of arguments supplied to type constructor 'T'.
     The type constructor takes 2 arguments
                  but was given 0
-  | 
-5 | let x : T = { x = 5, y = 6 }
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  ┃ 
+5 ┃ let x : T = { x = 5, y = 6 }
+  ┃ ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔

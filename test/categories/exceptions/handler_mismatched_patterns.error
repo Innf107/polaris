@@ -2,6 +2,6 @@ test/categories/exceptions/handler_mismatched_patterns.pls:5:5: ERROR:
 Incorrect number of arguments passed to exception constructor 'E'.
     This constructor expects 2 arguments
                but was given 1
-  | 
-5 |     E(x) -> print("Uh oh")
-  |     ^^^^
+  ┃ 
+5 ┃     E(x) -> print("Uh oh")
+  ┃     ▔▔▔▔

@@ -2,6 +2,6 @@ test/categories/exceptions/command_failure.pls:1:9: ERROR:
 Exception: Program call failed with exit code 1: !false "something" "something else"
     Caused by 'CommandFailure'
 
-  | 
-1 | let _ = !false "something" "something else" 
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  ┃ 
+1 ┃ let _ = !false "something" "something else" 
+  ┃         ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔

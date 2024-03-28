@@ -1,6 +1,6 @@
 test/categories/types/let_return.pls:4:5: ERROR:
 Unable to unify types 'Number'
                   and '()'
-  | 
-4 |     let g : Number -> Number
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^
+  ┃ 
+4 ┃     let g : Number -> Number
+  ┃     ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔

@@ -1,7 +1,7 @@
 open Syntax
 open Syntax.Typed
 module VarMap : module type of Map.Make (Name)
-module EnvMap : module type of Map.Make (String)
+module EnvMap : module type of Trie.String
 module RecordVImpl : module type of Multimap.Make (String)
 
 type eval_capabilities = {

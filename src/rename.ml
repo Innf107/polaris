@@ -1,8 +1,8 @@
 open Syntax
 open Util
 module StringSet = Set.Make (String)
-module RenameMap = Map.Make (String)
-module FilePathMap = Map.Make (String)
+module RenameMap = Trie.String
+module FilePathMap = Trie.String
 
 type rename_error =
   | VarNotFound of string * loc
@@ -73,17 +73,20 @@ module RenameScope = struct
     }
 
   let lookup_var (scope : t) (loc : loc) (var : string) : name * loc =
-    try find var scope.variables with
-    | Not_found -> raise (RenameError (VarNotFound (var, loc)))
+    match RenameMap.find_opt var scope.variables with
+    | Some var -> var
+    | None -> raise (RenameError (VarNotFound (var, loc)))
 
   let lookup_data (scope : t) (loc : loc) (data : string) :
       name * data_constructor_sort =
-    try find data scope.data_constructors with
-    | Not_found -> raise (RenameError (DataConNotFound (data, loc)))
+    match RenameMap.find_opt data scope.data_constructors with
+    | Some datacon -> datacon
+    | None -> raise (RenameError (DataConNotFound (data, loc)))
 
   let lookup_mod_var (scope : t) (loc : loc) (var : string) : name * t =
-    try find var scope.module_vars with
-    | Not_found -> raise (RenameError (ModuleVarNotFound (var, loc)))
+    match RenameMap.find_opt var scope.module_vars with
+    | Some modvar -> modvar
+    | None -> raise (RenameError (ModuleVarNotFound (var, loc)))
 end
 
 let fresh_var = Name.fresh
@@ -333,7 +336,8 @@ let rec rename_pattern (or_bound_variables : name RenameMap.t)
         | Some (constructor_name, NewtypeConSort) ->
             raise
               (RenameError
-                 (TooManyArgsToDataConPattern (constructor_name, patterns, loc.main)))
+                 (TooManyArgsToDataConPattern
+                    (constructor_name, patterns, loc.main)))
         | Some (constructor_name, ExceptionSort) ->
             ( ExceptionDataPat (loc.main, constructor_name, patterns),
               Util.compose scope_transformers,
@@ -381,7 +385,8 @@ let rec rename_mod_expr :
       | Some (mod_exports, body) ->
           let scope =
             StringMap.fold
-              (fun name (renamed, loc) r -> RenameScope.insert_var name renamed loc r)
+              (fun name (renamed, loc) r ->
+                RenameScope.insert_var name renamed loc r)
               mod_exports.exported_variables
               (StringMap.fold
                  (fun name (renamed, arg_count, sort) r ->
@@ -404,7 +409,7 @@ let rec rename_mod_expr :
   | SubModule (loc, mod_expr, field) ->
       let mod_expr', contents = rename_mod_expr exports scope mod_expr in
       let field', sub_contents =
-        match StringMap.find_opt field contents.module_vars with
+        match RenameMap.find_opt field contents.module_vars with
         | None -> raise (RenameError (SubModuleNotFound (field, loc)))
         | Some (field', sub_contents) -> (field', sub_contents)
       in

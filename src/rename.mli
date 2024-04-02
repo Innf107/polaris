@@ -17,7 +17,7 @@ type rename_error =
 
 exception RenameError of rename_error
 
-module FilePathMap : module type of Map.Make (String)
+module FilePathMap : module type of Trie.String
 
 module RenameScope : sig
   type t

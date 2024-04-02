@@ -2,7 +2,7 @@ open Syntax
 open Syntax.Typed
 open Util
 module VarMap = Map.Make (Name)
-module EnvMap = Map.Make (String)
+module EnvMap = Trie.String
 module RecordVImpl = Multimap.Make (String)
 
 type eval_capabilities = {

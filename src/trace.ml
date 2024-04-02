@@ -1,6 +1,6 @@
 type category = string
 
-module CategoryMap = Map.Make (String)
+module CategoryMap = Trie.String
 
 let enabled_map : bool CategoryMap.t ref = ref CategoryMap.empty
 

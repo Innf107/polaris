@@ -1,7 +1,7 @@
 open Syntax
 open Rename
 open Eval
-module FilePathMap = Map.Make (String)
+module FilePathMap = Trie.String
 
 let _tc_category, trace_driver = Trace.make ~flag:"driver" ~prefix:"Driver"
 

@@ -1,7 +1,7 @@
 open Util
 open Syntax
 open Syntax.Renamed
-module PrimOpMap = Map.Make (String)
+module PrimOpMap = Trie.String
 
 let forall (cont : ty -> ty) =
   let a = Name.fresh "a" in

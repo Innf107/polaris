@@ -3,7 +3,7 @@ open Util
 
 type loc = Loc.t
 
-module StringMap = Map.Make (String)
+module StringMap = Trie.String
 
 type name = {
   name : string;

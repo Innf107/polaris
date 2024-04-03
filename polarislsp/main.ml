@@ -39,6 +39,12 @@ let on_initialize =
       "textDocumentSync": {
         "openClose": true,
         "change": 1
+      },
+      "completionProvider": {
+        "triggerCharacters": [],
+        "completionItem": {
+          "labelDetailSupport": true
+        }
       }
     }, 
     "serverInfo": {
@@ -139,10 +145,13 @@ let on_definition model_ref (params : Lsp.definition_params) =
         match Model.find_definition_at ~file params.position model with
         | Some (_, definition_loc) ->
             let open Polaris.Loc in
-            Lsp.yojson_of_location
+            Lsp.location_to_json
               { uri = file_uri; range = range_of_loc definition_loc }
         | None -> no_response ()
       end
+
+let on_completion model_ref (params : Lsp.completion_params) =
+  Polaris.Util.todo __LOC__
 
 let () =
   Eio_posix.run
@@ -159,20 +168,16 @@ let () =
             | Some Initialize -> on_initialize
             | Some (Hover params) -> on_hover model_ref params
             | Some (Definition params) -> on_definition model_ref params
+            | Some (Completion params) -> on_completion model_ref params
             | None -> Jsonrpc.unsupported_method ()
-            | exception
-                Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (error, json) ->
-                Jsonrpc.parse_error
-                  (Printexc.to_string error ^ "\nwhile parsing: "
-                  ^ Yojson.Safe.pretty_to_string json))
+            | exception exn ->
+                (* TODO: this is technically not a *parse* error*)
+                Jsonrpc.parse_error ("Exception: " ^ Printexc.to_string exn))
           ~notification_handler:(fun ~notification_method body ->
             match Lsp.parse_client_notification notification_method body with
             | Some (DidOpen params) -> on_open model_ref params
             | Some (DidChange params) -> on_change model_ref params
             | None -> Jsonrpc.unsupported_method ()
-            | exception
-                Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (error, json) ->
-                Jsonrpc.parse_error
-                  (Printexc.to_string error ^ "\nwhile parsing: "
-                  ^ Yojson.Safe.pretty_to_string json))
+            | exception exn ->
+                Jsonrpc.parse_error ("Exception: " ^ Printexc.to_string exn))
     end

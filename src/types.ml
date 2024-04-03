@@ -6,6 +6,11 @@ let _tc_category, trace_tc = Trace.make ~flag:"types" ~prefix:"Types"
 let _emit_category, trace_emit = Trace.make ~flag:"emit" ~prefix:"Emit"
 let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
 let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix:"Subst"
+let generate_constraints_landmark = Landmark.register "generate_constraints"
+let solve_constraints_landmark = Landmark.register "solve_constraints"
+let unify_landmark = Landmark.register "unify"
+let occurs_check_landmark = Landmark.register "occurs_check"
+let exhaustiveness_landmark = Landmark.register "exhaustiveness"
 
 type unify_context = ty * ty
 
@@ -1572,6 +1577,7 @@ let datacon_level : name -> local_env -> Typeref.level =
 (* Perform an occurs check and adjust levels (See Note [Levels]) *)
 let occurs_and_adjust needle name full_ty loc definition_env
     optional_unify_context =
+  Landmark.enter occurs_check_landmark;
   let traversal =
     object
       inherit [bool] Traversal.traversal
@@ -1638,7 +1644,9 @@ let occurs_and_adjust needle name full_ty loc definition_env
         | ty -> (ty, state)
     end
   in
-  snd (traversal#traverse_type false full_ty)
+  let result = snd (traversal#traverse_type false full_ty) in
+  Landmark.exit occurs_check_landmark;
+  result
 
 type unify_state = {
   deferred_constraints : ty_constraint Difflist.t ref option;
@@ -2049,7 +2057,7 @@ let solve_unify :
         go (Unif (typeref, name)) ty2
     | ty1, VariantUnif ([||], (typeref, name))
     | ty1, RecordUnif ([||], (typeref, name)) ->
-        go ty1 (Unif (typeref, name))    
+        go ty1 (Unif (typeref, name))
     | RecordVar _, _
     | _, RecordVar _
     | VariantVar _, _
@@ -2211,7 +2219,9 @@ let solve_constraints : local_env -> ty_constraint list -> unit =
       begin
         function
         | Unify (loc, ty1, ty2, definition_env) ->
-            solve_unify loc env unify_state ty1 ty2 definition_env
+            Landmark.enter unify_landmark;
+            solve_unify loc env unify_state ty1 ty2 definition_env;
+            Landmark.exit unify_landmark
         | Unwrap (loc, ty1, ty2, definition_env) ->
             solve_unwrap loc env unify_state ty1 ty2 definition_env
         | ProgramArg (loc, ty, definition_env) ->
@@ -2343,9 +2353,11 @@ let typecheck_top_level :
     }
   in
 
+  Landmark.enter generate_constraints_landmark;
   let local_env_trans, typed_expr =
     check_seq_expr local_env check_or_infer expr
   in
+  Landmark.exit generate_constraints_landmark;
 
   (* This is *extremely hacky* right now.
       We temporarily construct a fake local environment to figure out the top-level local type bindings.
@@ -2365,9 +2377,13 @@ let typecheck_top_level :
       }
   in
 
+  Landmark.enter solve_constraints_landmark;
   solve_constraints local_env (Difflist.to_list !(local_env.constraints));
+  Landmark.exit solve_constraints_landmark;
 
+  Landmark.enter exhaustiveness_landmark;
   check_exhaustiveness_and_close_variants_in_exprs typed_expr;
+  Landmark.exit exhaustiveness_landmark;
 
   let local_types =
     if binds_value expr then

@@ -13,6 +13,10 @@ type driver_options = {
   print_tokens : bool;
 }
 
+let lex_parse_landmark = Landmark.register "lex_parse"
+let rename_landmark = Landmark.register "rename"
+let typecheck_landmark = Landmark.register "typecheck"
+
 let rec parse_rename_typecheck :
     driver_options ->
     Lexing.lexbuf ->
@@ -42,6 +46,7 @@ let rec parse_rename_typecheck :
           go ()
         else ();
 
+        Landmark.enter lex_parse_landmark;
         trace_driver (lazy "Parsing...");
         let header, ast =
           let lex_state = Lexer.new_lex_state () in
@@ -54,6 +59,7 @@ let rec parse_rename_typecheck :
                    (Loc.from_pos start_pos end_pos, "Parse error"))
           | res -> res
         in
+        Landmark.exit lex_parse_landmark;
         if options.print_ast then begin
           print_endline "~~~~~~~~Parsed AST~~~~~~~~";
           print_endline (Parsed.pretty_list ast);
@@ -95,6 +101,7 @@ let rec parse_rename_typecheck :
                (List.to_seq items_for_exports))
         in
 
+        Landmark.enter rename_landmark;
         trace_driver (lazy "Renaming...");
         let renamed_header, renamed, new_scope =
           Rename.rename_scope import_map scope header ast
@@ -105,15 +112,21 @@ let rec parse_rename_typecheck :
           print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~"
         end
         else ();
+        Landmark.exit rename_landmark;
 
+        Landmark.enter typecheck_landmark;
         trace_driver (lazy "Typechecking...");
         let type_env, typed_header, typed_exprs =
           Types.typecheck check_or_infer_top_level renamed_header renamed
             type_env
         in
+        Landmark.exit typecheck_landmark;
 
         Ok (typed_header, typed_exprs, new_scope, type_env)
     end
+
+let prt_landmark = Landmark.register "parse_rename_typecheck"
+let eval_landmark = Landmark.register "eval"
 
 let run_env :
     driver_options ->
@@ -132,11 +145,14 @@ let run_env :
       fun () ->
         let ( let* ) = Result.bind in
 
+        Landmark.enter prt_landmark;
         let* renamed_header, renamed, new_scope, new_type_env =
           parse_rename_typecheck options lexbuf scope ?check_or_infer_top_level
             type_env
         in
+        Landmark.exit prt_landmark;
 
+        Landmark.enter eval_landmark;
         trace_driver (lazy "Evaluating...");
         let env = Eval.eval_header env renamed_header in
         let context =
@@ -146,14 +162,19 @@ let run_env :
               `Statement
           | Some `Infer -> `Expr
         in
-        Eio.Switch.run
-          begin
-            fun switch ->
-              let res, new_env =
-                Eval.eval_seq_state ~cap:{ switch; fs; mgr } context env renamed
-              in
-              Ok (res, new_env, new_scope, new_type_env)
-          end
+        let result =
+          Eio.Switch.run
+            begin
+              fun switch ->
+                let res, new_env =
+                  Eval.eval_seq_state ~cap:{ switch; fs; mgr } context env
+                    renamed
+                in
+                Ok (res, new_env, new_scope, new_type_env)
+            end
+        in
+        Landmark.exit eval_landmark;
+        result
     end
 
 let run (options : driver_options) (lexbuf : Lexing.lexbuf) ~fs ~mgr :

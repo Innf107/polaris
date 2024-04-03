@@ -103,7 +103,7 @@ let run_repl_with ~fs ~mgr (scope : Rename.RenameScope.t) (type_env : Polaris.Ty
       handle_errors 
         text_style
         fatal_error
-        (Driver.run_env ~fs ~mgr driver_options (Lexing.from_string expr) env scope ?check_or_infer_top_level:(Some `Infer) type_env)
+        (Driver.run_env ~fs ~mgr driver_options (Sedlexing.Utf8.from_string expr) env scope ?check_or_infer_top_level:(Some `Infer) type_env)
     in
     
     begin match result with
@@ -130,7 +130,7 @@ let run_repl_with ~fs ~mgr (scope : Rename.RenameScope.t) (type_env : Polaris.Ty
           let _ = Bestline.history_add input in
           let result, new_env, new_scope, new_type_env = 
             handle_errors text_style (fun mloc msg -> repl_error mloc msg; go env scope type_env)
-            (Driver.run_env ~fs ~mgr driver_options (Lexing.from_string input) env scope ?check_or_infer_top_level:(Some `Infer) type_env) 
+            (Driver.run_env ~fs ~mgr driver_options (Sedlexing.Utf8.from_string input) env scope ?check_or_infer_top_level:(Some `Infer) type_env) 
           in
 
           begin match result with
@@ -169,7 +169,7 @@ let run_file ~fs ~mgr (options : run_options) (filepath : string) (args : string
         ~fs
         ~mgr
         driver_options 
-        (Lexing.from_channel (open_in filepath))
+        (Sedlexing.Utf8.from_channel (open_in filepath))
         (Eval.make_eval_env driver_options.argv)
         Rename.RenameScope.empty
         Types.empty_env)      

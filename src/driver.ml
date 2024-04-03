@@ -19,7 +19,7 @@ let typecheck_landmark = Landmark.register "typecheck"
 
 let rec parse_rename_typecheck :
     driver_options ->
-    Lexing.lexbuf ->
+    Sedlexing.lexbuf ->
     RenameScope.t ->
     ?check_or_infer_top_level:[ `Check | `Infer ] ->
     Types.global_env ->
@@ -32,12 +32,12 @@ let rec parse_rename_typecheck :
     begin
       fun () ->
         trace_driver (lazy ("Lexing with filename '" ^ options.filename));
-        Lexing.set_filename lexbuf options.filename;
+        Sedlexing.set_filename lexbuf options.filename;
 
         if options.print_tokens then
-          let lex_state = Lexer.new_lex_state () in
+          let lex_state = Lexer.new_lex_state lexbuf in
           let rec go () =
-            match Lexer.token lex_state lexbuf with
+            match Lexer.token lex_state with
             | Parser.EOF -> exit 0
             | t ->
                 print_endline (Parserutil.pretty_token t);
@@ -49,11 +49,17 @@ let rec parse_rename_typecheck :
         Landmark.enter lex_parse_landmark;
         trace_driver (lazy "Parsing...");
         let header, ast =
-          let lex_state = Lexer.new_lex_state () in
-          match Parser.main (Lexer.token lex_state) lexbuf with
+          let lex_state = Lexer.new_lex_state lexbuf in
+          let lexer () =
+            let token = Lexer.token lex_state in
+            let start, end_ = Sedlexing.lexing_positions lexbuf in
+            (token, start, end_)
+          in
+
+          let open MenhirLib.Convert.Simplified in
+          match traditional2revised Parser.main lexer with
           | exception Parser.Error ->
-              let start_pos = lexbuf.lex_start_p in
-              let end_pos = lexbuf.lex_curr_p in
+              let start_pos, end_pos = Sedlexing.lexing_positions lexbuf in
               raise
                 (Parserprelude.ParseError
                    (Loc.from_pos start_pos end_pos, "Parse error"))
@@ -88,7 +94,7 @@ let rec parse_rename_typecheck :
                 Error.as_exn
                   (parse_rename_typecheck
                      { options with filename = path }
-                     (Lexing.from_channel (open_in path))
+                     (Sedlexing.Utf8.from_channel (open_in path))
                      RenameScope.empty Types.empty_env) ))
             imported_files
         in
@@ -130,7 +136,7 @@ let eval_landmark = Landmark.register "eval"
 
 let run_env :
     driver_options ->
-    Lexing.lexbuf ->
+    Sedlexing.lexbuf ->
     eval_env ->
     RenameScope.t ->
     ?check_or_infer_top_level:[ `Check | `Infer ] ->
@@ -177,7 +183,7 @@ let run_env :
         result
     end
 
-let run (options : driver_options) (lexbuf : Lexing.lexbuf) ~fs ~mgr :
+let run (options : driver_options) (lexbuf : Sedlexing.lexbuf) ~fs ~mgr :
     (value, Error.t) result =
   let result =
     run_env ~fs ~mgr options lexbuf

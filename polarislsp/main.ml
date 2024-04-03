@@ -67,7 +67,7 @@ let process_document model_ref file_uri content =
   let filename = filename_of_uri file_uri in
 
   let diagnostics, model_option =
-    Driver.try_update_model ~filename (Lexing.from_string content)
+    Driver.try_update_model ~filename (Sedlexing.Utf8.from_string content)
   in
 
   begin

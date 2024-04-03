@@ -3,98 +3,36 @@ open Lexing
 
 type lex_error =
   | InvalidOperator of Syntax.loc * string
-  | InvalidChar of Syntax.loc * char
+  | InvalidChar of Syntax.loc * string
   | UnterminatedString
   | InvalidStringEscape of Syntax.loc * string
 
 exception LexError of lex_error
 
 (* Just after opening a new block (e.g. after '{'), the latest indentation_state
-   is initially set to 'Opening'. Now, the first non-whitespace character after this
-   Sets the indentation_state, setting it to 'Found <indentation>'
-
-   'Ignored' is used for map literals, which are also closed with '}', but should not open an indentation block
+   is initially set to 'Opening'. The first non-whitespace character in this block
+   sets the indentation_state, setting it to 'Found <indentation>'
 *)
 type indentation_state =
   | Opening
   | Found of int
-  | OpeningInterpolation of bool
-  | FoundInterpolation of bool * int
-  | Ignored
-
-type lex_kind =
-  | Default
-  | LeadingHash
-  | LeadingMinus
-  | Comment
-  | InIdent of string
-  | InConstructor of string
-  | InOp of string
-  | InString of {
-      str : Buffer.t;
-      is_single : bool;
-      is_interp : bool;
-    }
-  | StringDollar of {
-      str : Buffer.t;
-      is_single : bool;
-      is_interp : bool;
-    }
-  | StringEscape of {
-      str : Buffer.t;
-      is_single : bool;
-      is_interp : bool;
-    }
-  | StringHexEscape of {
-      str : Buffer.t;
-      is_single : bool;
-      is_interp : bool;
-      escape : string;
-    }
-  | InBangStart
-  | InProgCall of string
-  | InEnv of string
-  | InNumber of string
-  | InDecimal of string
-  | Defer of Parser.token list
-  | LeadingWhitespace
+  | OpeningInterpolation of [ `Single | `Double ]
+  | FoundInterpolation of [ `Single | `Double ] * int
 
 type lex_state = {
   mutable indentation_level : indentation_state list;
-  mutable lex_kind : lex_kind;
+  mutable next_starting_state : [ `LexString of [ `Single | `Double ] ] option;
+  lexbuf : Sedlexing.lexbuf;
+  deferred_tokens : Parser.token Queue.t;
 }
 
-let new_lex_state () = { indentation_level = [ Found 0 ]; lex_kind = Default }
-
-(* lexbuf manipulation *)
-
-let peek_char (lexbuf : lexbuf) : char option =
-  lexbuf.refill_buff lexbuf;
-  (* TODO: Should we really refill every time? *)
-  if lexbuf.lex_curr_pos >= lexbuf.lex_buffer_len then None
-  else
-    let char = Bytes.get lexbuf.lex_buffer lexbuf.lex_curr_pos in
-    Some char
-
-let next_char (lexbuf : lexbuf) : char option =
-  match peek_char lexbuf with
-  | None -> None
-  | Some char ->
-      lexbuf.lex_curr_pos <- lexbuf.lex_curr_pos + 1;
-      lexbuf.lex_curr_p <-
-        { lexbuf.lex_curr_p with pos_cnum = lexbuf.lex_curr_p.pos_cnum + 1 };
-      if char = '\n' then new_line lexbuf else ();
-      Some char
-
-let set_state indentation_state state lexbuf =
-  state.lex_kind <- indentation_state
-
-let skip_location lexbuf =
-  lexbuf.lex_start_p <- lexbuf.lex_curr_p;
-  lexbuf.lex_start_pos <- lexbuf.lex_curr_pos
-
-let get_loc (lexbuf : lexbuf) : Syntax.loc =
-  Loc.from_pos lexbuf.lex_curr_p lexbuf.lex_curr_p
+let new_lex_state lexbuf =
+  {
+    indentation_level = [ Found 1 ];
+    lexbuf;
+    next_starting_state = None;
+    deferred_tokens = Queue.create ();
+  }
 
 let open_block state =
   state.indentation_level <- Opening :: state.indentation_level
@@ -103,126 +41,9 @@ let open_interpolation_block is_single state =
   state.indentation_level <-
     OpeningInterpolation is_single :: state.indentation_level
 
-let insert_semi (continue : unit -> Parser.token) state indentation =
-  match state.indentation_level with
-  | Opening :: lvls ->
-      state.indentation_level <- Found indentation :: lvls;
-      continue ()
-  | OpeningInterpolation is_single :: lvls ->
-      state.indentation_level <-
-        FoundInterpolation (is_single, indentation) :: lvls;
-      continue ()
-  | Found block_indentation :: lvls
-  | FoundInterpolation (_, block_indentation) :: lvls ->
-      if indentation <= block_indentation then SEMI else continue ()
-  | Ignored :: lvls -> continue ()
-  | [] ->
-      raise (Panic "Lexer: LeadingWhitespace: More blocks closed than opened")
-
-(* character classes *)
-let string_of_char = String.make 1
-
-let is_alpha = function
-  | 'a' .. 'z'
-  | 'A' .. 'Z' ->
-      true
-  | _ -> false
-
-let is_digit = function
-  | '0' .. '9' -> true
-  | _ -> false
-
-let is_alpha_num c = is_alpha c || is_digit c
-let is_ident_start c = is_alpha c || c = '_'
-let is_ident c = is_ident_start c || is_digit c
-let is_constructor_start c = is_ident_start c && Base.Char.is_uppercase c
-let is_constructor = is_ident
-
-let is_op_start = function
-  | '='
-  | '<'
-  | '>'
-  | '+'
-  | '*'
-  | '/'
-  | '&'
-  | ','
-  | '.'
-  | '~'
-  | ':'
-  | ';'
-  | '\\'
-  | '|' ->
-      true
-  | _ -> false
-
-let is_op c =
-  is_op_start c
-  ||
-  match c with
-  | '-' -> true
-  | _ -> false
-
-(* TODO: This is directly adapted from the OCamllex version, but we should probably do something slightly more intelligent *)
-let is_prog_char c =
-  match c with
-  | ' '
-  | '\t'
-  | '\n'
-  | '('
-  | ')'
-  | '['
-  | ']'
-  | '{'
-  | '}' ->
-      false
-  | _ -> true
-
-(* TODO: This is certainly not exhaustive. Perhaps we should allow $"var" syntax to permit arbitrary env var names? *)
-let is_env_char c =
-  match c with
-  | '-'
-  | '_' ->
-      true
-  | c when is_alpha_num c -> true
-  | _ -> false
-
-let is_paren = function
-  | '('
-  | ')'
-  | '['
-  | ']'
-  | '{'
-  | '}' ->
-      true
-  | _ -> false
-
-let as_paren state =
-  let open Parser in
-  function
-  | '(' -> `Regular LPAREN
-  | ')' -> `Regular RPAREN
-  | '[' -> `Regular LBRACKET
-  | ']' -> `Regular RBRACKET
-  | '{' ->
-      open_block state;
-      `Regular LBRACE
-  | '}' -> begin
-      match state.indentation_level with
-      | []
-      | [ _ ] ->
-          raise (Panic "Lexer.close_block: More blocks closed than opened")
-      | OpeningInterpolation is_single :: lvls
-      | FoundInterpolation (is_single, _) :: lvls ->
-          state.indentation_level <- lvls;
-          `ClosedInterpolation is_single
-      | _ :: lvls ->
-          state.indentation_level <- lvls;
-          `Regular RBRACE
-    end
-  | c ->
-      raise
-        (Panic ("Lexer.as_paren: Invalid paren: '" ^ string_of_char c ^ "'"))
+let get_loc lexbuf =
+  let start_pos, end_pos = Sedlexing.lexing_positions lexbuf in
+  Loc.from_pos start_pos end_pos
 
 let ident_token =
   let open Parser in
@@ -255,421 +76,256 @@ let ident_token =
   | "raise" -> RAISE
   | str -> IDENT str
 
-let op_token lexbuf =
-  let open Parser in
-  function
-  | "->" -> ARROW
-  | "<-" -> LARROW
-  | "," -> COMMA
-  | ";" -> SEMI
-  | "::" -> DOUBLECOLON
-  | ":" -> COLON
-  | "+" -> PLUS
-  | "*" -> STAR
-  | "/" -> SLASH
-  | "||" -> OR
-  | "&&" -> AND
-  | "." -> DOT
-  | ".." -> DDOT
-  | "~" -> TILDE
-  | "|" -> PIPE
-  | "=" -> EQUALS
-  | ":=" -> COLONEQUALS
-  | "==" -> DOUBLEEQUALS
-  | "<" -> LT
-  | ">" -> GT
-  | "<=" -> LE
-  | ">=" -> GE
-  | "\\" -> LAMBDA
-  | str -> raise (LexError (InvalidOperator (get_loc lexbuf, str)))
+(* TODO: this should probably be something more intelligent *)
+let program_call_character =
+  [%sedlex.regexp? Compl (white_space | '(' | ')' | '[' | ']' | '{' | '}')]
 
-let token (state : lex_state) (lexbuf : lexbuf) : Parser.token =
-  skip_location lexbuf;
-  let rec go state =
-    let continue () = go state in
-    match state.lex_kind with
-    | Default -> begin
-        match next_char lexbuf with
-        | Some '#' ->
-            set_state LeadingHash state lexbuf;
-            continue ()
-        | Some '\n' ->
-            set_state LeadingWhitespace state lexbuf;
-            skip_location lexbuf;
-            continue ()
-        | Some ' ' ->
-            skip_location lexbuf;
-            continue ()
-        | Some '"' ->
-            set_state
-              (InString
-                 {
-                   str = Buffer.create 16;
-                   is_single = false;
-                   is_interp = false;
-                 })
-              state lexbuf;
-            continue ()
-        | Some '\'' ->
-            set_state
-              (InString
-                 { str = Buffer.create 16; is_single = true; is_interp = false })
-              state lexbuf;
-            continue ()
-        | Some '`' -> Parser.BACKTICK
-        | Some '!' ->
-            set_state InBangStart state lexbuf;
-            continue ()
-        | Some '$' ->
-            set_state (InEnv "") state lexbuf;
-            continue ()
-        | Some '-' ->
-            set_state LeadingMinus state lexbuf;
-            continue ()
-        | Some c when is_digit c ->
-            set_state (InNumber (string_of_char c)) state lexbuf;
-            continue ()
-        | Some c when is_constructor_start c ->
-            set_state (InConstructor (string_of_char c)) state lexbuf;
-            continue ()
-        | Some c when is_ident_start c ->
-            set_state (InIdent (string_of_char c)) state lexbuf;
-            continue ()
-        | Some c when is_op_start c ->
-            set_state (InOp (string_of_char c)) state lexbuf;
-            continue ()
-        | Some c when is_paren c -> begin
-            match as_paren state c with
-            | `Regular paren -> paren
-            | `ClosedInterpolation is_single ->
-                set_state
-                  (InString
-                     { str = Buffer.create 16; is_single; is_interp = true })
-                  state lexbuf;
-                INTERPOLATION_END
-          end
-        | None -> Parser.EOF
-        | Some c -> raise (LexError (InvalidChar (get_loc lexbuf, c)))
-        (* TODO: Is this still necessary now that there is no '#{' token anymore? *)
-      end
-    | LeadingHash -> begin
-        match next_char lexbuf with
-        | Some '\n' ->
-            set_state LeadingWhitespace state lexbuf;
-            skip_location lexbuf;
-            continue ()
-        | None -> Parser.EOF
-        | _ ->
-            set_state Comment state lexbuf;
-            continue ()
-      end
-    | LeadingMinus -> begin
-        match peek_char lexbuf with
-        | Some c when is_op c ->
-            set_state (InOp "-") state lexbuf;
-            continue ()
-        | Some c when is_digit c ->
-            set_state (InNumber "-") state lexbuf;
-            continue ()
-        | Some c ->
-            set_state Default state lexbuf;
-            MINUS
-        | None ->
-            set_state Default state lexbuf;
-            MINUS
-      end
-    | Comment -> begin
-        match next_char lexbuf with
-        | Some '\n' ->
-            set_state LeadingWhitespace state lexbuf;
-            skip_location lexbuf;
-            continue ()
-        | Some _ -> continue ()
-        | None -> Parser.EOF
-      end
-    | InIdent ident -> begin
-        match peek_char lexbuf with
-        | Some c when is_ident c ->
-            let _ = next_char lexbuf in
-            set_state (InIdent (ident ^ string_of_char c)) state lexbuf;
-            continue ()
-        | Some _ ->
-            set_state Default state lexbuf;
-            ident_token ident
-        | None ->
-            set_state Default state lexbuf;
-            ident_token ident
-      end
-    | InConstructor ident -> begin
-        match peek_char lexbuf with
-        | Some c when is_constructor c ->
-            let _ = next_char lexbuf in
-            set_state (InConstructor (ident ^ string_of_char c)) state lexbuf;
-            continue ()
-        | Some _ ->
-            set_state Default state lexbuf;
-            CONSTRUCTOR ident
-        | None ->
-            set_state Default state lexbuf;
-            CONSTRUCTOR ident
-      end
-    | InString { str; is_single; is_interp } -> begin
-        match next_char lexbuf with
-        | Some '"' when not is_single ->
-            if is_interp then begin
-              match Buffer.length str with
-              | 0 ->
-                  set_state Default state lexbuf;
-                  INTERP_STRING_END
-              | _ ->
-                  set_state (Defer [ INTERP_STRING_END ]) state lexbuf;
-                  STRING_COMPONENT (Buffer.contents str)
-            end
-            else begin
-              set_state Default state lexbuf;
-              STRING (Buffer.contents str)
-            end
-        | Some '\'' when is_single ->
-            if is_interp then begin
-              match Buffer.length str with
-              | 0 ->
-                  set_state Default state lexbuf;
-                  INTERP_STRING_END
-              | _ ->
-                  set_state (Defer [ INTERP_STRING_END ]) state lexbuf;
-                  STRING_COMPONENT (Buffer.contents str)
-            end
-            else begin
-              set_state Default state lexbuf;
-              STRING (Buffer.contents str)
-            end
-        | Some '$' ->
-            (* This *might* be string interpolation but we don't know for sure yet *)
-            set_state (StringDollar { str; is_single; is_interp }) state lexbuf;
-            continue ()
-        | Some '\\' ->
-            set_state (StringEscape { str; is_single; is_interp }) state lexbuf;
-            continue ()
-        | Some c ->
-            Buffer.add_char str c;
-            continue ()
-        | None -> raise (LexError UnterminatedString)
-      end
-    | StringDollar { str; is_single; is_interp } -> begin
-        match peek_char lexbuf with
-        | Some '{' ->
-            let _ = next_char lexbuf in
-            open_interpolation_block is_single state;
+let program_call_start =
+  [%sedlex.regexp?
+    Compl
+      ( white_space | '(' | ')' | '[' | ']' | '{' | '}' | '.' | ',' | ':' | ';'
+      | '<' | '>' | '+' | '*' | '&' | '|' | '~' | '-' | '-' | '=' | '$' | '\\'
+      | '#' | '!' )]
 
-            let next_state =
-              match Buffer.length str with
-              | 0 -> Defer [ INTERPOLATION_START ]
-              | _ ->
-                  Defer
-                    [
-                      STRING_COMPONENT (Buffer.contents str);
-                      INTERPOLATION_START;
-                    ]
-            in
-            set_state next_state state lexbuf;
-            INTERP_STRING_START
-        (* It's not string interpolation so we defer to regular string handling
-           (and don't consume the peeked character!) *)
-        | _ ->
-            Buffer.add_char str '$';
-            set_state (InString { str; is_single; is_interp }) state lexbuf;
-            continue ()
-      end
-    | StringEscape { str; is_single; is_interp } -> begin
-        match next_char lexbuf with
-        | None -> raise (LexError UnterminatedString)
-        | Some 'x' ->
-            set_state
-              (StringHexEscape { str; is_single; is_interp; escape = "" })
-              state lexbuf;
-            continue ()
-        | Some char ->
-            let escaped =
-              begin
-                match char with
-                | 'a' -> "\x07"
-                | 'b' -> "\x08"
-                | 'e' -> "\x1b"
-                | 'f' -> "\x0C"
-                | 'n' -> "\n"
-                | 'r' -> "\r"
-                | 't' -> "\t"
-                | 'v' -> "\x0B"
-                | '\'' -> "'"
-                | '"' -> "\""
-                | '$' -> "$"
-                | '\\' -> "\\"
-                | _ ->
-                    raise
-                      (LexError
-                         (InvalidStringEscape
-                            (get_loc lexbuf, string_of_char char)))
-              end
-            in
-            Buffer.add_string str escaped;
-            set_state (InString { str; is_single; is_interp }) state lexbuf;
-            continue ()
-      end
-    | StringHexEscape { str; is_single; is_interp; escape } -> begin
-        match peek_char lexbuf with
-        | Some (('0' .. '9' | 'a' .. 'f' | 'A' .. 'F') as digit)
-        (* Unicode escapes should be at most 6 characters *)
-          when String.length escape <= 5 ->
-            let _ = next_char lexbuf in
-            set_state
-              (StringHexEscape
-                 {
-                   str;
-                   is_single;
-                   is_interp;
-                   escape = escape ^ string_of_char digit;
-                 })
-              state lexbuf;
-            continue ()
-        | _ ->
-            let parse_hex str =
-              let rec go i weight =
-                if i < 0 then 0
-                else
-                  let digit_value =
-                    match str.[i] with
-                    | '0' .. '9' as char -> int_of_char char - int_of_char '0'
-                    | 'a' .. 'f' as char ->
-                        10 + int_of_char char - int_of_char 'a'
-                    | 'A' .. 'F' as char ->
-                        10 + int_of_char char - int_of_char 'A'
-                    | char ->
-                        panic __LOC__
-                          ("invalid hex digit lexed: " ^ string_of_char char)
-                  in
-                  (digit_value * weight) + go (i - 1) (weight * 16)
-              in
-              go (String.length str - 1) 1
-            in
-            let uchar =
-              try Uchar.of_int (parse_hex escape) with
-              | Invalid_argument _ ->
-                  raise_notrace
-                    (LexError
-                       (InvalidStringEscape (get_loc lexbuf, "x" ^ escape)))
-            in
-            Buffer.add_utf_8_uchar str uchar;
-            set_state (InString { str; is_single; is_interp }) state lexbuf;
-            continue ()
-      end
-    | InBangStart -> begin
-        match peek_char lexbuf with
-        | Some '=' ->
-            let _ = next_char lexbuf in
-            set_state Default state lexbuf;
-            BANGEQUALS
-        | Some '.'
-        | Some '!'
-        | Some ',' ->
-            set_state Default state lexbuf;
-            BANG
-        | Some c when is_prog_char c ->
-            let _ = next_char lexbuf in
-            set_state (InProgCall (string_of_char c)) state lexbuf;
-            continue ()
-        | _ ->
-            set_state Default state lexbuf;
-            BANG
-      end
-    | InProgCall str -> begin
-        match peek_char lexbuf with
-        | Some c when is_prog_char c ->
-            let _ = next_char lexbuf in
-            set_state (InProgCall (str ^ string_of_char c)) state lexbuf;
-            continue ()
-        | _ ->
-            set_state Default state lexbuf;
-            PROGCALL str
-      end
-    | InEnv str -> begin
-        match peek_char lexbuf with
-        | Some c when is_env_char c ->
-            let _ = next_char lexbuf in
-            set_state (InEnv (str ^ string_of_char c)) state lexbuf;
-            continue ()
-        | _ ->
-            set_state Default state lexbuf;
-            ENVVAR str
-      end
-    | InOp str -> begin
-        match peek_char lexbuf with
-        | Some c when is_op c ->
-            let _ = next_char lexbuf in
-            set_state (InOp (str ^ string_of_char c)) state lexbuf;
-            continue ()
-        | _ ->
-            set_state Default state lexbuf;
-            op_token lexbuf str
-      end
-    | InNumber str -> begin
-        match peek_char lexbuf with
-        | Some c when is_digit c ->
-            let _ = next_char lexbuf in
-            set_state (InNumber (str ^ string_of_char c)) state lexbuf;
-            continue ()
-        | Some '.' ->
-            let _ = next_char lexbuf in
-            begin
-              match peek_char lexbuf with
-              | Some '.' ->
-                  let _ = next_char lexbuf in
-                  set_state (Defer [ DDOT ]) state lexbuf;
-                  INT (int_of_string str)
-              | _ ->
-                  set_state (InDecimal (str ^ ".")) state lexbuf;
-                  continue ()
-            end
-        | _ ->
-            set_state Default state lexbuf;
-            INT (int_of_string str)
-      end
-    | InDecimal str -> begin
-        match peek_char lexbuf with
-        | Some c when is_digit c ->
-            let _ = next_char lexbuf in
-            set_state (InDecimal (str ^ string_of_char c)) state lexbuf;
-            continue ()
-        | _ ->
-            set_state Default state lexbuf;
-            FLOAT (float_of_string str)
-      end
-    | LeadingWhitespace -> begin
-        match peek_char lexbuf with
-        | Some (' ' | '\n') ->
-            let _ = next_char lexbuf in
-            skip_location lexbuf;
-            continue ()
-        | Some '#' ->
-            let indentation = (get_loc lexbuf).start_col - 1 in
-            let _ = next_char lexbuf in
-            begin
-              match peek_char lexbuf with
-              | Some '{' ->
-                  set_state LeadingHash state lexbuf;
-                  insert_semi continue state indentation
-              | _ ->
-                  set_state LeadingHash state lexbuf;
-                  continue ()
-            end
-        | _ ->
-            set_state Default state lexbuf;
-            insert_semi continue state ((get_loc lexbuf).start_col - 1)
-      end
-    | Defer [] ->
-        set_state Default state lexbuf;
-        continue ()
-    | Defer (tok :: toks) ->
-        set_state (Defer toks) state lexbuf;
-        tok
+(* TODO: allow more than this somehow. maybe $"env" syntax?*)
+let env_var_character = [%sedlex.regexp? alphabetic | '0' .. '9' | '_' | '-']
+
+let lexeme_skip start_offset end_offset lexbuf =
+  Sedlexing.Utf8.sub_lexeme lexbuf start_offset
+    (Sedlexing.lexeme_length lexbuf - end_offset - start_offset)
+
+let rec lex lex_state =
+  let lexbuf = lex_state.lexbuf in
+  let lexeme () = Sedlexing.Utf8.lexeme lexbuf in
+
+  match%sedlex lexbuf with
+  | '#', Star (Compl ('\n' | eof)) -> lex lex_state
+  | Plus (Intersect (white_space, Compl '\n')) ->
+      Sedlexing.start lexbuf;
+      lex lex_state
+  | '\n' -> leading_whitespace lex_state
+  | uppercase, Star (alphabetic | '0' .. '9' | '_') ->
+      Parser.CONSTRUCTOR (lexeme ())
+  | (lowercase | '_'), Star (alphabetic | '0' .. '9' | '_') ->
+      ident_token (lexeme ())
+  | '"' -> lex_string `Double (Cowbuffer.create 16) true lex_state
+  | '\'' -> lex_string `Single (Cowbuffer.create 16) true lex_state
+  | '`' -> Parser.BACKTICK
+  | '!' -> Parser.BANG
+  | "!=" -> Parser.BANGEQUALS
+  (* We special case !./ and !../ since those are useful uses of ! followed by a dot.
+     We disallow all other operator characters in the first character of an ! expression *)
+  | "!./", Plus program_call_character ->
+      Parser.PROGCALL (lexeme_skip 1 0 lexbuf)
+  | "!../", Plus program_call_character ->
+      Parser.PROGCALL (lexeme_skip 1 0 lexbuf)
+  | '!', program_call_start, Star program_call_character ->
+      Parser.PROGCALL (lexeme_skip 1 0 lexbuf)
+  | '$', Plus env_var_character -> Parser.ENVVAR (lexeme_skip 1 0 lexbuf)
+  | "->" -> Parser.ARROW
+  | "<-" -> Parser.LARROW
+  | ',' -> Parser.COMMA
+  | ';' -> Parser.SEMI
+  | ':' -> Parser.COLON
+  | "::" -> Parser.DOUBLECOLON
+  | '+' -> Parser.PLUS
+  | '*' -> Parser.STAR
+  | '/' -> Parser.SLASH
+  | "||" -> Parser.OR
+  | "&&" -> Parser.AND
+  | '.' -> Parser.DOT
+  | ".." -> Parser.DDOT
+  | '~' -> Parser.TILDE
+  | '|' -> Parser.PIPE
+  | '=' -> Parser.EQUALS
+  | ":=" -> Parser.COLONEQUALS
+  | "==" -> Parser.DOUBLEEQUALS
+  | '<' -> Parser.LT
+  | '>' -> Parser.GT
+  | "<=" -> Parser.LE
+  | ">=" -> Parser.GE
+  | '\\' -> Parser.LAMBDA
+  | '-' -> Parser.MINUS
+  | Opt '-', Plus '0' .. '9' -> Parser.INT (int_of_string (lexeme ()))
+  | Opt '-', Star '0' .. '9', '.', Plus '0' .. '9'
+  | Opt '-', Plus '0' .. '9', '.', Star '0' .. '9' ->
+      Parser.FLOAT (float_of_string (lexeme ()))
+  (* Special case for 0.. which should be lexed as the start of a range like 0 .. 9
+     rather than a float literal followed by a period (0. . 9)
+     Since sedlex prioritizes the longest match, this will override the previous case if possible*)
+  | Opt '-', Plus '0' .. '9', ".." ->
+      Queue.add Parser.DDOT lex_state.deferred_tokens;
+      Parser.INT (int_of_string (lexeme_skip 0 2 lexbuf))
+  | '(' -> Parser.LPAREN
+  | ')' -> Parser.RPAREN
+  | '[' -> Parser.LBRACKET
+  | ']' -> Parser.RBRACKET
+  | '{' ->
+      open_block lex_state;
+      Parser.LBRACE
+  | '}' -> begin
+      match lex_state.indentation_level with
+      | []
+      | [ _ ] ->
+          panic __LOC__ "Lexer.close_block: more blocks closed than opened"
+      | (OpeningInterpolation kind | FoundInterpolation (kind, _)) :: lvls ->
+          lex_state.indentation_level <- lvls;
+          lex_state.next_starting_state <- Some (`LexString kind);
+          Parser.INTERPOLATION_END
+      | (Found _ | Opening) :: lvls ->
+          lex_state.indentation_level <- lvls;
+          Parser.RBRACE
+    end
+  | eof -> Parser.EOF
+  | _ -> raise (LexError (InvalidChar (get_loc lexbuf, lexeme ())))
+
+(* TODO: keep track of the starting position i guess? *)
+and lex_string kind buffer is_initial lex_state =
+  let lexbuf = lex_state.lexbuf in
+  let lexeme () = Sedlexing.Utf8.lexeme lexbuf in
+
+  let end_string () =
+    if is_initial then begin
+      Parser.STRING (Cowbuffer.contents buffer)
+    end
+    else
+      match Cowbuffer.length buffer with
+      | 0 -> Parser.INTERP_STRING_END
+      | _ ->
+          Queue.add Parser.INTERP_STRING_END lex_state.deferred_tokens;
+          Parser.STRING_COMPONENT (Cowbuffer.contents buffer)
   in
-  go state
+
+  match%sedlex lexbuf with
+  | Plus (Compl ('"' | '\'' | '\\' | '$')) ->
+      lex_string kind
+        (Cowbuffer.add_string (lexeme ()) buffer)
+        is_initial lex_state
+  | '"' -> begin
+      match kind with
+      | `Single ->
+          lex_string kind (Cowbuffer.add_char '"' buffer) is_initial lex_state
+      | `Double -> end_string ()
+    end
+  | '\'' -> begin
+      match kind with
+      | `Single -> end_string ()
+      | `Double ->
+          lex_string kind (Cowbuffer.add_char '\'' buffer) is_initial lex_state
+    end
+  (* sedlex prioritises the longest match so the second case will always take precedence if possible*)
+  | '$' -> lex_string kind (Cowbuffer.add_char '$' buffer) is_initial lex_state
+  | "${" ->
+      open_interpolation_block kind lex_state;
+
+      if is_initial then begin
+        Queue.add Parser.INTERP_STRING_START lex_state.deferred_tokens
+      end;
+
+      begin
+        match Cowbuffer.length buffer with
+        | 0 -> Queue.add Parser.INTERPOLATION_START lex_state.deferred_tokens
+        | _ ->
+            Queue.add
+              (Parser.STRING_COMPONENT (Cowbuffer.contents buffer))
+              lex_state.deferred_tokens;
+            Queue.add Parser.INTERPOLATION_START lex_state.deferred_tokens
+      end;
+      Queue.take lex_state.deferred_tokens
+  | "\\a" ->
+      lex_string kind (Cowbuffer.add_char '\x07' buffer) is_initial lex_state
+  | "\\b" ->
+      lex_string kind (Cowbuffer.add_char '\x08' buffer) is_initial lex_state
+  | "\\e" ->
+      lex_string kind (Cowbuffer.add_char '\x1b' buffer) is_initial lex_state
+  | "\\f" ->
+      lex_string kind (Cowbuffer.add_char '\x0C' buffer) is_initial lex_state
+  | "\\n" ->
+      lex_string kind (Cowbuffer.add_char '\n' buffer) is_initial lex_state
+  | "\\r" ->
+      lex_string kind (Cowbuffer.add_char '\r' buffer) is_initial lex_state
+  | "\\t" ->
+      lex_string kind (Cowbuffer.add_char '\t' buffer) is_initial lex_state
+  | "\\v" ->
+      lex_string kind (Cowbuffer.add_char '\x0B' buffer) is_initial lex_state
+  | "\\\\" ->
+      lex_string kind (Cowbuffer.add_char '\\' buffer) is_initial lex_state
+  | "\\'" ->
+      lex_string kind (Cowbuffer.add_char '\'' buffer) is_initial lex_state
+  | "\\\"" ->
+      lex_string kind (Cowbuffer.add_char '"' buffer) is_initial lex_state
+  | "\\$" ->
+      lex_string kind (Cowbuffer.add_char '$' buffer) is_initial lex_state
+  | "\\x", Rep (('0' .. '9' | 'a' .. 'f' | 'A' .. 'F'), 1 .. 6) ->
+      let escape =
+        Sedlexing.Utf8.sub_lexeme lexbuf 2 (Sedlexing.lexeme_length lexbuf - 2)
+      in
+      let parse_hex str =
+        let rec go i weight =
+          if i < 0 then 0
+          else
+            let digit_value =
+              match str.[i] with
+              | '0' .. '9' as char -> int_of_char char - int_of_char '0'
+              | 'a' .. 'f' as char -> 10 + int_of_char char - int_of_char 'a'
+              | 'A' .. 'F' as char -> 10 + int_of_char char - int_of_char 'A'
+              | char ->
+                  panic __LOC__
+                    ("invalid hex digit lexed: " ^ String.make 1 char)
+            in
+            (digit_value * weight) + go (i - 1) (weight * 16)
+        in
+        go (String.length str - 1) 1
+      in
+      let uchar =
+        try Uchar.of_int (parse_hex escape) with
+        | Invalid_argument _ ->
+            raise_notrace
+              (LexError (InvalidStringEscape (get_loc lexbuf, "x" ^ escape)))
+      in
+      let buffer = Cowbuffer.add_utf_8_uchar uchar buffer in
+      lex_string kind buffer is_initial lex_state
+  | "\\", Compl (Chars "abefnrtv\\\'\"$x") ->
+      raise (LexError (InvalidStringEscape (get_loc lexbuf, lexeme ())))
+  | _ -> todo __LOC__
+
+and leading_whitespace lex_state =
+  let lexbuf = lex_state.lexbuf in
+  match%sedlex lexbuf with
+  | Plus white_space ->
+      Sedlexing.start lexbuf;
+      leading_whitespace lex_state
+  | '#', Star (Compl ('\n' | eof)) -> leading_whitespace lex_state
+  | eof -> Parser.EOF
+  | _ ->
+      let _ = Sedlexing.backtrack lexbuf in
+      emit_semi_or_lex lex_state
+
+and emit_semi_or_lex lex_state =
+  let loc = get_loc lex_state.lexbuf in
+  match lex_state.indentation_level with
+  | [] -> panic __LOC__ "more blocks closed than opened"
+  | Opening :: levels ->
+      lex_state.indentation_level <- Found loc.start_col :: levels;
+      lex lex_state
+  | OpeningInterpolation string_kind :: levels ->
+      lex_state.indentation_level <-
+        FoundInterpolation (string_kind, loc.start_col) :: levels;
+      lex lex_state
+  | Found block_indentation :: levels
+  | FoundInterpolation (_, block_indentation) :: levels ->
+      if loc.start_col <= block_indentation then Parser.SEMI else lex lex_state
+
+let token lex_state =
+  match Queue.take_opt lex_state.deferred_tokens with
+  | Some token -> token
+  | None -> begin
+      match lex_state.next_starting_state with
+      | None -> lex lex_state
+      | Some alternative_state -> begin
+          lex_state.next_starting_state <- None;
+          match alternative_state with
+          | `LexString kind ->
+              lex_string kind (Cowbuffer.create 16) false lex_state
+        end
+    end

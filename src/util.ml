@@ -132,3 +132,5 @@ let map_array_at index f array =
 
 let map_at index f list =
   List.mapi (fun i x -> if i = index then f x else x) list
+
+let uncurry : type a b c. (a -> b -> c) -> a * b -> c = fun f (a, b) -> f a b

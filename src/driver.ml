@@ -52,7 +52,7 @@ let rec parse_rename_typecheck :
           let lex_state = Lexer.new_lex_state lexbuf in
           let lexer () =
             let token = Lexer.token lex_state in
-            let start, end_ = Sedlexing.lexing_positions lexbuf in
+            let start, end_ = Lexer.current_positions lex_state in
             (token, start, end_)
           in
 

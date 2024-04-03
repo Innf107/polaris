@@ -16,14 +16,16 @@ exception LexError of lex_error
 type indentation_state =
   | Opening
   | Found of int
-  | OpeningInterpolation of [ `Single | `Double ]
-  | FoundInterpolation of [ `Single | `Double ] * int
+  | OpeningInterpolation of [ `Single | `Double ] * position
+  | FoundInterpolation of [ `Single | `Double ] * position * int
 
 type lex_state = {
   mutable indentation_level : indentation_state list;
-  mutable next_starting_state : [ `LexString of [ `Single | `Double ] ] option;
+  mutable next_starting_state :
+    [ `LexString of [ `Single | `Double ] * position ] option;
   lexbuf : Sedlexing.lexbuf;
   deferred_tokens : Parser.token Queue.t;
+  mutable start_position_override : Lexing.position option;
 }
 
 let new_lex_state lexbuf =
@@ -32,14 +34,21 @@ let new_lex_state lexbuf =
     lexbuf;
     next_starting_state = None;
     deferred_tokens = Queue.create ();
+    start_position_override = None;
   }
+
+let current_positions lex_state =
+  let start_loc, end_loc = Sedlexing.lexing_positions lex_state.lexbuf in
+  match lex_state.start_position_override with
+  | Some override -> (override, end_loc)
+  | None -> (start_loc, end_loc)
 
 let open_block state =
   state.indentation_level <- Opening :: state.indentation_level
 
-let open_interpolation_block is_single state =
+let open_interpolation_block kind start_position state =
   state.indentation_level <-
-    OpeningInterpolation is_single :: state.indentation_level
+    OpeningInterpolation (kind, start_position) :: state.indentation_level
 
 let get_loc lexbuf =
   let start_pos, end_pos = Sedlexing.lexing_positions lexbuf in
@@ -108,8 +117,12 @@ let rec lex lex_state =
       Parser.CONSTRUCTOR (lexeme ())
   | (lowercase | '_'), Star (alphabetic | '0' .. '9' | '_') ->
       ident_token (lexeme ())
-  | '"' -> lex_string `Double (Cowbuffer.create 16) true lex_state
-  | '\'' -> lex_string `Single (Cowbuffer.create 16) true lex_state
+  | '"' ->
+      let start_pos, _end_pos = Sedlexing.lexing_positions lexbuf in
+      lex_string `Double (Cowbuffer.create 16) true start_pos lex_state
+  | '\'' ->
+      let start_pos, _end_pos = Sedlexing.lexing_positions lexbuf in
+      lex_string `Single (Cowbuffer.create 16) true start_pos lex_state
   | '`' -> Parser.BACKTICK
   | '!' -> Parser.BANG
   | "!=" -> Parser.BANGEQUALS
@@ -168,9 +181,12 @@ let rec lex lex_state =
       | []
       | [ _ ] ->
           panic __LOC__ "Lexer.close_block: more blocks closed than opened"
-      | (OpeningInterpolation kind | FoundInterpolation (kind, _)) :: lvls ->
+      | ( OpeningInterpolation (kind, start_position)
+        | FoundInterpolation (kind, start_position, _) )
+        :: lvls ->
           lex_state.indentation_level <- lvls;
-          lex_state.next_starting_state <- Some (`LexString kind);
+          lex_state.next_starting_state <-
+            Some (`LexString (kind, start_position));
           Parser.INTERPOLATION_END
       | (Found _ | Opening) :: lvls ->
           lex_state.indentation_level <- lvls;
@@ -180,11 +196,13 @@ let rec lex lex_state =
   | _ -> raise (LexError (InvalidChar (get_loc lexbuf, lexeme ())))
 
 (* TODO: keep track of the starting position i guess? *)
-and lex_string kind buffer is_initial lex_state =
+and lex_string kind buffer is_initial start_position lex_state =
   let lexbuf = lex_state.lexbuf in
   let lexeme () = Sedlexing.Utf8.lexeme lexbuf in
 
   let end_string () =
+    lex_state.start_position_override <- Some start_position;
+
     if is_initial then begin
       Parser.STRING (Cowbuffer.contents buffer)
     end
@@ -200,23 +218,30 @@ and lex_string kind buffer is_initial lex_state =
   | Plus (Compl ('"' | '\'' | '\\' | '$')) ->
       lex_string kind
         (Cowbuffer.add_string (lexeme ()) buffer)
-        is_initial lex_state
+        is_initial start_position lex_state
   | '"' -> begin
       match kind with
       | `Single ->
-          lex_string kind (Cowbuffer.add_char '"' buffer) is_initial lex_state
+          lex_string kind
+            (Cowbuffer.add_char '"' buffer)
+            is_initial start_position lex_state
       | `Double -> end_string ()
     end
   | '\'' -> begin
       match kind with
       | `Single -> end_string ()
       | `Double ->
-          lex_string kind (Cowbuffer.add_char '\'' buffer) is_initial lex_state
+          lex_string kind
+            (Cowbuffer.add_char '\'' buffer)
+            is_initial start_position lex_state
     end
   (* sedlex prioritises the longest match so the second case will always take precedence if possible*)
-  | '$' -> lex_string kind (Cowbuffer.add_char '$' buffer) is_initial lex_state
+  | '$' ->
+      lex_string kind
+        (Cowbuffer.add_char '$' buffer)
+        is_initial start_position lex_state
   | "${" ->
-      open_interpolation_block kind lex_state;
+      open_interpolation_block kind start_position lex_state;
 
       if is_initial then begin
         Queue.add Parser.INTERP_STRING_START lex_state.deferred_tokens
@@ -233,29 +258,53 @@ and lex_string kind buffer is_initial lex_state =
       end;
       Queue.take lex_state.deferred_tokens
   | "\\a" ->
-      lex_string kind (Cowbuffer.add_char '\x07' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '\x07' buffer)
+        is_initial start_position lex_state
   | "\\b" ->
-      lex_string kind (Cowbuffer.add_char '\x08' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '\x08' buffer)
+        is_initial start_position lex_state
   | "\\e" ->
-      lex_string kind (Cowbuffer.add_char '\x1b' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '\x1b' buffer)
+        is_initial start_position lex_state
   | "\\f" ->
-      lex_string kind (Cowbuffer.add_char '\x0C' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '\x0C' buffer)
+        is_initial start_position lex_state
   | "\\n" ->
-      lex_string kind (Cowbuffer.add_char '\n' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '\n' buffer)
+        is_initial start_position lex_state
   | "\\r" ->
-      lex_string kind (Cowbuffer.add_char '\r' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '\r' buffer)
+        is_initial start_position lex_state
   | "\\t" ->
-      lex_string kind (Cowbuffer.add_char '\t' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '\t' buffer)
+        is_initial start_position lex_state
   | "\\v" ->
-      lex_string kind (Cowbuffer.add_char '\x0B' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '\x0B' buffer)
+        is_initial start_position lex_state
   | "\\\\" ->
-      lex_string kind (Cowbuffer.add_char '\\' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '\\' buffer)
+        is_initial start_position lex_state
   | "\\'" ->
-      lex_string kind (Cowbuffer.add_char '\'' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '\'' buffer)
+        is_initial start_position lex_state
   | "\\\"" ->
-      lex_string kind (Cowbuffer.add_char '"' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '"' buffer)
+        is_initial start_position lex_state
   | "\\$" ->
-      lex_string kind (Cowbuffer.add_char '$' buffer) is_initial lex_state
+      lex_string kind
+        (Cowbuffer.add_char '$' buffer)
+        is_initial start_position lex_state
   | "\\x", Rep (('0' .. '9' | 'a' .. 'f' | 'A' .. 'F'), 1 .. 6) ->
       let escape =
         Sedlexing.Utf8.sub_lexeme lexbuf 2 (Sedlexing.lexeme_length lexbuf - 2)
@@ -284,7 +333,7 @@ and lex_string kind buffer is_initial lex_state =
               (LexError (InvalidStringEscape (get_loc lexbuf, "x" ^ escape)))
       in
       let buffer = Cowbuffer.add_utf_8_uchar uchar buffer in
-      lex_string kind buffer is_initial lex_state
+      lex_string kind buffer is_initial start_position lex_state
   | "\\", Compl (Chars "abefnrtv\\\'\"$x") ->
       raise (LexError (InvalidStringEscape (get_loc lexbuf, lexeme ())))
   | _ -> todo __LOC__
@@ -308,15 +357,17 @@ and emit_semi_or_lex lex_state =
   | Opening :: levels ->
       lex_state.indentation_level <- Found loc.start_col :: levels;
       lex lex_state
-  | OpeningInterpolation string_kind :: levels ->
+  | OpeningInterpolation (string_kind, start_location) :: levels ->
       lex_state.indentation_level <-
-        FoundInterpolation (string_kind, loc.start_col) :: levels;
+        FoundInterpolation (string_kind, start_location, loc.start_col)
+        :: levels;
       lex lex_state
   | Found block_indentation :: levels
-  | FoundInterpolation (_, block_indentation) :: levels ->
+  | FoundInterpolation (_, _, block_indentation) :: levels ->
       if loc.start_col <= block_indentation then Parser.SEMI else lex lex_state
 
 let token lex_state =
+  lex_state.start_position_override <- None;
   match Queue.take_opt lex_state.deferred_tokens with
   | Some token -> token
   | None -> begin
@@ -325,7 +376,8 @@ let token lex_state =
       | Some alternative_state -> begin
           lex_state.next_starting_state <- None;
           match alternative_state with
-          | `LexString kind ->
-              lex_string kind (Cowbuffer.create 16) false lex_state
+          | `LexString (kind, start_position) ->
+              lex_string kind (Cowbuffer.create 16) false start_position
+                lex_state
         end
     end

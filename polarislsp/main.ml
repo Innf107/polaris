@@ -151,7 +151,7 @@ let on_definition model_ref (params : Lsp.definition_params) =
       end
 
 let on_completion model_ref (params : Lsp.completion_params) =
-  Polaris.Util.todo __LOC__
+  `Null
 
 let () =
   Eio_posix.run

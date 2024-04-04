@@ -56,27 +56,27 @@ end) : S with type key = Key.t = struct
   let singleton : type a. key -> a -> a t =
    fun key value -> singleton_iterator (Key.to_iterator key) key value
 
-  let rec add_iterator key iterator value trie =
+  let rec add_iterator : type a. key -> Key.iterator -> a -> a t -> a t =
+   fun key iterator value trie ->
     match Key.next iterator with
     | None -> { trie with entry = Some (key, value); size = trie.size + 1 }
-    | Some (segment, iterator) -> begin
-        match SegmentMap.find_opt segment trie.children with
-        | None ->
-            {
-              trie with
-              children =
-                SegmentMap.add segment
-                  (singleton_iterator iterator key value)
-                  trie.children;
-            }
-        | Some child ->
-            let child = add_iterator key iterator value child in
-            {
-              trie with
-              children = SegmentMap.add segment child trie.children;
-              size = trie.size + 1;
-            }
-      end
+    | Some (segment, iterator) ->
+        let size_change = ref 0 in
+        let update_entry = function
+          | None ->
+              size_change := 1;
+              Some (singleton_iterator iterator key value)
+          | Some child ->
+              let new_child = add_iterator key iterator value child in
+              size_change := new_child.size - child.size;
+              Some new_child
+        in
+        let children = SegmentMap.update segment update_entry trie.children in
+        {
+          trie with
+          children;
+          size = trie.size + !size_change;
+        }
 
   let add key value trie = add_iterator key (Key.to_iterator key) value trie
 

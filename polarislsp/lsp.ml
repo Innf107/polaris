@@ -69,15 +69,15 @@ let progress_token_to_json = function
 type hover_params = {
   textDocument : text_document_identifier;
   position : position;
-  workDoneToken : progress_token option; [@yojson.option]
+  workDoneToken : progress_token option; [@default None]
 }
 [@@deriving protocol ~driver:(module Json)]
 
 type definition_params = {
   textDocument : text_document_identifier;
   position : position;
-  workDoneToken : progress_token option; [@yojson.option]
-  partialResultToken : progress_token option; [@yojson.option]
+  workDoneToken : progress_token option; [@default None]
+  partialResultToken : progress_token option; [@default None]
 }
 [@@deriving protocol ~driver:(module Json)]
 
@@ -101,16 +101,16 @@ let completion_trigger_kind_of_json_exn = function
 
 type completion_context = {
   triggerKind : completion_trigger_kind;
-  triggerCharacter : string option; [@yojson.option]
+  triggerCharacter : string option; [@default None]
 }
 [@@deriving protocol ~driver:(module Json)]
 
 type completion_params = {
   textDocument : text_document_identifier;
   position : position;
-  workDoneToken : progress_token option; [@yojson.option]
-  partialResultToken : progress_token option; [@yojson.option]
-  context : completion_context;
+  workDoneToken : progress_token option; [@default None]
+  partialResultToken : progress_token option; [@default None]
+  context : completion_context; 
 }
 [@@deriving protocol ~driver:(module Json)]
 
@@ -145,19 +145,19 @@ let insert_text_mode_to_json = function
   | AdjustIndentation -> `Int 2
 
 type item_defaults = {
-  commit_characters : string list option; [@yojson.option]
+  commit_characters : string list option; [@default None]
   (* TODO: this is technically also allowed to be {insert: Range, replace: Range}. is that relevant for us? *)
-  edditRange : range option; [@yojson.option]
-  insertTextFormat : insert_text_format option; [@yojson.option]
-  insertTextMode : insert_text_mode option; [@yojson.option]
+  edditRange : range option; [@default None]
+  insertTextFormat : insert_text_format option; [@default None]
+  insertTextMode : insert_text_mode option; [@default None]
       (* TODO: there is also a `data?: LSPAny` field. i have no idea what this does, why we would need it,
          or how we would even represent it though, so we can hopefully leave it off for now.*)
 }
 [@@deriving protocol ~driver:(module Json)]
 
 type completion_item_label_details = {
-  detail : string option; [@yojson.option]
-  description : string option; [@yojson.option]
+  detail : string option; [@default None]
+  description : string option; [@default None]
 }
 [@@deriving protocol ~driver:(module Json)]
 
@@ -291,7 +291,7 @@ type insert_replace_edit = {
 type command = {
   title : string;
   command : string;
-  arguments : lsp_any list option; [@yojson.option]
+  arguments : lsp_any list option; [@default None]
 }
 [@@deriving protocol ~driver:(module Json)]
 
@@ -299,33 +299,32 @@ type command = {
    if we are going to construct a few hundred of these (e.g. as an already computed yojson object?)*)
 type completion_item = {
   label : string;
-  labelDetails : completion_item_label_details option; [@yojson.option]
-  kind : completion_item_kind option; [@yojson.option]
-  tags : completion_item_tag list option; [@yojson.option]
-  detail : string option; [@yojson.option]
-  (* TODO: this is technically also allowed to be a MarkupContent*)
+  labelDetails : completion_item_label_details option; [@default None]
+  kind : completion_item_kind option; [@default None]
+  tags : completion_item_tag list option; [@default None]
+  detail : string option; [@default None]
   documentation : (string, markup_content) untagged_either option;
-      [@yojson.option]
-  deprecated : bool option; [@yojson.option]
-  preselect : bool option; [@yojson.option]
-  sortText : string option; [@yojson.option]
-  filterText : string option; [@yojson.option]
-  insertText : string option; [@yojson.option]
-  insertTextFormat : insert_text_format option; [@yojson.option]
-  insertTextMode : insert_text_mode option; [@yojson.option]
+      [@default None]
+  deprecated : bool option; [@default None]
+  preselect : bool option; [@default None]
+  sortText : string option; [@default None]
+  filterText : string option; [@default None]
+  insertText : string option; [@default None]
+  insertTextFormat : insert_text_format option; [@default None]
+  insertTextMode : insert_text_mode option; [@default None]
   textEdit : (text_edit, insert_replace_edit) untagged_either option;
-      [@yojson.option]
-  textEditText : string option; [@yojson.option]
-  additionalTextEdits : text_edit list option; [@yojson.option]
-  commitCharacters : string list option; [@yojson.option]
-  command : command option; [@yojson.option]
+      [@default None]
+  textEditText : string option; [@default None]
+  additionalTextEdits : text_edit list option; [@default None]
+  commitCharacters : string list option; [@default None]
+  command : command option; [@default None]
       (* TODO: there is a data?: LSPAny field that i don't know what to do with *)
 }
 [@@deriving protocol ~driver:(module Json)]
 
 type completion_list = {
   isIncomplete : bool;
-  itemDefaults : item_defaults option; [@yojson.option]
+  itemDefaults : item_defaults option; [@default None]
   items : completion_item list;
 }
 [@@deriving protocol ~driver:(module Json)]
@@ -338,7 +337,7 @@ type versioned_text_document_identifier = {
 
 type text_document_content_change_event = {
   (* This is None if the client sent the whole document *)
-  range : range option; [@yojson.option]
+  range : range option; [@default None]
   text : string;
 }
 [@@deriving protocol ~driver:(module Json)]

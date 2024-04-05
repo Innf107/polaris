@@ -110,7 +110,7 @@ type completion_params = {
   position : position;
   workDoneToken : progress_token option; [@default None]
   partialResultToken : progress_token option; [@default None]
-  context : completion_context; 
+  context : completion_context;
 }
 [@@deriving protocol ~driver:(module Json)]
 
@@ -137,8 +137,7 @@ let insert_text_mode_of_json_exn = function
   | `Int 1 -> AsIs
   | `Int 2 -> AdjustIndentation
   | yojson ->
-      Yojson.json_error
-        ("invalid insert_text_mode: " ^ Yojson.Safe.show yojson)
+      Yojson.json_error ("invalid insert_text_mode: " ^ Yojson.Safe.show yojson)
 
 let insert_text_mode_to_json = function
   | AsIs -> `Int 1
@@ -322,6 +321,32 @@ type completion_item = {
 }
 [@@deriving protocol ~driver:(module Json)]
 
+(* fuck you ppx *)
+let make_completion_item ?labelDetails ?kind ?tags ?detail ?documentation
+    ?deprecated ?preselect ?sortText ?filterText ?insertText ?insertTextFormat
+    ?insertTextMode ?textEdit ?textEditText ?additionalTextEdits
+    ?commitCharacters ?command label =
+  {
+    label;
+    labelDetails;
+    kind;
+    tags;
+    detail;
+    documentation;
+    deprecated;
+    preselect;
+    sortText;
+    filterText;
+    insertText;
+    insertTextFormat;
+    insertTextMode;
+    textEdit;
+    textEditText;
+    additionalTextEdits;
+    commitCharacters;
+    command;
+  }
+
 type completion_list = {
   isIncomplete : bool;
   itemDefaults : item_defaults option; [@default None]
@@ -348,7 +373,8 @@ type did_change_params = {
 }
 [@@deriving protocol ~driver:(module Json)]
 
-type did_open_params = { textDocument : text_document_item } [@@deriving protocol ~driver:(module Json)]
+type did_open_params = { textDocument : text_document_item }
+[@@deriving protocol ~driver:(module Json)]
 
 type client_notification =
   | DidChange of did_change_params

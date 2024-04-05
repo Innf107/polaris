@@ -6,6 +6,15 @@ type t = {
   end_col : int;
 }
 
+type position = {
+  line : int;
+  column : int;
+}
+val compare_position : position -> position -> int
+
+val start : t -> position 
+val end_ : t -> position
+
 val pretty : t -> string
 
 (* Like pretty but only displays the starting position, which ensures that

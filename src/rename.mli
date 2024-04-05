@@ -23,9 +23,23 @@ module RenameScope : sig
   type t
 
   val empty : t
+
+  val variables_in_scope : t -> name Seq.t
+  val module_vars_in_scope : t -> name Seq.t
+  val type_variables_in_scope : t -> name Seq.t
+  val type_constructors_in_scope : t -> name Seq.t
+  val data_constructors_in_scope : t -> name Seq.t
 end
 
+type scope_registration = {
+  register_scope : Loc.position -> RenameScope.t -> unit;
+  register_reset_scope : Loc.position -> RenameScope.t -> unit;
+}
+
+val ignored_scope_registration : scope_registration
+
 val rename_scope :
+  scope_registration ->
   (Typed.module_exports * Typed.expr list) FilePathMap.t ->
   RenameScope.t ->
   Parsed.header ->

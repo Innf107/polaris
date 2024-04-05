@@ -6,7 +6,9 @@ type driver_options = {
   print_ast : bool;
   print_renamed : bool;
   print_tokens : bool;
+  scope_registration : Rename.scope_registration;
 }
+val ignored_scope_registration : Rename.scope_registration
 
 val run :
   driver_options ->

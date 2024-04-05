@@ -3,6 +3,7 @@ module type S = sig
   type +!'a t
 
   val empty : 'a t
+  val singleton : key -> 'a -> 'a t
   val add : key -> 'a -> 'a t -> 'a t
   val find_subtrie : key -> 'a t -> 'a t option
   val find_opt : key -> 'a t -> 'a option
@@ -13,6 +14,8 @@ module type S = sig
   val of_seq : (key * 'a) Seq.t -> 'a t
   val to_seq : 'a t -> (key * 'a) Seq.t
   val bindings : 'a t -> (key * 'a) list
+  val keys : 'a t -> key Seq.t
+  val values : 'a t -> 'a Seq.t
   val update : key -> ('a option -> 'a option) -> 'a t -> 'a t
   val fold : (key -> 'a -> 'acc -> 'acc) -> 'a t -> 'acc -> 'acc
 end
@@ -72,11 +75,7 @@ end) : S with type key = Key.t = struct
               Some new_child
         in
         let children = SegmentMap.update segment update_entry trie.children in
-        {
-          trie with
-          children;
-          size = trie.size + !size_change;
-        }
+        { trie with children; size = trie.size + !size_change }
 
   let add key value trie = add_iterator key (Key.to_iterator key) value trie
 
@@ -113,7 +112,7 @@ end) : S with type key = Key.t = struct
       children = SegmentMap.map (mapi f) trie.children;
     }
 
-  let rec of_seq seq =
+  let of_seq seq =
     Seq.fold_left (fun trie (key, value) -> add key value trie) empty seq
 
   let rec to_seq trie =
@@ -126,6 +125,8 @@ end) : S with type key = Key.t = struct
     | None -> children
     | Some entry -> fun () -> Seq.Cons (entry, children)
 
+  let keys trie = Seq.map fst (to_seq trie)
+  let values trie = Seq.map snd (to_seq trie)
   let bindings trie = List.of_seq (to_seq trie)
 
   let update : type a. key -> (a option -> a option) -> a t -> a t =

@@ -1,9 +1,9 @@
 (executable
  (public_name polarislsp)
  (name main)
- (libraries polaris base yojson ppx_protocol_conv_json eio_main)
+ (libraries polaris base yojson ppx_deriving ppx_protocol_conv_json eio_main)
  (preprocess
-  (pps ppx_deriving.show ppx_protocol_conv)))
+  (pps ppx_deriving.show ppx_deriving.make ppx_protocol_conv)))
 
 (env
  (dev

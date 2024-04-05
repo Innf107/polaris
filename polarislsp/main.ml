@@ -151,7 +151,59 @@ let on_definition model_ref (params : Lsp.definition_params) =
       end
 
 let on_completion model_ref (params : Lsp.completion_params) =
-  `Null
+  let no_response () = `Null in
+  match !model_ref with
+  | None -> no_response ()
+  | Some model ->
+      let module RenameScope = Polaris.Rename.RenameScope in
+      let open Polaris.Syntax.Name in
+      let scope = Model.find_scope_at_or_before params.position model in
+
+      (* TODO: get the type signature here (~labelDetails) (or detail? what's the difference??)*)
+      (* TODO: somehow get inserts (or textEdits??) to work correctly :( *)
+      let variable_completion name =
+        Lsp.make_completion_item ~kind:Lsp.Variable (original_name name)
+      in
+      let type_variable_completion name =
+        Lsp.make_completion_item ~kind:Lsp.TypeParameter (original_name name)
+      in
+      let type_constructor_completion name =
+        Lsp.make_completion_item ~kind:Lsp.Class (original_name name)
+      in
+      let module_var_completion name =
+        Lsp.make_completion_item ~kind:Lsp.Module (original_name name)
+      in
+      let data_constructor_completion name =
+        Lsp.make_completion_item ~kind:Lsp.EnumMember (original_name name)
+      in
+      (* TODO *)
+      let completion_items =
+        List.of_seq
+          (Seq.concat
+             (List.to_seq
+                [
+                  Seq.map variable_completion
+                    (RenameScope.variables_in_scope scope);
+                  Seq.map type_variable_completion
+                    (RenameScope.type_variables_in_scope scope);
+                  Seq.map type_constructor_completion
+                    (RenameScope.type_constructors_in_scope scope);
+                  Seq.map module_var_completion
+                    (RenameScope.module_vars_in_scope scope);
+                  Seq.map data_constructor_completion
+                    (RenameScope.data_constructors_in_scope scope);
+                ]))
+      in
+
+      let completion_list =
+        Lsp.
+          {
+            isIncomplete = false;
+            itemDefaults = None;
+            items = completion_items;
+          }
+      in
+      Lsp.completion_list_to_json completion_list
 
 let () =
   Eio_posix.run

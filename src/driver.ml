@@ -11,8 +11,10 @@ type driver_options = {
   print_ast : bool;
   print_renamed : bool;
   print_tokens : bool;
+  scope_registration : Rename.scope_registration;
 }
 
+let ignored_scope_registration = Rename.ignored_scope_registration
 let lex_parse_landmark = Landmark.register "lex_parse"
 let rename_landmark = Landmark.register "rename"
 let typecheck_landmark = Landmark.register "typecheck"
@@ -110,7 +112,8 @@ let rec parse_rename_typecheck :
         Landmark.enter rename_landmark;
         trace_driver (lazy "Renaming...");
         let renamed_header, renamed, new_scope =
-          Rename.rename_scope import_map scope header ast
+          Rename.rename_scope options.scope_registration import_map scope header
+            ast
         in
         if options.print_renamed then begin
           print_endline "~~~~~~~~Renamed AST~~~~~~~";

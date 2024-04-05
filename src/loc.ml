@@ -6,6 +6,15 @@ type t = {
   end_col : int;
 }
 
+type position = {
+  line : int;
+  column : int;
+}
+let compare_position = compare
+
+let start loc = { line = loc.start_line; column = loc.start_col }
+let end_ loc = { line = loc.end_line; column = loc.end_col }
+
 let pretty (loc : t) =
   Printf.sprintf "%s:%d:%d-%d:%d" loc.file loc.start_line loc.start_col
     loc.end_line loc.end_col

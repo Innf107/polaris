@@ -95,7 +95,11 @@ let rec parse_rename_typecheck :
               ( filename,
                 Error.as_exn
                   (parse_rename_typecheck
-                     { options with filename = path }
+                     {
+                       options with
+                       filename = path;
+                       scope_registration = ignored_scope_registration;
+                     }
                      (Sedlexing.Utf8.from_channel (open_in path))
                      RenameScope.empty Types.empty_env) ))
             imported_files

@@ -1,4 +1,5 @@
 # EXPECT: __a__
+# KNOWN
 
 let x = !env (\_ -> { print("a"); 0 })
 

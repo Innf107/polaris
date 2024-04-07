@@ -13,6 +13,10 @@ let silent(cont) = try cont() with {
     CommandFailure(result) -> result.stdout
 }
 
+let succeeds(cont) = try { let _ = cont(); true } with {
+    CommandFailure(_) -> false
+}
+
 let for = if sync then List.for else List.forConcurrent
 
 let doesFileExist(file) = 
@@ -23,9 +27,10 @@ let doesFileExist(file) =
     } with {
         CommandFailure(_) -> false
     }
-let stripExtension(path) = (!dirname path) ~ "/" ~ (!basename "-s" ".pls" path)
+let stripExtension(path) = "${!dirname path}/${!basename "-s" ".pls" path}"
 
 let categories = lines(!find (scriptLocal("categories")) "-mindepth" 1 "-maxdepth" 1 "-not" "-name" "*.disabled" [["-not", "-name", ex] | let ex <- exclude])
+
 
 if categories == [] then {
     print("No tests left to run.");
@@ -36,16 +41,44 @@ if categories == [] then {
 
 let files = lines(!find categories "-name" "*.pls")
 
-let errors = ref 0
-
 if not usePolaris then {
     let _ = !dune "build"
 }
 else {}
 
+let errors = ref 0
+let knownErrors = ref 0
+let knownErrorsPassed = ref 0
+
+let passed(file, isKnownFailure) = {
+    if isKnownFailure then {
+        print("\e[33m[${file}](error): PASSED but was marked as known failure\e[0m")
+        knownErrorsPassed := knownErrorsPassed! + 1
+    } else {
+        print("\e[32m[${file}](error): PASSED\e[0m")
+    }
+}
+
+let failed(file, isKnownFailure, expected, actual) = {
+    if isKnownFailure then {
+        print("\e[1m\e[35m[${file}](error): FAILED!\n\e[0m"
+                ~ "\e[35m[    EXPECTED: '${expected}'\n"
+                ~        "      ACTUAL: '${actual}'\e[0m")
+        knownErrors := knownErrors! + 1
+    } else {
+        print("\e[1m\e[31m[${file}](error): FAILED!\n\e[0m"
+                ~ "\e[31m[    EXPECTED: '${expected}'\n"
+                ~        "      ACTUAL: '${actual}'\e[0m")
+        errors := errors! + 1
+
+    }
+}
+
+
 for(files, \file -> {
-    let expectation = silent (\ -> !grep "-Po" "(?<=# EXPECT: ).+" file);
-    let args = split("|", silent(\ -> !grep "-Po" "(?<=# ARGS: ).+" file));
+    let expectation = silent (\ -> !grep "-Po" "(?<=# EXPECT: ).+" file)
+    let isKnownFailure = succeeds (\ -> !grep "-P" "# KNOWN" file)
+    let args = split("|", silent(\ -> !grep "-Po" "(?<=# ARGS: ).+" file))
 
     let result = 
         if not usePolaris then 
@@ -58,38 +91,35 @@ for(files, \file -> {
         # This is an 'error' test, meaning the program is meant to fail
         # with the error message contained in the '.error' file
 
-        let expectedError = !cat (stripExtension(file) ~ ".error")
+        let expectedError = !cat "${stripExtension(file)}.error"
 
         if result == expectedError then {
-            print("\e[32m[${file}](error): PASSED\e[0m")
-            ()
+            passed(file, isKnownFailure)
         } else {
-            print("\e[1m\e[31m[${file}](error): FAILED!\n\e[0m"
-                    ~ "\e[31m[    EXPECTED: '" ~ expectedError ~ "'\n"
-                    ~ "      ACTUAL: '" ~ result ~ "'\e[0m")
-            errors := errors! + 1
-        }
+            failed(file, isKnownFailure, expectedError, result)
+        } 
     } else {
         if result == expectation then {
             # This is a regular 'run' test, so the program should succeed
             # and return the string in 'expectation'
-        
-            print("\e[32m[${file}]: PASSED\e[0m")
-            ()
+            passed(file, isKnownFailure)
         } else {
-            print("\e[1m\e[31m[${file}]: FAILED!\n\e[0m"
-                    ~ "\e[31m    EXPECTED: '" ~ expectation ~ "'\n"
-                    ~ "      ACTUAL: '" ~ result ~ "'\e[0m")
-            errors := errors! + 1
+            failed(file, isKnownFailure, expectation, result)
         }
     };
 })
-
+# TODO: fail on known failure passing
 let disabled = {let x = !find "test/categories" "-type" "f" "-name" "*.disabled"; x} | wc "-l"
 if errors! == 0 then {
-    print("\e[32m\e[1mAll test passed. (${disabled} disabled)\e[0m")
+    print("\e[32m\e[1mAll test passed. (${disabled} disabled, ${knownErrors!} known errors))\e[0m")
+    if knownErrorsPassed! > 0 then {
+        print("\e[1m\e[33m${knownErrorsPassed!} known errors have been fixed\e[0m")
+    } else {}
     ()
 } else {
-    print("\e[31m${toString(errors!)} TESTS FAILED! (" ~ disabled ~ " disabled)\e[0m")
+    print("\e[31m${toString(errors!)} TESTS FAILED! (${disabled} disabled, ${knownErrors!} known errors)\e[0m")
+    if knownErrorsPassed! > 0 then {
+        print("\e[1m\e[33m${knownErrorsPassed!} known errors have been fixed\e[0m")
+    } else {}
     exit(errors!)
 }

@@ -1,4 +1,5 @@
 # EXPECT: T(<A>)
+# KNOWN
 
 data T(r) = < A, B | r >
 

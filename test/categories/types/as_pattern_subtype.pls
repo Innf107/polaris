@@ -1,4 +1,5 @@
 # EXPECT: 3
+# KNOWN
 
 let f : < A, B > -> Number
 let f(x) = match x {

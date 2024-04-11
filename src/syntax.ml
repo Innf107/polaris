@@ -743,25 +743,22 @@ module Template = struct
           let expr, state = traversal state expr in
           (Some expr, state)
 
+    let default_ignore : 'state 'a. 'state -> 'a -> 'a * 'state =
+     fun state x -> (x, state)
+
     class ['state] traversal =
       object (self)
-        method expr : 'state -> expr -> expr * 'state =
-          fun state expr -> (expr, state)
-
-        method pattern : 'state -> pattern -> pattern * 'state =
-          fun state pattern -> (pattern, state)
-
-        method ty : 'state -> ty -> ty * 'state = fun state ty -> (ty, state)
-
-        method name : 'state -> name -> name * 'state =
-          fun state name -> (name, state)
+        method expr : 'state -> expr -> expr * 'state = default_ignore
+        method pattern : 'state -> pattern -> pattern * 'state = default_ignore
+        method ty : 'state -> ty -> ty * 'state = default_ignore
+        method name : 'state -> name -> name * 'state = default_ignore
 
         method module_expr : 'state -> module_expr -> module_expr * 'state =
-          fun state module_expr -> (module_expr, state)
+          default_ignore
 
         method list_comp_clause
             : 'state -> list_comp_clause -> list_comp_clause * 'state =
-          fun state list_comp_clause -> (list_comp_clause, state)
+          default_ignore
 
         method traverse_expr : 'state -> expr -> expr * 'state =
           fun state expression ->
@@ -1025,247 +1022,263 @@ module Template = struct
 
         method traverse_pattern : 'state -> pattern -> pattern * 'state =
           fun state pattern ->
-            let transformed, state =
-              match pattern with
-              (* Non-recursive *)
-              | NumPat (loc, num) -> (NumPat (loc, num), state)
-              | StringPat (loc, num) -> (StringPat (loc, num), state)
-              | BoolPat (loc, bool) -> (BoolPat (loc, bool), state)
-              (* Recursive *)
-              | VarPat (loc, name) ->
-                  let name, state = self#traverse_name state name in
-                  (VarPat (loc, name), state)
-              | AsPat (loc, pattern, name) ->
-                  let pattern, state = self#traverse_pattern state pattern in
-                  let name, state = self#traverse_name state name in
-                  (AsPat (loc, pattern, name), state)
-              | ConsPat (loc, head_pattern, tail_pattern) ->
-                  let head_pattern, state =
-                    self#traverse_pattern state head_pattern
-                  in
-                  let tail_pattern, state =
-                    self#traverse_pattern state tail_pattern
-                  in
-                  (ConsPat (loc, head_pattern, tail_pattern), state)
-              | ListPat (loc, patterns) ->
-                  let patterns, state =
-                    traverse_list self#traverse_pattern state patterns
-                  in
-                  (ListPat (loc, patterns), state)
-              | TuplePat (loc, patterns) ->
-                  let patterns, state =
-                    traverse_list self#traverse_pattern state patterns
-                  in
-                  (TuplePat (loc, patterns), state)
-              | OrPat (loc, left_pattern, right_pattern) ->
-                  let left_pattern, state =
-                    self#traverse_pattern state left_pattern
-                  in
-                  let right_pattern, state =
-                    self#traverse_pattern state right_pattern
-                  in
-                  (OrPat (loc, left_pattern, right_pattern), state)
-              | TypePat (loc, pattern, ty) ->
-                  let pattern, state = self#traverse_pattern state pattern in
-                  let ty, state = self#traverse_type state ty in
-                  (TypePat (loc, pattern, ty), state)
-              | DataPat (loc, constructor_name, pattern) ->
-                  let constructor_name, state =
-                    self#traverse_name state constructor_name
-                  in
-                  let patterns, state = self#traverse_pattern state pattern in
-                  (DataPat (loc, constructor_name, patterns), state)
-              | VariantPat (loc, unqualified_name, patterns) ->
-                  let patterns, state =
-                    traverse_list self#traverse_pattern state patterns
-                  in
-                  (VariantPat (loc, unqualified_name, patterns), state)
-              | ExceptionDataPat (loc, name, patterns) ->
-                  let name, state = self#traverse_name state name in
-                  let patterns, state =
-                    traverse_list self#traverse_pattern state patterns
-                  in
-                  (ExceptionDataPat (loc, name, patterns), state)
-            in
-            self#pattern state transformed
+            (* Patterns can only reach other patterns, types, and names *)
+            if
+              self#pattern == default_ignore
+              && self#ty == default_ignore
+              && self#name == default_ignore
+            then (pattern, state)
+            else begin
+              let transformed, state =
+                match pattern with
+                (* Non-recursive *)
+                | NumPat (loc, num) -> (NumPat (loc, num), state)
+                | StringPat (loc, num) -> (StringPat (loc, num), state)
+                | BoolPat (loc, bool) -> (BoolPat (loc, bool), state)
+                (* Recursive *)
+                | VarPat (loc, name) ->
+                    let name, state = self#traverse_name state name in
+                    (VarPat (loc, name), state)
+                | AsPat (loc, pattern, name) ->
+                    let pattern, state = self#traverse_pattern state pattern in
+                    let name, state = self#traverse_name state name in
+                    (AsPat (loc, pattern, name), state)
+                | ConsPat (loc, head_pattern, tail_pattern) ->
+                    let head_pattern, state =
+                      self#traverse_pattern state head_pattern
+                    in
+                    let tail_pattern, state =
+                      self#traverse_pattern state tail_pattern
+                    in
+                    (ConsPat (loc, head_pattern, tail_pattern), state)
+                | ListPat (loc, patterns) ->
+                    let patterns, state =
+                      traverse_list self#traverse_pattern state patterns
+                    in
+                    (ListPat (loc, patterns), state)
+                | TuplePat (loc, patterns) ->
+                    let patterns, state =
+                      traverse_list self#traverse_pattern state patterns
+                    in
+                    (TuplePat (loc, patterns), state)
+                | OrPat (loc, left_pattern, right_pattern) ->
+                    let left_pattern, state =
+                      self#traverse_pattern state left_pattern
+                    in
+                    let right_pattern, state =
+                      self#traverse_pattern state right_pattern
+                    in
+                    (OrPat (loc, left_pattern, right_pattern), state)
+                | TypePat (loc, pattern, ty) ->
+                    let pattern, state = self#traverse_pattern state pattern in
+                    let ty, state = self#traverse_type state ty in
+                    (TypePat (loc, pattern, ty), state)
+                | DataPat (loc, constructor_name, pattern) ->
+                    let constructor_name, state =
+                      self#traverse_name state constructor_name
+                    in
+                    let patterns, state = self#traverse_pattern state pattern in
+                    (DataPat (loc, constructor_name, patterns), state)
+                | VariantPat (loc, unqualified_name, patterns) ->
+                    let patterns, state =
+                      traverse_list self#traverse_pattern state patterns
+                    in
+                    (VariantPat (loc, unqualified_name, patterns), state)
+                | ExceptionDataPat (loc, name, patterns) ->
+                    let name, state = self#traverse_name state name in
+                    let patterns, state =
+                      traverse_list self#traverse_pattern state patterns
+                    in
+                    (ExceptionDataPat (loc, name, patterns), state)
+              in
+              self#pattern state transformed
+            end
 
         method traverse_type : 'state -> ty -> ty * 'state =
           fun state ty ->
-            let transformed, state =
-              match ty with
-              (* Non-recursive cases *)
-              | Number
-              | Bool
-              | String
-              | Exception ->
-                  (ty, state)
-              (* Recursion *)
-              | Forall (var_name, ty) ->
-                  let var_name, state = self#traverse_name state var_name in
-                  let ty, state = self#traverse_type state ty in
-                  (Forall (var_name, ty), state)
-              | Fun (dom_types, cod_type) ->
-                  let dom_types, state =
-                    traverse_list self#traverse_type state dom_types
-                  in
-                  let cod_type, state = self#traverse_type state cod_type in
-                  (Fun (dom_types, cod_type), state)
-              | TyVar name ->
-                  let name, state = self#traverse_name state name in
-                  (TyVar name, state)
-              | TyConstructor (name, arg_types) ->
-                  let name, state = self#traverse_name state name in
-                  let arg_types, state =
-                    traverse_list self#traverse_type state arg_types
-                  in
-                  (TyConstructor (name, arg_types), state)
-              | TypeAlias (name, arg_types) ->
-                  let name, state = self#traverse_name state name in
-                  let arg_types, state =
-                    traverse_list self#traverse_type state arg_types
-                  in
-                  (TypeAlias (name, arg_types), state)
-              | ModSubscriptTyCon (ext, mod_name, name, arg_types) ->
-                  let mod_name, state = self#traverse_name state mod_name in
-                  let name, state = self#traverse_name state name in
-                  let arg_types, state =
-                    traverse_list self#traverse_type state arg_types
-                  in
-                  (ModSubscriptTyCon (ext, mod_name, name, arg_types), state)
-              | Unif (typeref, name) -> begin
-                  match Typeref.get typeref with
-                  | Unbound level ->
-                      let name, state = self#traverse_name state name in
-                      (Unif (typeref, name), state)
-                  (* If this unif var has been substituted, we completely ignore it. *)
-                  | Bound ty -> self#traverse_type state ty
-                end
-              | Skol (unique, level, name) ->
-                  let name, state = self#traverse_name state name in
-                  (Skol (unique, level, name), state)
-              | Tuple tys ->
-                  let tys, state =
-                    traverse_list self#traverse_type state (Array.to_list tys)
-                  in
-                  (Tuple (Array.of_list tys), state)
-              | List ty ->
-                  let ty, state = self#traverse_type state ty in
-                  (List ty, state)
-              | Promise ty ->
-                  let ty, state = self#traverse_type state ty in
-                  (Promise ty, state)
-              | Ref ty ->
-                  let ty, state = self#traverse_type state ty in
-                  (Ref ty, state)
-              | RecordClosed fields ->
-                  let fields, state =
-                    traverse_list
-                      (fun state (field, ty) ->
-                        let ty, state = self#traverse_type state ty in
-                        ((field, ty), state))
-                      state (Array.to_list fields)
-                  in
-                  (RecordClosed (Array.of_list fields), state)
-              | VariantClosed fields ->
-                  let fields, state =
-                    traverse_list
-                      (fun state (field, tys) ->
-                        let tys, state =
-                          traverse_list self#traverse_type state tys
-                        in
-                        ((field, tys), state))
-                      state (Array.to_list fields)
-                  in
-                  (VariantClosed (Array.of_list fields), state)
-              | RecordVar (fields, var) ->
-                  let fields, state =
-                    traverse_list
-                      (fun state (field, ty) ->
-                        let ty, state = self#traverse_type state ty in
-                        ((field, ty), state))
-                      state (Array.to_list fields)
-                  in
-                  (* Just as in Ty.transform, we treat record extension variables as freestanding
-                     types and properly merge the transformed results back to give a single record type
-                     TODO: Maybe this should be configurable? *)
-                  let var, state = self#traverse_type state (TyVar var) in
-                  (Ty.replace_record_extension (Array.of_list fields) var, state)
-              | VariantVar (fields, var) ->
-                  let fields, state =
-                    traverse_list
-                      (fun state (field, tys) ->
-                        let tys, state =
-                          traverse_list self#traverse_type state tys
-                        in
-                        ((field, tys), state))
-                      state (Array.to_list fields)
-                  in
-                  let var, state = self#traverse_type state (TyVar var) in
-                  ( Ty.replace_variant_extension (Array.of_list fields) var,
-                    state )
-              | RecordUnif (fields, (typeref, var)) ->
-                  (* TODO: We *should* probably pretend like this constructor does not exist if the
-                     unification variable is replaced. Not quite sure how to do that efficiently though *)
-                  let fields, state =
-                    traverse_list
-                      (fun state (field, ty) ->
-                        let ty, state = self#traverse_type state ty in
-                        ((field, ty), state))
-                      state (Array.to_list fields)
-                  in
-                  let var, state =
-                    self#traverse_type state (Unif (typeref, var))
-                  in
-                  (Ty.replace_record_extension (Array.of_list fields) var, state)
-              | VariantUnif (fields, (typeref, var)) ->
-                  (* TODO: We *should* probably pretend like this constructor does not exist if the
-                     unification variable is replaced. Not quite sure how to do that efficiently though *)
-                  let fields, state =
-                    traverse_list
-                      (fun state (field, tys) ->
-                        let tys, state =
-                          traverse_list self#traverse_type state tys
-                        in
-                        ((field, tys), state))
-                      state (Array.to_list fields)
-                  in
-                  let var, state =
-                    self#traverse_type state (Unif (typeref, var))
-                  in
-                  ( Ty.replace_variant_extension (Array.of_list fields) var,
-                    state )
-              | RecordSkol (fields, (unique, level, var)) ->
-                  let fields, state =
-                    traverse_list
-                      (fun state (field, ty) ->
-                        let ty, state = self#traverse_type state ty in
-                        ((field, ty), state))
-                      state (Array.to_list fields)
-                  in
-                  let var, state =
-                    self#traverse_type state (Skol (unique, level, var))
-                  in
-                  (Ty.replace_record_extension (Array.of_list fields) var, state)
-              | VariantSkol (fields, (unique, level, var)) ->
-                  let fields, state =
-                    traverse_list
-                      (fun state (field, tys) ->
-                        let tys, state =
-                          traverse_list self#traverse_type state tys
-                        in
-                        ((field, tys), state))
-                      state (Array.to_list fields)
-                  in
-                  let var, state =
-                    self#traverse_type state (Skol (unique, level, var))
-                  in
-                  ( Ty.replace_variant_extension (Array.of_list fields) var,
-                    state )
-              | Unwrap ty ->
-                  let ty, state = self#traverse_type state ty in
-                  (Unwrap ty, state)
-            in
-            self#ty state transformed
+            (* types can only reach other types or names *)
+            if self#ty == default_ignore && self#name == default_ignore then
+              (ty, state)
+            else begin
+              let transformed, state =
+                match ty with
+                (* Non-recursive cases *)
+                | Number
+                | Bool
+                | String
+                | Exception ->
+                    (ty, state)
+                (* Recursion *)
+                | Forall (var_name, ty) ->
+                    let var_name, state = self#traverse_name state var_name in
+                    let ty, state = self#traverse_type state ty in
+                    (Forall (var_name, ty), state)
+                | Fun (dom_types, cod_type) ->
+                    let dom_types, state =
+                      traverse_list self#traverse_type state dom_types
+                    in
+                    let cod_type, state = self#traverse_type state cod_type in
+                    (Fun (dom_types, cod_type), state)
+                | TyVar name ->
+                    let name, state = self#traverse_name state name in
+                    (TyVar name, state)
+                | TyConstructor (name, arg_types) ->
+                    let name, state = self#traverse_name state name in
+                    let arg_types, state =
+                      traverse_list self#traverse_type state arg_types
+                    in
+                    (TyConstructor (name, arg_types), state)
+                | TypeAlias (name, arg_types) ->
+                    let name, state = self#traverse_name state name in
+                    let arg_types, state =
+                      traverse_list self#traverse_type state arg_types
+                    in
+                    (TypeAlias (name, arg_types), state)
+                | ModSubscriptTyCon (ext, mod_name, name, arg_types) ->
+                    let mod_name, state = self#traverse_name state mod_name in
+                    let name, state = self#traverse_name state name in
+                    let arg_types, state =
+                      traverse_list self#traverse_type state arg_types
+                    in
+                    (ModSubscriptTyCon (ext, mod_name, name, arg_types), state)
+                | Unif (typeref, name) -> begin
+                    match Typeref.get typeref with
+                    | Unbound level ->
+                        let name, state = self#traverse_name state name in
+                        (Unif (typeref, name), state)
+                    (* If this unif var has been substituted, we completely ignore it. *)
+                    | Bound ty -> self#traverse_type state ty
+                  end
+                | Skol (unique, level, name) ->
+                    let name, state = self#traverse_name state name in
+                    (Skol (unique, level, name), state)
+                | Tuple tys ->
+                    let tys, state =
+                      traverse_list self#traverse_type state (Array.to_list tys)
+                    in
+                    (Tuple (Array.of_list tys), state)
+                | List ty ->
+                    let ty, state = self#traverse_type state ty in
+                    (List ty, state)
+                | Promise ty ->
+                    let ty, state = self#traverse_type state ty in
+                    (Promise ty, state)
+                | Ref ty ->
+                    let ty, state = self#traverse_type state ty in
+                    (Ref ty, state)
+                | RecordClosed fields ->
+                    let fields, state =
+                      traverse_list
+                        (fun state (field, ty) ->
+                          let ty, state = self#traverse_type state ty in
+                          ((field, ty), state))
+                        state (Array.to_list fields)
+                    in
+                    (RecordClosed (Array.of_list fields), state)
+                | VariantClosed fields ->
+                    let fields, state =
+                      traverse_list
+                        (fun state (field, tys) ->
+                          let tys, state =
+                            traverse_list self#traverse_type state tys
+                          in
+                          ((field, tys), state))
+                        state (Array.to_list fields)
+                    in
+                    (VariantClosed (Array.of_list fields), state)
+                | RecordVar (fields, var) ->
+                    let fields, state =
+                      traverse_list
+                        (fun state (field, ty) ->
+                          let ty, state = self#traverse_type state ty in
+                          ((field, ty), state))
+                        state (Array.to_list fields)
+                    in
+                    (* Just as in Ty.transform, we treat record extension variables as freestanding
+                       types and properly merge the transformed results back to give a single record type
+                       TODO: Maybe this should be configurable? *)
+                    let var, state = self#traverse_type state (TyVar var) in
+                    ( Ty.replace_record_extension (Array.of_list fields) var,
+                      state )
+                | VariantVar (fields, var) ->
+                    let fields, state =
+                      traverse_list
+                        (fun state (field, tys) ->
+                          let tys, state =
+                            traverse_list self#traverse_type state tys
+                          in
+                          ((field, tys), state))
+                        state (Array.to_list fields)
+                    in
+                    let var, state = self#traverse_type state (TyVar var) in
+                    ( Ty.replace_variant_extension (Array.of_list fields) var,
+                      state )
+                | RecordUnif (fields, (typeref, var)) ->
+                    (* TODO: We *should* probably pretend like this constructor does not exist if the
+                       unification variable is replaced. Not quite sure how to do that efficiently though *)
+                    let fields, state =
+                      traverse_list
+                        (fun state (field, ty) ->
+                          let ty, state = self#traverse_type state ty in
+                          ((field, ty), state))
+                        state (Array.to_list fields)
+                    in
+                    let var, state =
+                      self#traverse_type state (Unif (typeref, var))
+                    in
+                    ( Ty.replace_record_extension (Array.of_list fields) var,
+                      state )
+                | VariantUnif (fields, (typeref, var)) ->
+                    (* TODO: We *should* probably pretend like this constructor does not exist if the
+                       unification variable is replaced. Not quite sure how to do that efficiently though *)
+                    let fields, state =
+                      traverse_list
+                        (fun state (field, tys) ->
+                          let tys, state =
+                            traverse_list self#traverse_type state tys
+                          in
+                          ((field, tys), state))
+                        state (Array.to_list fields)
+                    in
+                    let var, state =
+                      self#traverse_type state (Unif (typeref, var))
+                    in
+                    ( Ty.replace_variant_extension (Array.of_list fields) var,
+                      state )
+                | RecordSkol (fields, (unique, level, var)) ->
+                    let fields, state =
+                      traverse_list
+                        (fun state (field, ty) ->
+                          let ty, state = self#traverse_type state ty in
+                          ((field, ty), state))
+                        state (Array.to_list fields)
+                    in
+                    let var, state =
+                      self#traverse_type state (Skol (unique, level, var))
+                    in
+                    ( Ty.replace_record_extension (Array.of_list fields) var,
+                      state )
+                | VariantSkol (fields, (unique, level, var)) ->
+                    let fields, state =
+                      traverse_list
+                        (fun state (field, tys) ->
+                          let tys, state =
+                            traverse_list self#traverse_type state tys
+                          in
+                          ((field, tys), state))
+                        state (Array.to_list fields)
+                    in
+                    let var, state =
+                      self#traverse_type state (Skol (unique, level, var))
+                    in
+                    ( Ty.replace_variant_extension (Array.of_list fields) var,
+                      state )
+                | Unwrap ty ->
+                    let ty, state = self#traverse_type state ty in
+                    (Unwrap ty, state)
+              in
+              self#ty state transformed
+            end
 
         method traverse_name : 'state -> name -> name * 'state =
           fun state name -> self#name state name

@@ -293,46 +293,68 @@ let normalize_alias env = function
   | TypeAlias (name, arguments) -> instantiate_type_alias env name arguments
   | ty -> ty
 
-let rec instantiate_with_function : local_env -> ty -> ty * (ty -> ty) =
- fun env ty ->
-  match normalize_unif ty with
-  | Forall (tv, ty) ->
-      let unif = Unif (Typeref.make env.level, tv) in
-      (* TODO: Collect all tyvars first to avoid multiple traversals *)
-      let replacement_fun = replace_tvar tv unif in
-      let instantiated, inner_replacement_fun =
-        instantiate_with_function env (replacement_fun ty)
-      in
-      (instantiated, fun ty -> inner_replacement_fun (replacement_fun ty))
+let[@tail_mod_cons] rec collect_prenex_variables env type_ =
+  match normalize_unif type_ with
+  | Forall (tyvar, underlying) ->
+      let rest, underlying = collect_prenex_variables env underlying in
+      (tyvar :: rest, underlying)
   | TypeAlias (name, args) ->
-      instantiate_with_function env (instantiate_type_alias env name args)
-  | ty -> (ty, Fun.id)
+      collect_prenex_variables env (instantiate_type_alias env name args)
+  | type_ -> ([], type_)
+
+let instantiate_with_function : local_env -> ty -> ty * (ty -> ty) =
+ fun env type_ ->
+  let tyvars, underlying_type = collect_prenex_variables env type_ in
+  let replacement_fun =
+    replace_tvars
+      (NameMap.of_list
+         (List.map
+            (fun var -> (var, Unif (Typeref.make env.level, var)))
+            tyvars))
+  in
+  (replacement_fun underlying_type, replacement_fun)
 
 let instantiate : local_env -> ty -> ty =
  fun env ty ->
   let instaniated, _ = instantiate_with_function env ty in
   instaniated
 
-let rec skolemize_with_function :
+let skolemize_with_function :
     local_env -> ty -> ty * (ty -> ty) * (local_env -> local_env) =
- fun env ty ->
-  match normalize_unif ty with
-  | Forall (tv, ty) ->
-      enter_level env
-        begin
-          fun env ->
-            let skol = Skol (Unique.fresh (), env.level, tv) in
-            let replacement_fun = replace_tvar tv skol in
-            let skolemized, inner_replacement_fun, inner_trans =
-              skolemize_with_function env (replacement_fun ty)
-            in
-            ( skolemized,
-              (fun ty -> inner_replacement_fun (replacement_fun ty)),
-              increase_ambient_level << inner_trans )
-        end
-  | TypeAlias (name, args) ->
-      skolemize_with_function env (instantiate_type_alias env name args)
-  | ty -> (ty, Fun.id, Fun.id)
+ fun env type_ ->
+  let tyvars, underlying_type = collect_prenex_variables env type_ in
+  let replacement_fun =
+    replace_tvars
+      (NameMap.of_list
+         (List.map
+            (fun var -> (var, Skol (Unique.fresh (), env.level, var)))
+            tyvars))
+  in
+  let env_trans =
+    match tyvars with
+    | [] -> Fun.id
+    | _ -> increase_ambient_level
+  in
+  (replacement_fun underlying_type, replacement_fun, env_trans)
+(*
+   match normalize_unif ty with
+   | Forall (tv, ty) ->
+       enter_level env
+         begin
+           fun env ->
+             let skol = Skol (Unique.fresh (), env.level, tv) in
+             let replacement_fun = replace_tvar tv skol in
+             let skolemized, inner_replacement_fun, inner_trans =
+               skolemize_with_function env (replacement_fun ty)
+             in
+             ( skolemized,
+               (fun ty -> inner_replacement_fun (replacement_fun ty)),
+               increase_ambient_level << inner_trans )
+         end
+   | TypeAlias (name, args) ->
+       skolemize_with_function env (instantiate_type_alias env name args)
+   | ty -> (ty, Fun.id, Fun.id)
+*)
 
 let skolemize : local_env -> ty -> ty =
  fun env ty ->

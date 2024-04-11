@@ -108,7 +108,7 @@ for(files, \file -> {
         }
     };
 })
-# TODO: fail on known failure passing
+
 let disabled = {let x = !find "test/categories" "-type" "f" "-name" "*.disabled"; x} | wc "-l"
 if errors! == 0 then {
     print("\e[32m\e[1mAll test passed. (${disabled} disabled, ${knownErrors!} known errors))\e[0m")

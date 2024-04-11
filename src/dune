@@ -2,7 +2,8 @@
  (name polaris)
  (libraries menhirLib trees_that_grow bestline re eio eio.unix base sedlex landmarks)
  (preprocess
-  (pps trees_that_grow sedlex.ppx)))
+  (pps trees_that_grow sedlex.ppx))
+ (instrumentation (backend landmarks --auto)))
 
 (menhir
  (modules parser))

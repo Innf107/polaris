@@ -306,11 +306,15 @@ let instantiate_with_function : local_env -> ty -> ty * (ty -> ty) =
  fun env type_ ->
   let tyvars, underlying_type = collect_prenex_variables env type_ in
   let replacement_fun =
-    replace_tvars
-      (NameMap.of_list
-         (List.map
-            (fun var -> (var, Unif (Typeref.make env.level, var)))
-            tyvars))
+    match tyvars with
+    | [] -> Fun.id
+    | [ var ] -> replace_tvar var (Unif (Typeref.make env.level, var))
+    | vars ->
+        replace_tvars
+          (NameMap.of_list
+             (List.map
+                (fun var -> (var, Unif (Typeref.make env.level, var)))
+                tyvars))
   in
   (replacement_fun underlying_type, replacement_fun)
 
@@ -324,11 +328,19 @@ let skolemize_with_function :
  fun env type_ ->
   let tyvars, underlying_type = collect_prenex_variables env type_ in
   let replacement_fun =
-    replace_tvars
-      (NameMap.of_list
-         (List.map
-            (fun var -> (var, Skol (Unique.fresh (), Typeref.next_level env.level, var)))
-            tyvars))
+    match tyvars with
+    | [] -> Fun.id
+    | [ var ] ->
+        replace_tvar var
+          (Skol (Unique.fresh (), Typeref.next_level env.level, var))
+    | vars ->
+        replace_tvars
+          (NameMap.of_list
+             (List.map
+                (fun var ->
+                  ( var,
+                    Skol (Unique.fresh (), Typeref.next_level env.level, var) ))
+                tyvars))
   in
   let env_trans =
     match tyvars with

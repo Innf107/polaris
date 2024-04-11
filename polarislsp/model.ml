@@ -44,7 +44,7 @@ let hover_entry_traversal =
     method! expr hover_entries expr =
       match expr with
       | Typed.Var (((loc, ty), _), name)
-      | Typed.DataConstructor ((loc, ty), name)
+      | Typed.DataConstructor ((loc, ty, _), name)
       | Typed.ModSubscript ((loc, ty), _, name) ->
           (expr, Difflist.snoc hover_entries (loc, (loc, VarLike (name, ty))))
           (* Subscripts use the location of the field, not the entire expression *)
@@ -92,7 +92,7 @@ let build exprs =
       method! expr hover_entries expr =
         match expr with
         | Typed.Var (((loc, ty), _), name)
-        | Typed.DataConstructor ((loc, ty), name)
+        | Typed.DataConstructor ((loc, ty, _), name)
         | Typed.ModSubscript ((loc, ty), _, name) ->
             (expr, Difflist.snoc hover_entries (loc, (loc, VarLike (name, ty))))
             (* Subscripts use the location of the field, not the entire expression *)

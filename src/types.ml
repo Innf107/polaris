@@ -327,7 +327,7 @@ let skolemize_with_function :
     replace_tvars
       (NameMap.of_list
          (List.map
-            (fun var -> (var, Skol (Unique.fresh (), env.level, var)))
+            (fun var -> (var, Skol (Unique.fresh (), Typeref.next_level env.level, var)))
             tyvars))
   in
   let env_trans =

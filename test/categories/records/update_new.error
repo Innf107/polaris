@@ -5,6 +5,6 @@ Missing mutual record fields '{ y : Number }'
                          respectively.
     While trying to unify '{ x : Number }'
                       and '{ y : Number | ?α }'
-  | 
-4 | print({ r with y = 3 })
-  |         ^
+  ┃ 
+4 ┃ print({ r with y = 3 })
+  ┃         ▔

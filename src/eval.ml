@@ -2,7 +2,7 @@ open Syntax
 open Syntax.Typed
 open Util
 module VarMap = Map.Make (Name)
-module EnvMap = Map.Make (String)
+module EnvMap = Trie.String
 module RecordVImpl = Multimap.Make (String)
 
 let _argclosure_category, trace_argclosure =
@@ -209,7 +209,7 @@ let trim_output = function
       | _ -> str)
 
 let handle_process_exceptions loc env cont =
-  try cont () with
+  try[@warning "-52"] cont () with
   (* This needs to match on the failure message until eio
      raises something more robust *)
   | Failure "execve: Argument list too long" ->
@@ -317,23 +317,6 @@ let match_pat pat scrut locs =
   match match_pat_opt pat scrut with
   | None -> raise (EvalError (NonExhaustiveMatch (scrut, locs)))
   | Some trans -> trans
-
-let rec match_patterns_opt patterns scrutinees =
-  match (patterns, scrutinees) with
-  | [], [] -> Some Fun.id
-  | [], _
-  | _, [] ->
-      panic __LOC__
-        "match_patterns_opt: Mismatched pattern / scrutinee count at runtime"
-  | pattern :: patterns, scrutinee :: scrutinees -> (
-      match match_pat_opt pattern scrutinee with
-      | None -> None
-      | Some env_trans -> (
-          match match_patterns_opt patterns scrutinees with
-          | None -> None
-          | Some remaining_env_trans ->
-              (* TODO: Order? *)
-              Some (env_trans << remaining_env_trans)))
 
 let rec match_params patterns arg_vals locs =
   match (patterns, arg_vals) with
@@ -1411,6 +1394,17 @@ and eval_primop ~cap env op args loc =
                     "Expected a single string",
                     loc :: env.call_trace )))
     end
+  | "chars" -> begin
+      match args with
+      | [ StringV arg ] ->
+          ListV
+            (List.of_seq
+               (Seq.map
+                  (fun char ->
+                    StringV (String.of_seq (Seq.cons char Seq.empty)))
+                  (String.to_seq arg)))
+      | _ -> panic __LOC__ "invalid arguments to 'chars' primop"
+    end
   | "split" -> begin
       match args with
       | [ _; StringV "" ] -> ListV []
@@ -1751,6 +1745,20 @@ and eval_primop ~cap env op args loc =
                (PrimOpArgumentError
                   ("mod", args, "Expected two integers", loc :: env.call_trace)))
     end
+  | "floor" -> begin
+      match args with
+      | [ NumV x ] -> NumV (floor x)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": floor: Non-number argument passed at runtime")
+    end
+  | "ceil" -> begin
+      match args with
+      | [ NumV x ] -> NumV (ceil x)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": ceil: Non-number argument passed at runtime")
+    end
   | "exceptionMessage" -> begin
       match args with
       | [ ExceptionV (_, _, _, message) ] -> StringV (Lazy.force message)
@@ -1758,6 +1766,18 @@ and eval_primop ~cap env op args loc =
           panic __LOC__
             (Loc.pretty loc
            ^ ": exceptionMessage: Non-exception passed at runtime")
+    end
+  | "compareString" -> begin
+      match args with
+      | [ StringV string1; StringV string2 ] -> begin
+          match String.compare string1 string2 with
+          | x when x < 0 -> VariantConstructorV ("Less", [])
+          | x when x > 0 -> VariantConstructorV ("Greater", [])
+          | _ -> VariantConstructorV ("Equal", [])
+        end
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": compareString: Non-strings passed at runtime")
     end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 

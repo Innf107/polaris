@@ -22,6 +22,53 @@ end
 
 module LocOverlapMap = Map.Make (LocByOverlap)
 
+module PositionMap = Map.Make (struct
+  type t = Polaris.Loc.position
+
+  let compare = Polaris.Loc.compare_position
+end)
+
+module ScopeCollection = struct
+  type t = Polaris.Rename.RenameScope.t PositionMap.t
+  type collector = Polaris.Rename.RenameScope.t PositionMap.t ref
+
+  let new_collector () = ref PositionMap.empty
+
+  let registration_for collector =
+    Polaris.Rename.
+      {
+        register_scope =
+          (fun position scope ->
+            collector := PositionMap.add position scope !collector);
+        register_reset_scope =
+          (fun position scope ->
+            collector :=
+              PositionMap.update position
+                (function
+                  | None -> Some scope
+                  | Some previous -> Some previous)
+                !collector);
+      }
+
+  let collect collector = !collector
+
+  let find_at_or_before :
+      Polaris.Loc.position -> t -> Polaris.Rename.RenameScope.t =
+   fun pos scopes ->
+    match
+      PositionMap.find_last_opt
+        (fun loc_candidate ->
+          Polaris.Loc.compare_position loc_candidate pos <= 0)
+        scopes
+    with
+    | Some (_, scope) -> scope
+    | None ->
+        Polaris.Util.panic __LOC__
+          ("No scope found for "
+          ^ Polaris.Loc.(
+              string_of_int pos.line ^ " | " ^ string_of_int pos.column))
+end
+
 type hover_entry =
   | VarLike of name * ty
   | Subscript of string * ty
@@ -32,6 +79,7 @@ type model = {
      location as a value *)
   hover_entries_at_loc : (loc * hover_entry) LocOverlapMap.t;
   definitions_at_loc : (loc * loc) LocOverlapMap.t;
+  scopes : ScopeCollection.t;
 }
 
 type t = model
@@ -64,10 +112,10 @@ let hover_entry_traversal =
           ( pattern,
             Difflist.append hover_entries
               (Difflist.of_list [ (loc, (loc, VarLike (name, ty))) ]) )
-      | Typed.VariantPat ((loc, ty), name, _) ->
+      | Typed.VariantPat (({ subloc; _ }, ty), name, _) ->
           ( pattern,
             Difflist.append hover_entries
-              (Difflist.of_list [ (loc, (loc, Variant (name, ty))) ]) )
+              (Difflist.of_list [ (subloc, (subloc, Variant (name, ty))) ]) )
       | _ -> (pattern, hover_entries)
   end
 
@@ -83,7 +131,7 @@ let definition_entry_traversal =
       | _ -> (expr, entries)
   end
 
-let build exprs =
+let build scopes exprs =
   let module Difflist = Polaris.Difflist in
   let _, hover_entries =
     Traversal.traverse_list hover_entry_traversal#traverse_expr Difflist.empty
@@ -97,6 +145,7 @@ let build exprs =
     hover_entries_at_loc = LocOverlapMap.of_seq (Difflist.to_seq hover_entries);
     definitions_at_loc =
       LocOverlapMap.of_seq (Difflist.to_seq definition_entries);
+    scopes;
   }
 
 let find_hover_entry_at ~file Lsp.{ line; character } model =
@@ -125,3 +174,13 @@ let find_definition_at ~file Lsp.{ line; character } model =
       }
   in
   LocOverlapMap.find_opt loc model.definitions_at_loc
+
+let loc_position_of_range_position (position : Lsp.position) =
+  Polaris.Loc.{ line = position.line + 1; column = position.character + 1 }
+
+let find_scope_at_or_before :
+    Lsp.position -> model -> Polaris.Rename.RenameScope.t =
+ fun pos model ->
+  ScopeCollection.find_at_or_before
+    (loc_position_of_range_position pos)
+    model.scopes

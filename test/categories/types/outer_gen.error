@@ -1,6 +1,6 @@
 test/categories/types/outer_gen.pls:12:18: ERROR:
 Unable to unify types 'String'
                   and 'Number'
-   | 
-12 |     [x] -> print(x + 1)
-   |                  ^
+   ┃ 
+12 ┃     [x] -> print(x + 1)
+   ┃                  ▔

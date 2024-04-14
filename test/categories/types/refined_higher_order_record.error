@@ -5,6 +5,6 @@ Missing mutual record fields '{ a : Number }'
                          respectively.
     While trying to unify '({ a : Number, b : Number | ?r }) -> { b : Number | ?r }'
                       and '({ a : Number, b : Number | ?r }) -> { a : Number, b : Number | ?r }'
-  | 
-9 | let _ = g(f)
-  |           ^
+  ┃ 
+9 ┃ let _ = g(f)
+  ┃           ▔

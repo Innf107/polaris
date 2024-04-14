@@ -39,6 +39,12 @@ let on_initialize =
       "textDocumentSync": {
         "openClose": true,
         "change": 1
+      },
+      "completionProvider": {
+        "triggerCharacters": [],
+        "completionItem": {
+          "labelDetailSupport": true
+        }
       }
     }, 
     "serverInfo": {
@@ -61,7 +67,7 @@ let process_document model_ref file_uri content =
   let filename = filename_of_uri file_uri in
 
   let diagnostics, model_option =
-    Driver.try_update_model ~filename (Lexing.from_string content)
+    Driver.try_update_model ~filename (Sedlexing.Utf8.from_string content)
   in
 
   begin
@@ -139,10 +145,65 @@ let on_definition model_ref (params : Lsp.definition_params) =
         match Model.find_definition_at ~file params.position model with
         | Some (_, definition_loc) ->
             let open Polaris.Loc in
-            Lsp.yojson_of_location
+            Lsp.location_to_json
               { uri = file_uri; range = range_of_loc definition_loc }
         | None -> no_response ()
       end
+
+let on_completion model_ref (params : Lsp.completion_params) =
+  let no_response () = `Null in
+  match !model_ref with
+  | None -> no_response ()
+  | Some model ->
+      let module RenameScope = Polaris.Rename.RenameScope in
+      let open Polaris.Syntax.Name in
+      let scope = Model.find_scope_at_or_before params.position model in
+
+      (* TODO: get the type signature here (~labelDetails) (or detail? what's the difference??)*)
+      (* TODO: somehow get inserts (or textEdits??) to work correctly :( *)
+      let variable_completion name =
+        Lsp.make_completion_item ~kind:Lsp.Variable (original_name name)
+      in
+      let type_variable_completion name =
+        Lsp.make_completion_item ~kind:Lsp.TypeParameter (original_name name)
+      in
+      let type_constructor_completion name =
+        Lsp.make_completion_item ~kind:Lsp.Class (original_name name)
+      in
+      let module_var_completion name =
+        Lsp.make_completion_item ~kind:Lsp.Module (original_name name)
+      in
+      let data_constructor_completion name =
+        Lsp.make_completion_item ~kind:Lsp.EnumMember (original_name name)
+      in
+      (* TODO *)
+      let completion_items =
+        List.of_seq
+          (Seq.concat
+             (List.to_seq
+                [
+                  Seq.map variable_completion
+                    (RenameScope.variables_in_scope scope);
+                  Seq.map type_variable_completion
+                    (RenameScope.type_variables_in_scope scope);
+                  Seq.map type_constructor_completion
+                    (RenameScope.type_constructors_in_scope scope);
+                  Seq.map module_var_completion
+                    (RenameScope.module_vars_in_scope scope);
+                  Seq.map data_constructor_completion
+                    (RenameScope.data_constructors_in_scope scope);
+                ]))
+      in
+
+      let completion_list =
+        Lsp.
+          {
+            isIncomplete = false;
+            itemDefaults = None;
+            items = completion_items;
+          }
+      in
+      Lsp.completion_list_to_json completion_list
 
 let () =
   Eio_posix.run
@@ -159,20 +220,16 @@ let () =
             | Some Initialize -> on_initialize
             | Some (Hover params) -> on_hover model_ref params
             | Some (Definition params) -> on_definition model_ref params
+            | Some (Completion params) -> on_completion model_ref params
             | None -> Jsonrpc.unsupported_method ()
-            | exception
-                Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (error, json) ->
-                Jsonrpc.parse_error
-                  (Printexc.to_string error ^ "\nwhile parsing: "
-                  ^ Yojson.Safe.pretty_to_string json))
+            | exception exn ->
+                (* TODO: this is technically not a *parse* error*)
+                Jsonrpc.parse_error ("Exception: " ^ Printexc.to_string exn))
           ~notification_handler:(fun ~notification_method body ->
             match Lsp.parse_client_notification notification_method body with
             | Some (DidOpen params) -> on_open model_ref params
             | Some (DidChange params) -> on_change model_ref params
             | None -> Jsonrpc.unsupported_method ()
-            | exception
-                Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (error, json) ->
-                Jsonrpc.parse_error
-                  (Printexc.to_string error ^ "\nwhile parsing: "
-                  ^ Yojson.Safe.pretty_to_string json))
+            | exception exn ->
+                Jsonrpc.parse_error ("Exception: " ^ Printexc.to_string exn))
     end

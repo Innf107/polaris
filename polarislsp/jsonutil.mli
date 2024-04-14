@@ -1,4 +1,4 @@
-exception NonexistantField of string * Yojson.Safe.t
+exception NonexistentField of string * Yojson.Safe.t
 exception NonObjectDereference of string * Yojson.Safe.t
 exception WrongTypeAsserted of string * Yojson.Safe.t
 

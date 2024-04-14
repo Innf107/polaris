@@ -1,7 +1,7 @@
 open Syntax
 open Syntax.Typed
 module VarMap : module type of Map.Make (Name)
-module EnvMap : module type of Map.Make (String)
+module EnvMap : module type of Trie.String
 module RecordVImpl : module type of Multimap.Make (String)
 
 type eval_capabilities = {
@@ -95,3 +95,5 @@ val eval_seq_state :
   eval_env ->
   expr list ->
   value * eval_env
+
+val eval : cap:eval_capabilities -> string list -> Typed.expr list -> value

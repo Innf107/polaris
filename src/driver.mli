@@ -6,18 +6,20 @@ type driver_options = {
   print_ast : bool;
   print_renamed : bool;
   print_tokens : bool;
+  scope_registration : Rename.scope_registration;
 }
+val ignored_scope_registration : Rename.scope_registration
 
 val run :
   driver_options ->
-  Lexing.lexbuf ->
+  Sedlexing.lexbuf ->
   fs:Eio.Fs.dir Eio.Path.t ->
   mgr:Eio.Process.mgr ->
   (Eval.value, Error.t) result
 
 val run_env :
   driver_options ->
-  Lexing.lexbuf ->
+  Sedlexing.lexbuf ->
   Eval.eval_env ->
   Rename.RenameScope.t ->
   ?check_or_infer_top_level:[ `Check | `Infer ] ->
@@ -30,7 +32,7 @@ val run_env :
 
 val parse_rename_typecheck :
   driver_options ->
-  Lexing.lexbuf ->
+  Sedlexing.lexbuf ->
   Rename.RenameScope.t ->
   ?check_or_infer_top_level:[ `Check | `Infer ] ->
   Types.global_env ->

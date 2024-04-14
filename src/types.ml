@@ -6,6 +6,11 @@ let _tc_category, trace_tc = Trace.make ~flag:"types" ~prefix:"Types"
 let _emit_category, trace_emit = Trace.make ~flag:"emit" ~prefix:"Emit"
 let _unify_category, trace_unify = Trace.make ~flag:"unify" ~prefix:"Unify"
 let _subst_category, trace_subst = Trace.make ~flag:"subst" ~prefix:"Subst"
+let generate_constraints_landmark = Landmark.register "generate_constraints"
+let solve_constraints_landmark = Landmark.register "solve_constraints"
+let unify_landmark = Landmark.register "unify"
+let occurs_check_landmark = Landmark.register "occurs_check"
+let exhaustiveness_landmark = Landmark.register "exhaustiveness"
 
 type unify_context = ty * ty
 
@@ -284,46 +289,84 @@ let instantiate_type_alias : local_env -> name -> ty list -> ty =
     (NameMap.of_seq (Seq.zip (List.to_seq params) (List.to_seq args)))
     underlying_type
 
-let rec instantiate_with_function : local_env -> ty -> ty * (ty -> ty) =
- fun env ty ->
-  match normalize_unif ty with
-  | Forall (tv, ty) ->
-      let unif = Unif (Typeref.make env.level, tv) in
-      (* TODO: Collect all tyvars first to avoid multiple traversals *)
-      let replacement_fun = replace_tvar tv unif in
-      let instantiated, inner_replacement_fun =
-        instantiate_with_function env (replacement_fun ty)
-      in
-      (instantiated, fun ty -> inner_replacement_fun (replacement_fun ty))
+let normalize_alias env = function
+  | TypeAlias (name, arguments) -> instantiate_type_alias env name arguments
+  | ty -> ty
+
+let[@tail_mod_cons] rec collect_prenex_variables env type_ =
+  match normalize_unif type_ with
+  | Forall (tyvar, underlying) ->
+      let rest, underlying = collect_prenex_variables env underlying in
+      (tyvar :: rest, underlying)
   | TypeAlias (name, args) ->
-      instantiate_with_function env (instantiate_type_alias env name args)
-  | ty -> (ty, Fun.id)
+      collect_prenex_variables env (instantiate_type_alias env name args)
+  | type_ -> ([], type_)
+
+let instantiate_with_function : local_env -> ty -> ty * (ty -> ty) =
+ fun env type_ ->
+  let tyvars, underlying_type = collect_prenex_variables env type_ in
+  let replacement_fun =
+    match tyvars with
+    | [] -> Fun.id
+    | [ var ] -> replace_tvar var (Unif (Typeref.make env.level, var))
+    | vars ->
+        replace_tvars
+          (NameMap.of_list
+             (List.map
+                (fun var -> (var, Unif (Typeref.make env.level, var)))
+                tyvars))
+  in
+  (replacement_fun underlying_type, replacement_fun)
 
 let instantiate : local_env -> ty -> ty =
  fun env ty ->
   let instaniated, _ = instantiate_with_function env ty in
   instaniated
 
-let rec skolemize_with_function :
+let skolemize_with_function :
     local_env -> ty -> ty * (ty -> ty) * (local_env -> local_env) =
- fun env ty ->
-  match normalize_unif ty with
-  | Forall (tv, ty) ->
-      enter_level env
-        begin
-          fun env ->
-            let skol = Skol (Unique.fresh (), env.level, tv) in
-            let replacement_fun = replace_tvar tv skol in
-            let skolemized, inner_replacement_fun, inner_trans =
-              skolemize_with_function env (replacement_fun ty)
-            in
-            ( skolemized,
-              (fun ty -> inner_replacement_fun (replacement_fun ty)),
-              increase_ambient_level << inner_trans )
-        end
-  | TypeAlias (name, args) ->
-      skolemize_with_function env (instantiate_type_alias env name args)
-  | ty -> (ty, Fun.id, Fun.id)
+ fun env type_ ->
+  let tyvars, underlying_type = collect_prenex_variables env type_ in
+  let replacement_fun =
+    match tyvars with
+    | [] -> Fun.id
+    | [ var ] ->
+        replace_tvar var
+          (Skol (Unique.fresh (), Typeref.next_level env.level, var))
+    | vars ->
+        replace_tvars
+          (NameMap.of_list
+             (List.map
+                (fun var ->
+                  ( var,
+                    Skol (Unique.fresh (), Typeref.next_level env.level, var) ))
+                tyvars))
+  in
+  let env_trans =
+    match tyvars with
+    | [] -> Fun.id
+    | _ -> increase_ambient_level
+  in
+  (replacement_fun underlying_type, replacement_fun, env_trans)
+(*
+   match normalize_unif ty with
+   | Forall (tv, ty) ->
+       enter_level env
+         begin
+           fun env ->
+             let skol = Skol (Unique.fresh (), env.level, tv) in
+             let replacement_fun = replace_tvar tv skol in
+             let skolemized, inner_replacement_fun, inner_trans =
+               skolemize_with_function env (replacement_fun ty)
+             in
+             ( skolemized,
+               (fun ty -> inner_replacement_fun (replacement_fun ty)),
+               increase_ambient_level << inner_trans )
+         end
+   | TypeAlias (name, args) ->
+       skolemize_with_function env (instantiate_type_alias env name args)
+   | ty -> (ty, Fun.id, Fun.id)
+*)
 
 let skolemize : local_env -> ty -> ty =
  fun env ty ->
@@ -534,7 +577,8 @@ let rec infer_pattern :
         | Some (level, vars, ty) -> (level, vars, ty)
         | None ->
             panic __LOC__
-              (Loc.pretty loc ^ ": Data constructor not found in typechecker: '"
+              (Loc.pretty loc.main
+             ^ ": Data constructor not found in typechecker: '"
               ^ Name.pretty constructor_name
               ^ "'. This should have been caught earlier!")
       in
@@ -1567,6 +1611,7 @@ let datacon_level : name -> local_env -> Typeref.level =
 (* Perform an occurs check and adjust levels (See Note [Levels]) *)
 let occurs_and_adjust needle name full_ty loc definition_env
     optional_unify_context =
+  Landmark.enter occurs_check_landmark;
   let traversal =
     object
       inherit [bool] Traversal.traversal
@@ -1633,7 +1678,9 @@ let occurs_and_adjust needle name full_ty loc definition_env
         | ty -> (ty, state)
     end
   in
-  snd (traversal#traverse_type false full_ty)
+  let result = snd (traversal#traverse_type false full_ty) in
+  Landmark.exit occurs_check_landmark;
+  result
 
 type unify_state = {
   deferred_constraints : ty_constraint Difflist.t ref option;
@@ -1893,7 +1940,7 @@ let solve_unify :
                        MissingRecordFields
                          (remaining1, remaining2, unify_context) ))
               else begin
-                let new_u, new_name = fresh_unif_raw_with env "µ" in
+                let new_u, new_name = fresh_unif_raw_with definition_env "µ" in
                 bind u1 name1
                   (RecordUnif (Array.of_list remaining2, (new_u, new_name)));
                 bind u2 name2
@@ -1912,7 +1959,7 @@ let solve_unify :
                        MissingVariantConstructors
                          (remaining1, remaining2, unify_context) ))
               else begin
-                let new_u, new_name = fresh_unif_raw_with env "µ" in
+                let new_u, new_name = fresh_unif_raw_with definition_env "µ" in
 
                 bind u1 name1
                   (VariantUnif (Array.of_list remaining2, (new_u, new_name)));
@@ -2037,9 +2084,14 @@ let solve_unify :
                  ( loc,
                    MissingVariantConstructors
                      (remaining1, remaining2, unify_context) )))
-        (* closed, skolem *)
-        (* skolem, closed *)
-        (* Unifying a skolem and closed record is always impossible so we don't need a dedicated case here. *)
+    (* If a record/variant doesn't mention any types we can remove the record/variant wrapper and process it as
+       a regular skolem. *)
+    | VariantUnif ([||], (typeref, name)), ty2
+    | RecordUnif ([||], (typeref, name)), ty2 ->
+        go (Unif (typeref, name)) ty2
+    | ty1, VariantUnif ([||], (typeref, name))
+    | ty1, RecordUnif ([||], (typeref, name)) ->
+        go ty1 (Unif (typeref, name))
     | RecordVar _, _
     | _, RecordVar _
     | VariantVar _, _
@@ -2147,7 +2199,7 @@ let solve_refine_variant loc env unify_state ty path variant result_type
         | Some mapped -> mapped
       end
     in
-    match (path, normalize_unif ty) with
+    match (path, normalize_alias env (normalize_unif ty)) with
     | [], VariantClosed constructors ->
         VariantClosed (remove_variant constructors)
     | [], VariantUnif (constructors, ty) ->
@@ -2205,7 +2257,9 @@ let solve_constraints : local_env -> ty_constraint list -> unit =
       begin
         function
         | Unify (loc, ty1, ty2, definition_env) ->
-            solve_unify loc env unify_state ty1 ty2 definition_env
+            Landmark.enter unify_landmark;
+            solve_unify loc env unify_state ty1 ty2 definition_env;
+            Landmark.exit unify_landmark
         | Unwrap (loc, ty1, ty2, definition_env) ->
             solve_unwrap loc env unify_state ty1 ty2 definition_env
         | ProgramArg (loc, ty, definition_env) ->
@@ -2337,9 +2391,11 @@ let typecheck_top_level :
     }
   in
 
+  Landmark.enter generate_constraints_landmark;
   let local_env_trans, typed_expr =
     check_seq_expr local_env check_or_infer expr
   in
+  Landmark.exit generate_constraints_landmark;
 
   (* This is *extremely hacky* right now.
       We temporarily construct a fake local environment to figure out the top-level local type bindings.
@@ -2359,9 +2415,13 @@ let typecheck_top_level :
       }
   in
 
+  Landmark.enter solve_constraints_landmark;
   solve_constraints local_env (Difflist.to_list !(local_env.constraints));
+  Landmark.exit solve_constraints_landmark;
 
+  Landmark.enter exhaustiveness_landmark;
   check_exhaustiveness_and_close_variants_in_exprs typed_expr;
+  Landmark.exit exhaustiveness_landmark;
 
   let local_types =
     if binds_value expr then

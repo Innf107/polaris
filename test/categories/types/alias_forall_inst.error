@@ -1,6 +1,6 @@
 test/categories/types/alias_forall_inst.pls:8:16: ERROR:
 Unable to unify types 'a'
                   and 'a1'
-  | 
-8 |     let g(y) = x
-  |                ^
+  ┃ 
+8 ┃     let g(y) = x
+  ┃                ▔

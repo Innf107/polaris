@@ -120,7 +120,7 @@ let compatible_head_pattern :
   | VariantPat (_, name, _), VariantPat (_, name2, _) -> String.equal name name2
   | _ -> false
 
-let reduce_head_pattern head_pattern matrix =
+let reduce_head_pattern head_pattern (matrix : matrix) =
   let head_sub_pattern_count = List.length (sub_patterns head_pattern) in
   let reduce (head, rest) =
     if compatible_head_pattern ~exact:false head head_pattern then
@@ -194,7 +194,8 @@ let check_and_close_column ~close_variant = function
                 StringSet.of_seq (Array.to_seq (Array.map fst constructors))
             | ty ->
                 panic __LOC__
-                  (Loc.pretty loc ^ ": variant pattern with non-variant type: "
+                  (Loc.pretty loc.main
+                 ^ ": variant pattern with non-variant type: "
                  ^ Typed.pretty_type ty)
           in
           let rec missing_constructors variant_constructors = function
@@ -205,7 +206,7 @@ let check_and_close_column ~close_variant = function
                   remaining
             | pattern :: _ ->
                 panic __LOC__
-                  (Loc.pretty loc
+                  (Loc.pretty loc.main
                  ^ ": non-variant and non-wildcard pattern in variant pattern \
                     match")
           in
@@ -291,6 +292,21 @@ type path_segment =
 
 type path = path_segment list
 
+let pretty_path path =
+  let pretty_segment = function
+    | List -> "List"
+    | Tuple int -> "Tuple(" ^ string_of_int int ^ ")"
+    | Variant (constructor, int) ->
+        "Variant(" ^ constructor ^ ", " ^ string_of_int int ^ ")"
+  in
+  String.concat " -> " (List.map pretty_segment path)
+
+let pretty_refutability = function
+  | `Irrefutable -> "irrefutable"
+  | `Refutable -> "refutable"
+  | `Variant (constructor, path) ->
+      "variant(" ^ constructor ^ "): " ^ pretty_path path
+
 let check_variant_refutability : Typed.pattern -> (path * string) option =
   let rec try_all f = function
     | [] -> `Irrefutable
@@ -303,7 +319,7 @@ let check_variant_refutability : Typed.pattern -> (path * string) option =
             | `Refutable -> `Refutable
             | `Irrefutable -> variant
             (* If more than one variant pattern is refutable, we need to treat the entire
-               pattern as irrefutable *)
+               pattern as refutable *)
             | `Variant _ -> `Refutable))
   in
 
@@ -362,8 +378,11 @@ let check_variant_refutability : Typed.pattern -> (path * string) option =
         | x -> x
       end
   in
+
   fun pattern ->
-    match go [] pattern with
+    let refutability = go [] pattern in
+    trace (lazy ("pattern match state: " ^ pretty_refutability refutability));
+    match refutability with
     | `Refutable -> None
     | `Irrefutable -> None
     | `Variant (name, path) -> Some (path, name)

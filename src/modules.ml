@@ -9,7 +9,7 @@ let extract_import_paths =
 
     method! module_expr state =
       function
-      | Import (_, path) as mod_expr -> (mod_expr, path :: state)
+      | Parsed.Import (_, path) as mod_expr -> (mod_expr, path :: state)
       | mod_expr -> (mod_expr, state)
   end
 

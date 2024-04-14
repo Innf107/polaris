@@ -1,6 +1,6 @@
 open Polaris
 
-exception NonexistantField of string * Yojson.Safe.t
+exception NonexistentField of string * Yojson.Safe.t
 exception NonObjectDereference of string * Yojson.Safe.t
 exception WrongTypeAsserted of string * Yojson.Safe.t
 exception ParseError
@@ -102,7 +102,7 @@ let field field json_type = function
   | `Assoc _ as json -> begin
       match field_opt field json_type json with
       | Some result -> result
-      | None -> raise (NonexistantField (field, json))
+      | None -> raise (NonexistentField (field, json))
     end
   | json -> raise (NonObjectDereference (field, json))
 
@@ -114,19 +114,19 @@ let rec nested_field fields json_type json =
       | `Assoc json_fields -> begin
           match List.find_opt (fun (key, _) -> key = field) json_fields with
           | Some (_, result) -> nested_field fields json_type result
-          | None -> raise (NonexistantField (field, json))
+          | None -> raise (NonexistentField (field, json))
         end
       | _ -> raise (NonObjectDereference (field, json)))
 
 let nested_field_opt fields json_type json =
   try Some (nested_field fields json_type json) with
-  | NonexistantField _
+  | NonexistentField _
   | NonObjectDereference _ ->
       None
 
 let () =
   Printexc.register_printer (function
-    | NonexistantField (field, json) ->
+    | NonexistentField (field, json) ->
         Some
           ("JSON assertion failure: Nonexistant field '" ^ field ^ "' in JSON: "
          ^ Yojson.Safe.show json)

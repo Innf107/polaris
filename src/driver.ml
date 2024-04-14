@@ -1,7 +1,7 @@
 open Syntax
 open Rename
 open Eval
-module FilePathMap = Map.Make (String)
+module FilePathMap = Trie.String
 
 let _tc_category, trace_driver = Trace.make ~flag:"driver" ~prefix:"Driver"
 
@@ -11,11 +11,17 @@ type driver_options = {
   print_ast : bool;
   print_renamed : bool;
   print_tokens : bool;
+  scope_registration : Rename.scope_registration;
 }
+
+let ignored_scope_registration = Rename.ignored_scope_registration
+let lex_parse_landmark = Landmark.register "lex_parse"
+let rename_landmark = Landmark.register "rename"
+let typecheck_landmark = Landmark.register "typecheck"
 
 let rec parse_rename_typecheck :
     driver_options ->
-    Lexing.lexbuf ->
+    Sedlexing.lexbuf ->
     RenameScope.t ->
     ?check_or_infer_top_level:[ `Check | `Infer ] ->
     Types.global_env ->
@@ -28,12 +34,12 @@ let rec parse_rename_typecheck :
     begin
       fun () ->
         trace_driver (lazy ("Lexing with filename '" ^ options.filename));
-        Lexing.set_filename lexbuf options.filename;
+        Sedlexing.set_filename lexbuf options.filename;
 
         if options.print_tokens then
-          let lex_state = Lexer.new_lex_state () in
+          let lex_state = Lexer.new_lex_state lexbuf in
           let rec go () =
-            match Lexer.token lex_state lexbuf with
+            match Lexer.token lex_state with
             | Parser.EOF -> exit 0
             | t ->
                 print_endline (Parserutil.pretty_token t);
@@ -42,18 +48,26 @@ let rec parse_rename_typecheck :
           go ()
         else ();
 
+        Landmark.enter lex_parse_landmark;
         trace_driver (lazy "Parsing...");
         let header, ast =
-          let lex_state = Lexer.new_lex_state () in
-          match Parser.main (Lexer.token lex_state) lexbuf with
+          let lex_state = Lexer.new_lex_state lexbuf in
+          let lexer () =
+            let token = Lexer.token lex_state in
+            let start, end_ = Lexer.current_positions lex_state in
+            (token, start, end_)
+          in
+
+          let open MenhirLib.Convert.Simplified in
+          match traditional2revised Parser.main lexer with
           | exception Parser.Error ->
-              let start_pos = lexbuf.lex_start_p in
-              let end_pos = lexbuf.lex_curr_p in
+              let start_pos, end_pos = Sedlexing.lexing_positions lexbuf in
               raise
                 (Parserprelude.ParseError
                    (Loc.from_pos start_pos end_pos, "Parse error"))
           | res -> res
         in
+        Landmark.exit lex_parse_landmark;
         if options.print_ast then begin
           print_endline "~~~~~~~~Parsed AST~~~~~~~~";
           print_endline (Parsed.pretty_list ast);
@@ -81,8 +95,12 @@ let rec parse_rename_typecheck :
               ( filename,
                 Error.as_exn
                   (parse_rename_typecheck
-                     { options with filename = path }
-                     (Lexing.from_channel (open_in path))
+                     {
+                       options with
+                       filename = path;
+                       scope_registration = ignored_scope_registration;
+                     }
+                     (Sedlexing.Utf8.from_channel (open_in path))
                      RenameScope.empty Types.empty_env) ))
             imported_files
         in
@@ -95,9 +113,11 @@ let rec parse_rename_typecheck :
                (List.to_seq items_for_exports))
         in
 
+        Landmark.enter rename_landmark;
         trace_driver (lazy "Renaming...");
         let renamed_header, renamed, new_scope =
-          Rename.rename_scope import_map scope header ast
+          Rename.rename_scope options.scope_registration import_map scope header
+            ast
         in
         if options.print_renamed then begin
           print_endline "~~~~~~~~Renamed AST~~~~~~~";
@@ -105,19 +125,25 @@ let rec parse_rename_typecheck :
           print_endline "~~~~~~~~~~~~~~~~~~~~~~~~~~"
         end
         else ();
+        Landmark.exit rename_landmark;
 
+        Landmark.enter typecheck_landmark;
         trace_driver (lazy "Typechecking...");
         let type_env, typed_header, typed_exprs =
           Types.typecheck check_or_infer_top_level renamed_header renamed
             type_env
         in
+        Landmark.exit typecheck_landmark;
 
         Ok (typed_header, typed_exprs, new_scope, type_env)
     end
 
+let prt_landmark = Landmark.register "parse_rename_typecheck"
+let eval_landmark = Landmark.register "eval"
+
 let run_env :
     driver_options ->
-    Lexing.lexbuf ->
+    Sedlexing.lexbuf ->
     eval_env ->
     RenameScope.t ->
     ?check_or_infer_top_level:[ `Check | `Infer ] ->
@@ -132,11 +158,14 @@ let run_env :
       fun () ->
         let ( let* ) = Result.bind in
 
+        Landmark.enter prt_landmark;
         let* renamed_header, renamed, new_scope, new_type_env =
           parse_rename_typecheck options lexbuf scope ?check_or_infer_top_level
             type_env
         in
+        Landmark.exit prt_landmark;
 
+        Landmark.enter eval_landmark;
         trace_driver (lazy "Evaluating...");
         let env = Eval.eval_header env renamed_header in
         let context =
@@ -146,17 +175,22 @@ let run_env :
               `Statement
           | Some `Infer -> `Expr
         in
-        Eio.Switch.run
-          begin
-            fun switch ->
-              let res, new_env =
-                Eval.eval_seq_state ~cap:{ switch; fs; mgr } context env renamed
-              in
-              Ok (res, new_env, new_scope, new_type_env)
-          end
+        let result =
+          Eio.Switch.run
+            begin
+              fun switch ->
+                let res, new_env =
+                  Eval.eval_seq_state ~cap:{ switch; fs; mgr } context env
+                    renamed
+                in
+                Ok (res, new_env, new_scope, new_type_env)
+            end
+        in
+        Landmark.exit eval_landmark;
+        result
     end
 
-let run (options : driver_options) (lexbuf : Lexing.lexbuf) ~fs ~mgr :
+let run (options : driver_options) (lexbuf : Sedlexing.lexbuf) ~fs ~mgr :
     (value, Error.t) result =
   let result =
     run_env ~fs ~mgr options lexbuf

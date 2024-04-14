@@ -1,7 +1,7 @@
 open Util
 open Syntax
 open Syntax.Renamed
-module PrimOpMap = Map.Make (String)
+module PrimOpMap = Trie.String
 
 let forall (cont : ty -> ty) =
   let a = Name.fresh "a" in
@@ -18,6 +18,7 @@ let primops =
          ("print", forall (fun a -> [ a ] --> Ty.unit));
          ("lines", [ String ] --> List String);
          ("split", [ String; String ] --> List String);
+         ("chars", [ String ] --> List String);
          ("replace", [ String; String; String ] --> String);
          ("regexpReplace", [ String; String; String ] --> String);
          ("regexpMatch", [ String; String ] --> List String);
@@ -49,7 +50,14 @@ let primops =
          ("ensure", [ String ] --> Ty.unit);
          ("status", [] --> Number);
          ("mod", [ Number; Number ] --> Number);
+         ("floor", [ Number ] --> Number);
+         ("ceil", [ Number ] --> Number);
          ("exceptionMessage", [ Exception ] --> String);
+         ( "compareString",
+           forall' (fun a ->
+               [ String; String ]
+               --> VariantVar
+                     ([| ("Less", []); ("Equal", []); ("Greater", []) |], a)) );
        ])
 
 let is_primop name = PrimOpMap.mem name primops

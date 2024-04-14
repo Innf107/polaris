@@ -2,6 +2,6 @@ test/categories/patterns/toomanydataconargs.pls:5:5: ERROR:
 Too many arguments to data constructor 'A' in a pattern
     Data constructors always take exactly 1 arguments
                    but this one was given 2
-  | 
-5 |     A(y, z) -> y + z
-  |     ^^^^^^^
+  ┃ 
+5 ┃     A(y, z) -> y + z
+  ┃     ▔▔▔▔▔▔▔

@@ -2,6 +2,6 @@ test/categories/types/local_data_escape2.pls:5:5: ERROR:
 Unable to match type '?α' with a type involving the type constructor 'A'.
     The type constructor 'A' would escape its scope.
     Unable to unify '?α' and 'List(A)'
-  | 
-5 |     [A(5)]
-  |     ^^^^^^
+  ┃ 
+5 ┃     [A(5)]
+  ┃     ▔▔▔▔▔▔

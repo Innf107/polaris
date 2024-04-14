@@ -1,6 +1,6 @@
 test/categories/types/fancy_letrec_nonfun.pls:3:1: ERROR:
 The function definition for 'f' is declared as a function
     but has a non-function type: 'Number'
-  | 
-3 | let f : Number
-  | ^^^^^^^^^^^^^^
+  ┃ 
+3 ┃ let f : Number
+  ┃ ▔▔▔▔▔▔▔▔▔▔▔▔▔▔

@@ -2,6 +2,6 @@ test/categories/types/variant_pattern_nested_or.pls:1:5: ERROR:
 Non-exhaustive pattern match
     Unhandled constructors:
     - E
-  | 
-1 | let (A | B, C | D) = (A, E)
-  |     ^^^^^^^^^^^^^^
+  ┃ 
+1 ┃ let (A | B, C | D) = (A, E)
+  ┃     ▔▔▔▔▔▔▔▔▔▔▔▔▔▔

@@ -1,28 +1,22 @@
-type category = string
+type category = { mutable is_enabled : bool }
 
-module CategoryMap = Map.Make (String)
+let categories : category Trie.String.t ref = ref Trie.String.empty
+let get_categories () = List.of_seq (Trie.String.keys !categories)
+let set_enabled category value = category.is_enabled <- value
 
-let enabled_map : bool CategoryMap.t ref = ref CategoryMap.empty
+let try_set_enabled category_name value =
+  match Trie.String.find_opt category_name !categories with
+  | None -> false
+  | Some category ->
+      set_enabled category value;
+      true
 
-let get_categories () =
-  List.map (fun (cat, _) -> cat) (CategoryMap.bindings !enabled_map)
-
-let set_enabled cat value =
-  enabled_map := CategoryMap.add cat value !enabled_map
-
-let try_set_enabled cat value =
-  if CategoryMap.mem cat !enabled_map then begin
-    enabled_map := CategoryMap.add cat value !enabled_map;
-    true
-  end
-  else false
-
-let get_enabled cat =
-  Option.value ~default:false (CategoryMap.find_opt cat !enabled_map)
+let get_enabled cat = cat.is_enabled
 
 let make ~flag ~prefix =
-  enabled_map := CategoryMap.add flag false !enabled_map;
-  ( flag,
+  let category = { is_enabled = false } in
+  categories := Trie.String.add flag category !categories;
+  ( category,
     fun msg ->
-      if get_enabled flag then
+      if get_enabled category then
         prerr_endline ("[" ^ prefix ^ "]: " ^ Lazy.force msg) )

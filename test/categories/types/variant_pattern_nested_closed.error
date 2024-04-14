@@ -5,6 +5,6 @@ Missing mutual variant constructors '<  >'
                                 respectively.
     While trying to unify '< C() | ?α >'
                       and '< Ok(Number), Err(Number) >'
-   | 
-10 | print(f(Nothing, C))
-   |                  ^
+   ┃ 
+10 ┃ print(f(Nothing, C))
+   ┃                  ▔

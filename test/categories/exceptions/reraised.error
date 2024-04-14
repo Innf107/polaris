@@ -7,6 +7,6 @@ Call trace:
 Reraised at:
     test/categories/exceptions/reraised.pls:10:28
     test/categories/exceptions/reraised.pls:15:24
-  | 
-5 |     raise (Panic("AAAAA"))
-  |     ^^^^^^^^^^^^^^^^^^^^^^
+  ┃ 
+5 ┃     raise (Panic("AAAAA"))
+  ┃     ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔

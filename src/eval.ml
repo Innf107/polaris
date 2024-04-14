@@ -227,7 +227,7 @@ let trim_output = function
       | _ -> str)
 
 let handle_process_exceptions loc env cont =
-  try cont () with
+  try[@warning "-52"] cont () with
   (* This needs to match on the failure message until eio
      raises something more robust *)
   | Failure "execve: Argument list too long" ->
@@ -335,23 +335,6 @@ let match_pat pat scrut locs =
   match match_pat_opt pat scrut with
   | None -> raise (EvalError (NonExhaustiveMatch (scrut, locs)))
   | Some trans -> trans
-
-let rec match_patterns_opt patterns scrutinees =
-  match (patterns, scrutinees) with
-  | [], [] -> Some Fun.id
-  | [], _
-  | _, [] ->
-      panic __LOC__
-        "match_patterns_opt: Mismatched pattern / scrutinee count at runtime"
-  | pattern :: patterns, scrutinee :: scrutinees -> (
-      match match_pat_opt pattern scrutinee with
-      | None -> None
-      | Some env_trans -> (
-          match match_patterns_opt patterns scrutinees with
-          | None -> None
-          | Some remaining_env_trans ->
-              (* TODO: Order? *)
-              Some (env_trans << remaining_env_trans)))
 
 let rec match_params patterns arg_vals locs =
   match (patterns, arg_vals) with

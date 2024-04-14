@@ -95,3 +95,5 @@ val eval_seq_state :
   eval_env ->
   expr list ->
   value * eval_env
+
+val eval : cap:eval_capabilities -> string list -> Typed.expr list -> value

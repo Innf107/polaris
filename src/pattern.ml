@@ -120,7 +120,7 @@ let compatible_head_pattern :
   | VariantPat (_, name, _), VariantPat (_, name2, _) -> String.equal name name2
   | _ -> false
 
-let reduce_head_pattern head_pattern matrix =
+let reduce_head_pattern head_pattern (matrix : matrix) =
   let head_sub_pattern_count = List.length (sub_patterns head_pattern) in
   let reduce (head, rest) =
     if compatible_head_pattern ~exact:false head head_pattern then

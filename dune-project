@@ -27,7 +27,7 @@
   re
   yojson
   ppx_deriving
-  ppx_yojson_conv
+  ppx_protocol_conv
   bestline
   eio
   eio_main)

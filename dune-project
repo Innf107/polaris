@@ -27,7 +27,8 @@
   re
   yojson
   ppx_deriving
-  ppx_protocol_conv
+  ppx_protocol_conv_json
+  landmarks
   bestline
   eio
   eio_main)

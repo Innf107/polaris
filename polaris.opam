@@ -17,7 +17,7 @@ depends: [
   "re"
   "yojson"
   "ppx_deriving"
-  "ppx_protocol_conv"
+  "ppx_protocol_conv_json"
   "bestline"
   "eio"
   "eio_main"

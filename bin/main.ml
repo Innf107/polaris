@@ -95,7 +95,7 @@ let handle_errors text_style print_fun result =
       exit 1
   | Error err -> Error.pretty_error text_style print_fun err
 
-let run_repl_with ~fs ~mgr (scope : Rename.RenameScope.t)
+let run_repl_with ~fs ~mgr ~stdin ~stdout (scope : Rename.RenameScope.t)
     (type_env : Polaris.Types.global_env) (env : eval_env)
     (options : run_options) : unit =
   Sys.catch_break true;
@@ -119,7 +119,7 @@ let run_repl_with ~fs ~mgr (scope : Rename.RenameScope.t)
     | Some expr ->
         let result, env, scope, type_env =
           handle_errors text_style fatal_error
-            (Driver.run_env ~fs ~mgr driver_options
+            (Driver.run_env ~fs ~mgr ~stdin ~stdout driver_options
                (Sedlexing.Utf8.from_string expr)
                env scope ?check_or_infer_top_level:(Some `Infer) type_env)
         in
@@ -151,7 +151,7 @@ let run_repl_with ~fs ~mgr (scope : Rename.RenameScope.t)
                 (fun mloc msg ->
                   repl_error mloc msg;
                   go env scope type_env)
-                (Driver.run_env ~fs ~mgr driver_options
+                (Driver.run_env ~fs ~mgr ~stdin ~stdout driver_options
                    (Sedlexing.Utf8.from_string input)
                    env scope ?check_or_infer_top_level:(Some `Infer) type_env)
             in
@@ -170,7 +170,7 @@ let run_repl_with ~fs ~mgr (scope : Rename.RenameScope.t)
     go env scope type_env
   end
 
-let run_file ~fs ~mgr (options : run_options) (filepath : string)
+let run_file ~fs ~mgr ~stdin ~stdout (options : run_options) (filepath : string)
     (args : string list) =
   if Option.is_some options.eval then
     fail_usage "The flags '-c' and '--eval' are invalid when executing a file";
@@ -190,12 +190,13 @@ let run_file ~fs ~mgr (options : run_options) (filepath : string)
 
   let _, env, scope, type_env =
     handle_errors text_style fatal_error
-      (Driver.run_env ~fs ~mgr driver_options
+      (Driver.run_env ~fs ~mgr ~stdin ~stdout driver_options
          (Sedlexing.Utf8.from_channel (open_in filepath))
          (Eval.make_eval_env driver_options.argv)
          Rename.RenameScope.empty Types.empty_env)
   in
-  if options.interactive then run_repl_with ~fs ~mgr scope type_env env options
+  if options.interactive then
+    run_repl_with ~fs ~mgr ~stdin ~stdout scope type_env env options
 
 let run_repl options =
   let argv = [ "" ] in
@@ -254,8 +255,11 @@ let () =
 
         let fs = Eio.Stdenv.fs env in
         let mgr = (Eio.Stdenv.process_mgr env :> Eio.Process.mgr) in
+        let stdin = (Eio.Stdenv.stdin env :> Eio.Flow.source) in
+        let stdout = (Eio.Stdenv.stdout env :> Eio.Flow.sink) in
 
         match args with
-        | [] -> run_repl ~fs ~mgr options
-        | filepath :: args -> ignore (run_file ~fs ~mgr options filepath args)
+        | [] -> run_repl ~fs ~mgr ~stdin ~stdout options
+        | filepath :: args ->
+            ignore (run_file ~fs ~mgr ~stdin ~stdout options filepath args)
     end

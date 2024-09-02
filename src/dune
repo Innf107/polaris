@@ -24,7 +24,7 @@
  (action
   (chdir
    closurewrapper
-   (run rustc main.rs -o "../closurewrapper.exe"))))
+   (run rustc main.rs -C opt-level=s -C strip=symbols -o "../closurewrapper.exe"))))
 
 (rule
  (target closurewrapper.ml)

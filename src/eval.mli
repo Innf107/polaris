@@ -8,6 +8,8 @@ type eval_capabilities = {
   switch : Eio.Switch.t;
   fs : Eio.Fs.dir Eio.Path.t;
   mgr : Eio.Process.mgr;
+  stdin : Eio.Flow.source;
+  stdout : Eio.Flow.sink;
 }
 
 type eval_env = {

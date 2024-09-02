@@ -150,8 +150,11 @@ let run_env :
     Types.global_env ->
     fs:Eio.Fs.dir Eio.Path.t ->
     mgr:Eio.Process.mgr ->
+    stdin:Eio.Flow.source ->
+    stdout:Eio.Flow.sink ->
     (value * eval_env * RenameScope.t * Types.global_env, Error.t) result =
- fun options lexbuf env scope ?check_or_infer_top_level type_env ~fs ~mgr ->
+ fun options lexbuf env scope ?check_or_infer_top_level type_env ~fs ~mgr ~stdin
+     ~stdout ->
   Error.handle_errors
     (fun err -> Error err)
     begin
@@ -180,8 +183,9 @@ let run_env :
             begin
               fun switch ->
                 let res, new_env =
-                  Eval.eval_seq_state ~cap:{ switch; fs; mgr } context env
-                    renamed
+                  Eval.eval_seq_state
+                    ~cap:{ switch; fs; mgr; stdin; stdout }
+                    context env renamed
                 in
                 Ok (res, new_env, new_scope, new_type_env)
             end
@@ -190,10 +194,10 @@ let run_env :
         result
     end
 
-let run (options : driver_options) (lexbuf : Sedlexing.lexbuf) ~fs ~mgr :
+let run (options : driver_options) (lexbuf : Sedlexing.lexbuf) ~fs ~mgr ~stdin ~stdout :
     (value, Error.t) result =
   let result =
-    run_env ~fs ~mgr options lexbuf
+    run_env ~fs ~mgr ~stdin ~stdout options lexbuf
       (Eval.make_eval_env options.argv)
       RenameScope.empty Types.empty_env
   in

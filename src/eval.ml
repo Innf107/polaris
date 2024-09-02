@@ -12,6 +12,8 @@ type eval_capabilities = {
   switch : Eio.Switch.t;
   fs : Eio.Fs.dir Eio.Path.t;
   mgr : Eio.Process.mgr;
+  stdin : Eio.Flow.source;
+  stdout : Eio.Flow.sink;
 }
 
 type eval_env = {
@@ -1166,6 +1168,14 @@ and set_up_closure_argument ~cap loc env patterns body =
       Eio.Path.open_in ~sw:cap.switch Eio.Path.(cap.fs / stdin_path)
     in
 
+    let cap =
+      {
+        cap with
+        stdin = (stdin_flow :> Eio.Flow.source);
+        stdout = (stdout_flow :> Eio.Flow.sink);
+      }
+    in
+
     let exit_code_value =
       eval_app ~cap (Lazy.force env) loc
         (ClosureV (env, patterns, body))
@@ -1338,7 +1348,9 @@ and eval_primop ~cap env op args loc =
         | StringV str -> str
         | x -> Value.pretty x
       in
-      print_endline (String.concat " " (List.map pretty_print args));
+      Eio.Flow.copy_string
+        (String.concat " " (List.map pretty_print args) ^ "\n")
+        cap.stdout;
       unitV
   | "head" -> begin
       match args with

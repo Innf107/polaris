@@ -8,6 +8,7 @@ type driver_options = {
   print_tokens : bool;
   scope_registration : Rename.scope_registration;
 }
+
 val ignored_scope_registration : Rename.scope_registration
 
 val run :
@@ -15,6 +16,8 @@ val run :
   Sedlexing.lexbuf ->
   fs:Eio.Fs.dir Eio.Path.t ->
   mgr:Eio.Process.mgr ->
+  stdin:Eio.Flow.source ->
+  stdout:Eio.Flow.sink ->
   (Eval.value, Error.t) result
 
 val run_env :
@@ -26,6 +29,8 @@ val run_env :
   Types.global_env ->
   fs:Eio.Fs.dir Eio.Path.t ->
   mgr:Eio.Process.mgr ->
+  stdin:Eio.Flow.source ->
+  stdout:Eio.Flow.sink ->
   ( Eval.value * Eval.eval_env * Rename.RenameScope.t * Types.global_env,
     Error.t )
   result

@@ -1095,6 +1095,17 @@ and value_as_args ~cap loc (fail : value -> 'a) (x : value) : string list =
       fail x
   | ListV x -> List.concat_map (value_as_args ~cap loc fail) x
 
+and open_with_pure_write_mode : sw:Eio.Switch.t -> string -> Eio.Flow.sink =
+ fun ~sw path ->
+  (* TODO: would be nice if we didn't need to use as many system threads all the time here *)
+  Eio_unix.run_in_systhread
+    (fun () ->
+      let out_channel = open_out_bin path in
+      (* i hate eio so much *)
+      let source, sink = Eio_unix.pipe sw in
+      todo __LOC__)
+    todo __LOC__
+
 and set_up_closure_argument ~cap loc env patterns body =
   let random_suffix () = Int.to_string (Int.abs (Base.Random.bits ())) in
   let tempdir =
@@ -1159,11 +1170,7 @@ and set_up_closure_argument ~cap loc env patterns body =
     Eio.Buf_write.with_flow channels_channel (fun writer ->
         Eio.Buf_write.LE.uint64 writer id);
 
-    (* TODO: Set up stdin/stdout correctly, rather than just opening them and forgetting about them *)
-    let stdout_flow =
-      Eio.Path.open_out ~sw:cap.switch ~create:`Never
-        Eio.Path.(cap.fs / stdout_path)
-    in
+    let stdout_flow = open_with_pure_write_mode ~sw:cap.switch stdout_path in
     let stdin_flow =
       Eio.Path.open_in ~sw:cap.switch Eio.Path.(cap.fs / stdin_path)
     in

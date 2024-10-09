@@ -257,6 +257,10 @@ and lex_string kind buffer is_initial start_position lex_state =
             Queue.add Parser.INTERPOLATION_START lex_state.deferred_tokens
       end;
       Queue.take lex_state.deferred_tokens
+  | "\\0" ->
+      lex_string kind
+        (Cowbuffer.add_char '\x00' buffer)
+        is_initial start_position lex_state
   | "\\a" ->
       lex_string kind
         (Cowbuffer.add_char '\x07' buffer)

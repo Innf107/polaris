@@ -3,6 +3,7 @@ options {
     "-s" "--sync" as sync: "Execute tests synchronously instead of in parallel"
     "-e" "--exclude" (*) as exclude: "Exclude category from tests"
     "--use-polaris" as usePolaris: "Run tests using 'polaris' instead of 'dune exec -- polaris'"
+    "--timeout" (timeout = "10s"): "Timeout to apply to the tests run. Defaults to 10s"
 }
 
 module List = import("../lib/list.pls")
@@ -83,9 +84,9 @@ for(files, \file -> {
     let result = 
         if not usePolaris then 
             # dune produces .exe files, even on linux
-            silent (\ -> !_build/default/bin/main.exe file args)
+            silent (\ -> !timeout timeout "_build/default/bin/main.exe" file args)
         else
-            silent (\ -> !polaris file args)
+            silent (\ -> !timeout timeout "polaris" file args)
 
     if doesFileExist("${stripExtension(file)}.error") then {
         # This is an 'error' test, meaning the program is meant to fail

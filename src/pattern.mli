@@ -25,3 +25,15 @@ val check_variant_refutability : Typed.pattern -> (path * string) option
 (** Check if a pattern is irrefutable except for a single variant pattern. 
   In that case, type inference can assume that this variant does not occur in further match cases    
 *)
+
+type refinement
+
+val uncovered : refinement
+
+val extend_refinement : refinement -> Renamed.pattern -> refinement
+
+val refine :
+  normalize_unif:(Renamed.ty -> Renamed.ty) ->
+  refinement ->
+  Renamed.ty ->
+  Renamed.ty * [ `FullyCovered | `NotYetCovered ]

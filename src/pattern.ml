@@ -386,3 +386,188 @@ let check_variant_refutability : Typed.pattern -> (path * string) option =
     | `Refutable -> None
     | `Irrefutable -> None
     | `Variant (name, path) -> Some (path, name)
+
+type refinement =
+  | Uncovered
+  | RefineVariant of { cases : refinement array StringMap.t }
+  | RefineTuple of refinement array
+  (* We don't need to store the constructor for newtype constructors
+     since it is always going to be unique for well-typed programs *)
+  | RefineData of refinement
+  | BoolCovered of bool
+  | FullyCovered
+
+let uncovered : refinement = Uncovered
+
+let rec extend_refinement : refinement -> Renamed.pattern -> refinement =
+ fun refinement pattern ->
+  match refinement with
+  | FullyCovered -> FullyCovered
+  | _ -> begin
+      match pattern with
+      | VarPat _ -> FullyCovered
+      | AsPat (_, pattern, _name) -> extend_refinement refinement pattern
+      | ConsPat (loc, head_pattern, tail_pattern) -> todo __LOC__
+      | ListPat _ -> todo __LOC__
+      | TuplePat (loc, sub_patterns) -> begin
+          match refinement with
+          | Uncovered ->
+              RefineTuple
+                (Array.map
+                   (fun sub_pattern -> extend_refinement Uncovered sub_pattern)
+                   (Array.of_list sub_patterns))
+          (* Technically unreachable since we already matched on FullyCovered above.
+             Our coverage checker would have caught this but OCaml isn't as smart *)
+          | FullyCovered -> FullyCovered
+          (* should be impossible since that's a type error but we might still need to fail gracefully*)
+          | RefineVariant _
+          | BoolCovered _
+          | RefineData _ ->
+              todo __LOC__
+          | RefineTuple sub_refinements ->
+              RefineTuple
+                (Array.map2 extend_refinement sub_refinements
+                   (Array.of_list sub_patterns))
+        end
+      | NumPat _
+      | StringPat _ ->
+          refinement
+      | BoolPat (_, bool) -> begin
+          match refinement with
+          | FullyCovered -> FullyCovered
+          | Uncovered -> BoolCovered bool
+          | BoolCovered previous ->
+              if Bool.equal previous bool then refinement else FullyCovered
+          | _ -> todo __LOC__
+        end
+      | OrPat (_, left, right) ->
+          let left_refinement = extend_refinement refinement left in
+          extend_refinement left_refinement right
+          (* TODO: Can we really just ignore the type here? Is there no information
+             we can extract from it wrt variants or something?*)
+      | TypePat (_, pattern, _type) -> extend_refinement refinement pattern
+      | DataPat _ -> todo __LOC__
+      | ExceptionDataPat _ -> todo __LOC__
+      (* The interesting case *)
+      | VariantPat (_, variant_name, sub_patterns) -> begin
+          match refinement with
+          | FullyCovered -> FullyCovered
+          | Uncovered ->
+              RefineVariant
+                {
+                  cases =
+                    StringMap.singleton variant_name
+                      (Array.map
+                         (fun sub_pattern ->
+                           extend_refinement Uncovered sub_pattern)
+                         (Array.of_list sub_patterns));
+                }
+          | RefineVariant { cases } ->
+              RefineVariant
+                {
+                  cases =
+                    cases
+                    |> StringMap.update variant_name (function
+                         | None ->
+                             Some
+                               (Array.map
+                                  (fun sub_pattern ->
+                                    extend_refinement Uncovered sub_pattern)
+                                  (Array.of_list sub_patterns))
+                         | Some refinements ->
+                             Some
+                               (Array.map2 extend_refinement refinements
+                                  (Array.of_list sub_patterns)));
+                }
+          (* these should already be type errors *)
+          | RefineData _
+          | RefineTuple _
+          | BoolCovered _ ->
+              todo __LOC__
+        end
+    end
+
+let collapse_coverage :
+    [ `FullyCovered | `NotYetCovered ] array ->
+    [ `FullyCovered | `NotYetCovered ] =
+ fun array ->
+  if
+    Array.for_all
+      (function
+        | `FullyCovered -> true
+        | _ -> false)
+      array
+  then `FullyCovered
+  else `NotYetCovered
+
+(* TODO: figure out how to handle unification variables more gracefully.
+   This will probably involve making the constraint solver do another trip
+   TODO: i hate type aliases... *)
+let rec refine :
+    normalize_unif:(Renamed.ty -> Renamed.ty) ->
+    refinement ->
+    Renamed.ty ->
+    Renamed.ty * [ `FullyCovered | `NotYetCovered ] =
+ fun ~normalize_unif refinement type_ ->
+  match refinement with
+  (* We cannot use boolean coverage information to meaningfully refine types *)
+  | Uncovered
+  | BoolCovered _ ->
+      (type_, `NotYetCovered)
+  | FullyCovered -> begin
+      match normalize_unif type_ with
+      | VariantClosed _ -> (VariantClosed [||], `FullyCovered)
+      | VariantUnif (_, extension) ->
+          (VariantUnif ([||], extension), `FullyCovered)
+      | VariantSkol (_, extension) ->
+          (VariantSkol ([||], extension), `FullyCovered)
+      | VariantVar (_, extension) ->
+          (VariantVar ([||], extension), `FullyCovered)
+      | Unif _ -> todo __LOC__
+      | ty_ -> (ty_, `FullyCovered)
+    end
+  | RefineTuple sub_refinements -> begin
+      match normalize_unif type_ with
+      | Renamed.Tuple types ->
+          let refined_types, coverage =
+            Util.unzip_array
+              (Array.map2 (refine ~normalize_unif) sub_refinements types)
+          in
+          (Renamed.Tuple refined_types, collapse_coverage coverage)
+      | Unif _ -> todo __LOC__
+      | TypeAlias _ -> todo __LOC__
+      | _ ->
+          panic __LOC__
+            "Pattern.refine: trying to refine non-tuple type with a tuple \
+             refinement"
+    end
+  | RefineData sub_refinement -> todo __LOC__
+  | RefineVariant { cases } -> begin
+      match normalize_unif type_ with
+      | VariantClosed variants ->
+          let refine_variant_case (constructor, sub_types) =
+            match StringMap.find_opt constructor cases with
+            | None -> Some (constructor, sub_types)
+            | Some sub_refinements ->
+                let refined_sub_types, coverage =
+                  Util.unzip_array
+                    (Array.map2 (refine ~normalize_unif) sub_refinements
+                       (Array.of_list sub_types))
+                in
+                begin
+                  match collapse_coverage coverage with
+                  | `FullyCovered -> None
+                  | `NotYetCovered ->
+                      Some (constructor, Array.to_list refined_sub_types)
+                end
+          in
+          let remaining_cases =
+            Util.filter_map_array refine_variant_case variants
+          in
+          begin
+            match remaining_cases with
+            | [||] -> (VariantClosed [||], `FullyCovered)
+            | _ -> (VariantClosed remaining_cases, `NotYetCovered)
+          end
+      | _ -> panic __LOC__ (Typed.pretty_type type_)
+    end

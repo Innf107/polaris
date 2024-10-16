@@ -1110,12 +1110,12 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       let expr = check env (Promise expr_ty) expr in
       (expr_ty, Await (loc, expr))
   | Match (loc, scrutinee, branches) ->
-      (* TODO: Do exhaustiveness checking. *)
       let scrutinee_type, scrutinee = infer env scrutinee in
       let result_ty = fresh_unif env in
 
       let branches =
-        check_match_patterns env result_ty scrutinee_type branches
+        check_match_patterns env result_ty scrutinee_type Pattern.uncovered
+          branches
       in
       (result_ty, Match (loc, scrutinee, branches))
   | Ascription (loc, expr, ty) ->
@@ -1288,7 +1288,8 @@ and check : local_env -> ty -> expr -> Typed.expr =
       let scrutinee_type, scrutinee = infer env scrutinee in
 
       let branches =
-        check_match_patterns env expected_ty scrutinee_type branches
+        check_match_patterns env expected_ty scrutinee_type Pattern.uncovered
+          branches
       in
       Match (loc, scrutinee, branches)
   | Ascription (loc, expr, ty), expected_ty ->
@@ -1582,21 +1583,29 @@ and check_seq : local_env -> loc -> ty -> expr list -> Typed.expr list =
       let exprs = check_seq (env_trans env) loc expected_ty exprs in
       expr :: exprs
 
-and check_match_patterns env result_type scrutinee_type = function
+and check_match_patterns :
+    local_env ->
+    ty ->
+    ty ->
+    Pattern.refinement ->
+    (Renamed.pattern * Renamed.expr) list ->
+    (Typed.pattern * Typed.expr) list =
+ fun env result_type scrutinee_type refinement -> function
   | [] -> []
   | (pattern, expr) :: branches ->
-      let pattern_loc = get_pattern_loc pattern in
+      let refinement = Pattern.extend_refinement refinement pattern in
+
       let env_trans, pattern = check_pattern env true pattern scrutinee_type in
       let expr = check (env_trans env) result_type expr in
 
-      let scrutinee_type =
-        match Pattern.check_variant_refutability pattern with
-        | None -> scrutinee_type
-        | Some (path, name) ->
-            refine_variant env pattern_loc scrutinee_type path name
+      (* TODO: This actually needs to create a constraint since refinement needs to be solved inside the constraint solver*)
+      let scrutinee_type, _coverage_so_far =
+        Pattern.refine ~normalize_unif refinement scrutinee_type
       in
 
-      let rest = check_match_patterns env result_type scrutinee_type branches in
+      let rest =
+        check_match_patterns env result_type scrutinee_type refinement branches
+      in
       (pattern, expr) :: rest
 
 let datacon_level : name -> local_env -> Typeref.level =
@@ -2158,6 +2167,10 @@ let rec solve_program_arg :
   | Number ->
       ()
   | List ty -> solve_program_arg loc env state ty definition_env
+  | Fun ([ arg_type ], result) ->
+      (* TODO: Until we get type classes, the error messages from this are going to be horrendous... *)
+      solve_unify loc env state arg_type (List String) definition_env;
+      solve_unify loc env state result Number definition_env
   | ty -> (
       match state.deferred_constraints with
       | None ->

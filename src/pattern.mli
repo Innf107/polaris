@@ -29,11 +29,13 @@ val check_variant_refutability : Typed.pattern -> (path * string) option
 type refinement
 
 val uncovered : refinement
-
 val extend_refinement : refinement -> Renamed.pattern -> refinement
 
 val refine :
   normalize_unif:(Renamed.ty -> Renamed.ty) ->
+  unify:(Renamed.ty -> Renamed.ty -> unit) ->
+  fresh_unif:(unit -> Renamed.ty) ->
+  refine_variant:(Renamed.ty -> Renamed.ty -> string list -> unit) ->
   refinement ->
   Renamed.ty ->
   Renamed.ty * [ `FullyCovered | `NotYetCovered ]

@@ -137,7 +137,5 @@ let map_at index f list =
 let filter_map_array f array =
   Array.of_list (List.filter_map f (Array.to_list array))
 
-let unzip_array array =
-  (Array.map fst array, Array.map snd array)
-
 let uncurry : type a b c. (a -> b -> c) -> a * b -> c = fun f (a, b) -> f a b
+

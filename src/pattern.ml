@@ -505,10 +505,13 @@ let collapse_coverage :
    TODO: i hate type aliases... *)
 let rec refine :
     normalize_unif:(Renamed.ty -> Renamed.ty) ->
+    unify:(Renamed.ty -> Renamed.ty -> unit) ->
+    fresh_unif:(unit -> Renamed.ty) ->
+    refine_variant:(Renamed.ty -> Renamed.ty -> string list -> unit) ->
     refinement ->
     Renamed.ty ->
     Renamed.ty * [ `FullyCovered | `NotYetCovered ] =
- fun ~normalize_unif refinement type_ ->
+ fun ~normalize_unif ~unify ~fresh_unif ~refine_variant refinement type_ ->
   match refinement with
   (* We cannot use boolean coverage information to meaningfully refine types *)
   | Uncovered
@@ -523,18 +526,39 @@ let rec refine :
           (VariantSkol ([||], extension), `FullyCovered)
       | VariantVar (_, extension) ->
           (VariantVar ([||], extension), `FullyCovered)
-      | Unif _ -> todo __LOC__
+      | Unif _ ->
+          todo __LOC__
+          (* TODO: We technically don't need to care about the type since
+              it is already fully covered anyway,
+              but if we do nothing, variants behind unification variables
+              will not be refined to empty variants.
+              We are probably going to need constraints for this like we had
+              for the old system*)
       | ty_ -> (ty_, `FullyCovered)
     end
   | RefineTuple sub_refinements -> begin
       match normalize_unif type_ with
       | Renamed.Tuple types ->
           let refined_types, coverage =
-            Util.unzip_array
-              (Array.map2 (refine ~normalize_unif) sub_refinements types)
+            Array.split
+              (Array.map2
+                 (refine ~normalize_unif ~unify ~fresh_unif ~refine_variant)
+                 sub_refinements types)
           in
           (Renamed.Tuple refined_types, collapse_coverage coverage)
-      | Unif _ -> todo __LOC__
+      | Unif _ as type_ ->
+          (* We know this needs to be a tuple anyway so if the type checker hasn't
+             realized this yet we might as well do it ourselves *)
+          let sub_types = Array.map (fun _ -> fresh_unif ()) sub_refinements in
+          unify type_ (Tuple sub_types);
+
+          let refined_types, coverage =
+            Array.split
+              (Array.map2
+                 (refine ~normalize_unif ~unify ~fresh_unif ~refine_variant)
+                 sub_refinements sub_types)
+          in
+          (Renamed.Tuple refined_types, collapse_coverage coverage)
       | TypeAlias _ -> todo __LOC__
       | _ ->
           panic __LOC__
@@ -550,9 +574,11 @@ let rec refine :
             | None -> Some (constructor, sub_types)
             | Some sub_refinements ->
                 let refined_sub_types, coverage =
-                  Util.unzip_array
-                    (Array.map2 (refine ~normalize_unif) sub_refinements
-                       (Array.of_list sub_types))
+                  Array.split
+                    (Array.map2
+                       (refine ~normalize_unif ~unify ~fresh_unif
+                          ~refine_variant)
+                       sub_refinements (Array.of_list sub_types))
                 in
                 begin
                   match collapse_coverage coverage with

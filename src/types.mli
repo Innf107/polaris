@@ -15,8 +15,13 @@ type type_error =
   | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
   | IncorrectNumberOfArgsInLambda of int * ty list * ty
   | NonProgCallInPipe of expr
-  | MissingRecordFields of
-      (string * ty) list * (string * ty) list * unify_context
+  | MissingRecordFields of {
+      missing_fields1 : (string * ty) list;
+      record_type1 : ty;
+      missing_fields2 : (string * ty) list;
+      record_type2 : ty;
+      context : unify_context;
+    }
   | MissingVariantConstructors of
       (string * ty list) list * (string * ty list) list * unify_context
   | ArgCountMismatchInDefinition of name * ty list * int

@@ -1,10 +1,7 @@
 test/categories/records/update_new.pls:4:9: ERROR:
-Mismatched record fields.
-Missing mutual record fields '{ y : Number }'
-                         and '()'
-                         respectively.
-    While trying to unify '{ x : Number }'
-                      and '{ y : Number | ?α }'
+Missing record fields.
+  Missing field 'y : Number'
+  in type '{ x : Number }'
   ┃ 
 4 ┃ print({ r with y = 3 })
   ┃         ▔

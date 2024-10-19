@@ -1,10 +1,7 @@
 test/categories/types/refined_higher_order_record.pls:9:11: ERROR:
-Mismatched record fields.
-Missing mutual record fields '{ a : Number }'
-                         and '()'
-                         respectively.
-    While trying to unify '({ a : Number, b : Number | ?r }) -> { b : Number | ?r }'
-                      and '({ a : Number, b : Number | ?r }) -> { a : Number, b : Number | ?r }'
+Missing record fields.
+  Missing field 'a : Number'
+  in type '{ b : Number | ?r }'
   ┃ 
 9 ┃ let _ = g(f)
   ┃           ▔

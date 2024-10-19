@@ -170,7 +170,8 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
             ("Runtime error: " ^ msg ^ "\n" ^ pretty_call_trace locs)
       | NonExhaustiveMatch (value, loc :: locs) ->
           print_fun (Some loc)
-            ("PANIC! (this is a bug, please report it)\nNon-exhaustive pattern match does not cover value: "
+            ("PANIC! (this is a bug, please report it)\n\
+              Non-exhaustive pattern match does not cover value: "
            ^ Value.pretty value)
       | ArgParseError msg -> print_fun None msg
       | EnsureFailed (path, loc :: locs) ->
@@ -187,11 +188,10 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
       | UnterminatedString -> print_fun None "Unterminated string"
       | InvalidChar (loc, char) ->
           print_fun (Some loc)
-            ("Unexpected character "
-            ^ text_style.identifier char)
+            ("Unexpected character " ^ text_style.identifier char)
       | InvalidStringEscape (loc, str) ->
-        print_fun (Some loc)
-          ("Invalid string escape code: " ^ text_style.emphasis ("\\" ^ str))
+          print_fun (Some loc)
+            ("Invalid string escape code: " ^ text_style.emphasis ("\\" ^ str))
     end
   | TypeError (loc, err) ->
       print_fun (Some loc)
@@ -322,22 +322,64 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
           | NonProgCallInPipe expr ->
               (* TODO: Is this even possible? *)
               "Non program call expression in a pipe."
-          | MissingRecordFields (remaining1, remaining2, unify_context) ->
+          | MissingRecordFields
+              {
+                missing_fields1 = [];
+                record_type1 = record_type;
+                missing_fields2 = missing_fields;
+                record_type2 = _;
+                context;
+              }
+          | MissingRecordFields
+              {
+                missing_fields1 = missing_fields;
+                record_type1 = _;
+                missing_fields2 = [];
+                record_type2 = record_type;
+                context;
+              } ->
               let pretty_type =
                 Disambiguate.builder
-                |> Disambiguate.types (List.map snd remaining1)
-                |> Disambiguate.types (List.map snd remaining2)
-                |> Disambiguate.unify_context unify_context
+                |> Disambiguate.types (List.map snd missing_fields)
+                |> Disambiguate.unify_context context
+                |> Disambiguate.pretty_type
+              in
+              let plural =
+                match missing_fields with
+                | [ _ ] -> ""
+                | _ -> "s"
+              in
+              "Missing record fields.\n" ^ "  Missing field" ^ plural ^ " "
+              ^ String.concat ", "
+                  (List.map
+                     (fun (name, type_) ->
+                       text_style.ty (name ^ " : " ^ pretty_type type_))
+                     missing_fields)
+              ^ "\n  in type "
+              ^ text_style.ty (pretty_type record_type)
+          | MissingRecordFields
+              {
+                missing_fields1;
+                record_type1;
+                missing_fields2;
+                record_type2;
+                context;
+              } ->
+              let pretty_type =
+                Disambiguate.builder
+                |> Disambiguate.ty record_type1
+                |> Disambiguate.ty record_type2
+                |> Disambiguate.unify_context context
                 |> Disambiguate.pretty_type
               in
               "Mismatched record fields.\n" ^ "Missing mutual record fields "
               ^ text_style.ty
-                  (pretty_type (RecordClosed (Array.of_list remaining2)))
+                  (pretty_type (RecordClosed (Array.of_list missing_fields2)))
               ^ "\n" ^ "                         and "
               ^ text_style.ty
-                  (pretty_type (RecordClosed (Array.of_list remaining1)))
+                  (pretty_type (RecordClosed (Array.of_list missing_fields1)))
               ^ "\n" ^ "                         respectively."
-              ^ pretty_unify_context pretty_type unify_context
+              ^ pretty_unify_context pretty_type context
           | MissingVariantConstructors (remaining1, remaining2, unify_context)
             ->
               let pretty_type =

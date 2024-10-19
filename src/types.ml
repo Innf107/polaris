@@ -26,8 +26,13 @@ type type_error =
   | PassedIncorrectNumberOfArgsToFun of int * ty list * ty
   | IncorrectNumberOfArgsInLambda of int * ty list * ty
   | NonProgCallInPipe of expr
-  | MissingRecordFields of
-      (string * ty) list * (string * ty) list * unify_context
+  | MissingRecordFields of {
+      missing_fields1 : (string * ty) list;
+      record_type1 : ty;
+      missing_fields2 : (string * ty) list;
+      record_type2 : ty;
+      context : unify_context;
+    }
   | MissingVariantConstructors of
       (string * ty list) list * (string * ty list) list * unify_context
   | ArgCountMismatchInDefinition of name * ty list * int
@@ -1890,8 +1895,14 @@ let solve_unify :
             raise
               (TypeError
                  ( loc,
-                   MissingRecordFields (remaining1, remaining2, unify_context)
-                 )))
+                   MissingRecordFields
+                     {
+                       missing_fields1 = remaining1;
+                       record_type1 = ty1;
+                       missing_fields2 = remaining2;
+                       record_type2 = ty2;
+                       context = unify_context;
+                     } )))
     | VariantClosed fields1, VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
             raise
@@ -1911,7 +1922,15 @@ let solve_unify :
               | _ ->
                   raise
                     (TypeError
-                       (loc, MissingRecordFields (remaining1, [], unify_context)))
+                       ( loc,
+                         MissingRecordFields
+                           {
+                             missing_fields1 = remaining1;
+                             record_type1 = ty1;
+                             missing_fields2 = [];
+                             record_type2 = ty2;
+                             context = unify_context;
+                           } ))
           end
     | VariantUnif (fields1, (typeref, name)), VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2
@@ -1939,7 +1958,15 @@ let solve_unify :
               | _ ->
                   raise
                     (TypeError
-                       (loc, MissingRecordFields ([], remaining2, unify_context)))
+                       ( loc,
+                         MissingRecordFields
+                           {
+                             missing_fields1 = [];
+                             record_type1 = ty1;
+                             missing_fields2 = remaining2;
+                             record_type2 = ty2;
+                             context = unify_context;
+                           } ))
           end
     | VariantClosed fields1, VariantUnif (fields2, (u, name)) ->
         unify_rows go_variant fields1 fields2
@@ -1967,7 +1994,13 @@ let solve_unify :
                   (TypeError
                      ( loc,
                        MissingRecordFields
-                         (remaining1, remaining2, unify_context) ))
+                         {
+                           missing_fields1 = remaining1;
+                           record_type1 = ty1;
+                           missing_fields2 = remaining2;
+                           record_type2 = ty2;
+                           context = unify_context;
+                         } ))
               else begin
                 let new_u, new_name = fresh_unif_raw_with definition_env "µ" in
                 bind u1 name1
@@ -2016,7 +2049,15 @@ let solve_unify :
               | _ ->
                   raise
                     (TypeError
-                       (loc, MissingRecordFields (remaining1, [], unify_context)))
+                       ( loc,
+                         MissingRecordFields
+                           {
+                             missing_fields1 = remaining1;
+                             record_type1 = ty1;
+                             missing_fields2 = [];
+                             record_type2 = ty2;
+                             context = unify_context;
+                           } ))
           end
     | ( VariantUnif (fields1, (unif_unique, unif_name)),
         VariantSkol (fields2, (skol_unique, skol_level, skol_name)) ) ->
@@ -2057,7 +2098,15 @@ let solve_unify :
               | _ ->
                   raise
                     (TypeError
-                       (loc, MissingRecordFields ([], remaining2, unify_context)))
+                       ( loc,
+                         MissingRecordFields
+                           {
+                             missing_fields1 = remaining1;
+                             record_type1 = ty1;
+                             missing_fields2 = remaining2;
+                             record_type2 = ty2;
+                             context = unify_context;
+                           } ))
           end
     | ( VariantSkol (fields1, (skolem_unique, skolem_level, skolem_name)),
         VariantUnif (fields2, (unif_unique, unif_name)) ) ->
@@ -2096,8 +2145,14 @@ let solve_unify :
             raise
               (TypeError
                  ( loc,
-                   MissingRecordFields (remaining1, remaining2, unify_context)
-                 )))
+                   MissingRecordFields
+                     {
+                       missing_fields1 = remaining1;
+                       record_type1 = ty1;
+                       missing_fields2 = remaining2;
+                       record_type2 = ty2;
+                       context = unify_context;
+                     } )))
     | ( VariantSkol (fields1, (skolem1_unique, skolem1_level, skolem1_name)),
         VariantSkol (fields2, (skolem2_unique, skolem2_level, skolem2_name)) )
       ->

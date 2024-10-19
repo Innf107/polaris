@@ -560,6 +560,34 @@ let rec infer_pattern :
       ( Tuple (Array.of_list pattern_types),
         Util.compose transformers,
         TuplePat (loc, patterns) )
+  | RecordPat (loc, field_patterns, extension_pattern) ->
+      let field_types, env_transformers, field_patterns =
+        Util.split3_array
+          (Array.map
+             (fun (field_name, pattern) ->
+               let type_, env_trans, typed_pattern =
+                 infer_pattern env allow_polytype pattern
+               in
+               ((field_name, type_), env_trans, (field_name, typed_pattern)))
+             field_patterns)
+      in
+      begin
+        match extension_pattern with
+        | None ->
+            ( RecordClosed field_types,
+              Util.compose_array env_transformers,
+              RecordPat (loc, field_patterns, None) )
+        | Some extension_pattern ->
+            let extension_variable, name = fresh_unif_raw env in
+
+            let env_transformer, extension_pattern =
+              check_pattern env allow_polytype extension_pattern
+                (RecordUnif ([||], (extension_variable, name)))
+            in
+            ( RecordUnif (field_types, (extension_variable, name)),
+              env_transformer << Util.compose_array env_transformers,
+              RecordPat (loc, field_patterns, Some extension_pattern) )
+      end
   | NumPat (loc, number) -> (Number, Fun.id, NumPat (loc, number))
   | StringPat (loc, literal) -> (String, Fun.id, StringPat (loc, literal))
   | BoolPat (loc, literal) -> (Bool, Fun.id, BoolPat (loc, literal))
@@ -745,6 +773,7 @@ and check_pattern :
       in
       (Util.compose transformers, TuplePat (loc, patterns))
   | TuplePat _, _ -> defer_to_inference ()
+  | RecordPat _, _ -> defer_to_inference ()
   | NumPat (loc, number), Number -> (Fun.id, NumPat (loc, number))
   | NumPat _, _ -> defer_to_inference ()
   | StringPat (loc, literal), String -> (Fun.id, StringPat (loc, literal))
@@ -2084,14 +2113,6 @@ let solve_unify :
                  ( loc,
                    MissingVariantConstructors
                      (remaining1, remaining2, unify_context) )))
-    (* If a record/variant doesn't mention any types we can remove the record/variant wrapper and process it as
-       a regular skolem. *)
-    | VariantUnif ([||], (typeref, name)), ty2
-    | RecordUnif ([||], (typeref, name)), ty2 ->
-        go (Unif (typeref, name)) ty2
-    | ty1, VariantUnif ([||], (typeref, name))
-    | ty1, RecordUnif ([||], (typeref, name)) ->
-        go ty1 (Unif (typeref, name))
     | RecordVar _, _
     | _, RecordVar _
     | VariantVar _, _
@@ -2215,6 +2236,16 @@ let solve_refine_variant loc env unify_state ty path variant result_type
     | Tuple _ :: _, ty ->
         panic __LOC__
           ("Non-tuple at tuple path segment: " ^ Typed.pretty_type ty)
+    | Record needle :: path, RecordClosed fields ->
+        go path
+          (snd
+             (Option.get
+                (Array.find_opt
+                   (fun (field_name, _) -> String.equal field_name needle)
+                   fields)))
+    | Record _ :: _, ty ->
+        panic __LOC__
+          ("Non-record at record path segment: " ^ Typed.pretty_type ty)
     | Variant (name, i) :: path, VariantClosed constructors ->
         VariantClosed (map_variant name i path constructors)
     | Variant (name, i) :: path, VariantUnif (constructors, ty) ->

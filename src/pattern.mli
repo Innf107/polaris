@@ -17,6 +17,7 @@ val check_exhaustiveness_and_close_variants :
 type path_segment =
   | List
   | Tuple of int
+  | Record of string
   | Variant of string * int
 
 type path = path_segment list

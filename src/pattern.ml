@@ -52,6 +52,23 @@ let as_pattern_matrix patterns =
     | Typed.TuplePat (loc, elements) ->
         let* elements = Classes.MonadList.traverse flatten_pattern elements in
         [ Typed.TuplePat (loc, elements) ]
+    | Typed.RecordPat (loc, field_patterns, extension_pattern) ->
+        let* field_patterns =
+          Classes.MonadList.traverse
+            (fun (field_name, sub_pattern) ->
+              let* flattened = flatten_pattern sub_pattern in
+              [ (field_name, flattened) ])
+            (Array.to_list field_patterns)
+        in
+        let* extension_pattern =
+          match extension_pattern with
+          | None -> [ None ]
+          | Some extension_pattern ->
+              List.map Option.some (flatten_pattern extension_pattern)
+        in
+        [
+          Typed.RecordPat (loc, Array.of_list field_patterns, extension_pattern);
+        ]
     | (Typed.NumPat _ | Typed.StringPat _ | Typed.BoolPat _) as pattern ->
         [ pattern ]
     | Typed.ExceptionDataPat (loc, name, patterns) ->
@@ -77,6 +94,7 @@ let wildcard_like = function
   | ConsPat _
   | ListPat _
   | TuplePat _
+  | RecordPat _
   | NumPat _
   | StringPat _
   | BoolPat _
@@ -84,11 +102,15 @@ let wildcard_like = function
   | VariantPat _ ->
       false
 
+(* TODO: don't use a list here what were you even thinking *)
 let sub_patterns ?(count = 0) = function
   | Typed.VarPat _ as pattern -> Util.replicate count pattern
   | ConsPat (_, head, tail) -> [ head; tail ]
   | ListPat (_, elements) -> elements
   | TuplePat (_, elements) -> elements
+  | RecordPat (_, fields, None) -> Array.to_list (Array.map snd fields)
+  | RecordPat (_, fields, Some extension_pattern) ->
+      Array.to_list (Array.map snd fields) @ [ extension_pattern ]
   | NumPat _ -> []
   | StringPat _ -> []
   | BoolPat _ -> []
@@ -149,8 +171,9 @@ let check_and_close_column ~close_variant = function
   | patterns when List.exists wildcard_like patterns -> ()
   | pattern :: remaining -> (
       match pattern with
-      (* Tuple patterns are irrefutable and therefore always exhaustive *)
+      (* Tuple and record patterns are irrefutable and therefore always exhaustive *)
       | TuplePat _ -> ()
+      | RecordPat _ -> ()
       (* Matching on exceptions, numbers and strings without a wildcard case is necessarily non-exhaustive *)
       | ExceptionDataPat _ -> raise (PatternError ExceptionWithoutWildcard)
       | NumPat _ -> raise (PatternError NumWithoutWildcard)
@@ -288,6 +311,7 @@ let check_exhaustiveness_and_close_variants ~close_variant patterns =
 type path_segment =
   | List
   | Tuple of int
+  | Record of string
   | Variant of string * int
 
 type path = path_segment list
@@ -296,6 +320,7 @@ let pretty_path path =
   let pretty_segment = function
     | List -> "List"
     | Tuple int -> "Tuple(" ^ string_of_int int ^ ")"
+    | Record field_name -> "Record(" ^ field_name ^ ")"
     | Variant (constructor, int) ->
         "Variant(" ^ constructor ^ ", " ^ string_of_int int ^ ")"
   in
@@ -367,6 +392,12 @@ let check_variant_refutability : Typed.pattern -> (path * string) option =
         try_all
           (fun (index, pattern) -> go (Tuple index :: path) pattern)
           (List.mapi (fun index pattern -> (index, pattern)) patterns)
+    | RecordPat (_, field_patterns, _extension_pattern) ->
+        (* TODO: this technically doesn't include the extension variable but we're going to replace this whole thing anyway*)
+        try_all
+          (fun (name, pattern) -> go (Record name :: path) pattern)
+          (Array.to_list
+             (Array.map (fun (name, pattern) -> (name, pattern)) field_patterns))
     | TypePat (_, inner, _) -> go path inner
     | DataPat (_, _, inner) -> begin
         (* We cannot refine inside a data pattern, so we need to treat returned `Variant refutabilities

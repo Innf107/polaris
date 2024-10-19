@@ -94,7 +94,11 @@ let rec split3 = function
       let xs, ys, zs = split3 rest in
       (x :: xs, y :: ys, z :: zs)
 
-let compose funs = List.fold_right (fun t r x -> t (r x)) funs (fun x -> x)
+let compose : type a. (a -> a) list -> a -> a =
+ fun funs -> List.fold_left (fun t r x -> t (r x)) (fun x -> x) funs
+
+let compose_array : type a. (a -> a) array -> a -> a =
+ fun funs -> Array.fold_left (fun t r x -> t (r x)) (fun x -> x) funs
 
 let abbreviate message =
   if String.length message <= 100 then message
@@ -134,3 +138,10 @@ let map_at index f list =
   List.mapi (fun i x -> if i = index then f x else x) list
 
 let uncurry : type a b c. (a -> b -> c) -> a * b -> c = fun f (a, b) -> f a b
+
+let split3_array : type a b c. (a * b * c) array -> a array * b array * c array
+    =
+ fun array ->
+  ( Array.map (fun (x, _, _) -> x) array,
+    Array.map (fun (_, y, _) -> y) array,
+    Array.map (fun (_, _, z) -> z) array )

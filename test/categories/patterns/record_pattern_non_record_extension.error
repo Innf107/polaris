@@ -1,0 +1,6 @@
+test/categories/patterns/record_pattern_non_record_extension.pls:3:15: ERROR:
+Unable to unify types 'Number'
+                  and '{  | ?α }'
+  ┃ 
+3 ┃     { x = 1 | 5 } -> 1
+  ┃               ▔

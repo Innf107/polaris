@@ -298,6 +298,45 @@ let rec match_pat_opt (pat : Typed.pattern) (scrut : value) :
              (fun t r env -> t (r env))
              transformations
              (fun x -> x))
+  | RecordPat (loc, field_patterns, extension_pattern), RecordV recordMap ->
+      let exception MatchFailure in
+      begin
+        try
+          let remaining_fields, env_transformers =
+            Array.fold_left_map
+              (fun fields (field_name, pattern) ->
+                let value =
+                  match RecordVImpl.find_first field_name fields with
+                  | None ->
+                      panic __LOC__
+                        (Loc.pretty loc
+                       ^ ": Record field not found at runtime: '" ^ field_name
+                       ^ "'")
+                  | Some value -> value
+                in
+
+                let env_trans =
+                  match match_pat_opt pattern value with
+                  | Some env_trans -> env_trans
+                  | None -> raise MatchFailure
+                in
+
+                let remaining_fields =
+                  RecordVImpl.delete_first field_name fields
+                in
+
+                (remaining_fields, env_trans))
+              recordMap field_patterns
+          in
+          let* extension_trans =
+            match extension_pattern with
+            | None -> Some Fun.id
+            | Some pattern -> match_pat_opt pattern (RecordV remaining_fields)
+          in
+          Some (extension_trans << Util.compose_array env_transformers)
+        with
+        | MatchFailure -> None
+      end
   | NumPat (_, f1), NumV f2 when Float.equal f1 f2 -> Some (fun x -> x)
   | StringPat (_, literal), StringV str when String.equal literal str ->
       Some Fun.id

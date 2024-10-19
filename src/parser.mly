@@ -336,6 +336,13 @@ pattern_leaf:
     | FALSE { BoolPat(loc $startpos $endpos, false) }
     | "(" pattern ")" { $2 }
     | "(" pattern COMMA sep_trailing(COMMA, pattern) ")" { TuplePat(loc $startpos $endpos, $2 :: $4) }
+    | "{" sep_trailing(COMMA, record_field_pattern) "}" { RecordPat(loc $startpos $endpos, Array.of_list $2, None) }
+    | "{" sep_trailing(COMMA, record_field_pattern) "|" pattern "}" { RecordPat(loc $startpos $endpos, Array.of_list $2, Some $4) }
+
+%inline
+record_field_pattern:
+    | IDENT "=" pattern1 { ($1, $3) }
+    | IDENT { ($1, VarPat(loc $startpos $endpos, $1)) }
 
 mod_expr:
     | IMPORT "(" STRING ")" { Import(loc $startpos $endpos, $3) }

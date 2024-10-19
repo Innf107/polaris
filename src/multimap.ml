@@ -24,6 +24,12 @@ module Make (Key : Map.OrderedType) = struct
   let of_seq seq = add_list (List.of_seq seq) empty
   let equal comp m1 m2 = M.equal (List.equal comp) m1 m2
   let find key m = Option.value ~default:[] (M.find_opt key m)
+
+  let find_first key map =
+    match find key map with
+    | [] -> None
+    | first :: _ -> Some first
+
   let union m1 m2 = M.union (fun _ l1 l2 -> Some (l1 @ l2)) m1 m2
 
   let update key f =
@@ -34,4 +40,12 @@ module Make (Key : Map.OrderedType) = struct
           | [] -> None
           | vs -> Some vs
       end
+
+  let delete_first key map =
+    map
+    |> M.update key (function
+         | None -> None
+         | Some [] -> None
+         | Some [ _ ] -> None
+         | Some (_ :: rest) -> Some rest)
 end

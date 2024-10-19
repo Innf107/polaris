@@ -154,6 +154,7 @@ module Template = struct
     | ConsPat of loc * pattern * pattern
     | ListPat of loc * pattern list
     | TuplePat of loc * pattern list
+    | RecordPat of loc * (string * pattern) array * pattern option
     | NumPat of loc * float
     | StringPat of loc * string
     | BoolPat of loc * bool
@@ -494,6 +495,24 @@ module Template = struct
         "[" ^ String.concat ", " (List.map pretty_pattern pats) ^ "]"
     | TuplePat (_, pats) ->
         "(" ^ String.concat ", " (List.map pretty_pattern pats) ^ ")"
+    | RecordPat (_, fields, None) ->
+        "{"
+        ^ String.concat ", "
+            (Array.to_list
+               (Array.map
+                  (fun (field_name, sub_pattern) ->
+                    field_name ^ " = " ^ pretty_pattern sub_pattern)
+                  fields))
+        ^ "}"
+    | RecordPat (_, fields, Some extension) ->
+        "{"
+        ^ String.concat ", "
+            (Array.to_list
+               (Array.map
+                  (fun (field_name, sub_pattern) ->
+                    field_name ^ " = " ^ pretty_pattern sub_pattern)
+                  fields))
+        ^ "|" ^ pretty_pattern extension ^ "}"
     | NumPat (_, f) -> Float.to_string f
     | StringPat (_, literal) -> "\"" ^ literal ^ "\""
     | BoolPat (_, literal) -> string_of_bool literal
@@ -700,6 +719,7 @@ module Template = struct
     | ConsPat (loc, _, _)
     | ListPat (loc, _)
     | TuplePat (loc, _)
+    | RecordPat (loc, _, _)
     | NumPat (loc, _)
     | StringPat (loc, _)
     | BoolPat (loc, _)
@@ -729,6 +749,23 @@ module Template = struct
           let expr, state = traversal state expr in
           (expr :: exprs, state))
         exprs ([], state)
+
+    let traverse_array :
+        type state node.
+        (state -> node -> node * state) ->
+        state ->
+        node array ->
+        node array * state =
+     fun traversal state exprs ->
+      let list, state =
+        Array.fold_right
+          (fun expr (exprs, state) ->
+            let expr, state = traversal state expr in
+            (expr :: exprs, state))
+          exprs ([], state)
+      in
+      (* TODO: do this without the intermediate list *)
+      (Array.of_list list, state)
 
     let traverse_option :
           'state 'node.
@@ -1061,6 +1098,25 @@ module Template = struct
                       traverse_list self#traverse_pattern state patterns
                     in
                     (TuplePat (loc, patterns), state)
+                | RecordPat (loc, fields, extension_pattern) ->
+                    let fields, state =
+                      traverse_array
+                        (fun state (field, pattern) ->
+                          let ty, state = self#traverse_pattern state pattern in
+                          ((field, pattern), state))
+                        state fields
+                    in
+                    let extension_pattern, state =
+                      match extension_pattern with
+                      | Some extension_pattern ->
+                          let extension_pattern, state =
+                            self#traverse_pattern state extension_pattern
+                          in
+                          (Some extension_pattern, state)
+                      | None -> (None, state)
+                    in
+                    RecordPat (loc, fields, extension_pattern), state
+
                 | OrPat (loc, left_pattern, right_pattern) ->
                     let left_pattern, state =
                       self#traverse_pattern state left_pattern

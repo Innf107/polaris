@@ -303,6 +303,34 @@ let rec rename_pattern register (or_bound_variables : name RenameMap.t)
       ( TuplePat (loc, pats'),
         Util.compose pats_trans,
         Util.compose pats_ty_trans )
+  | RecordPat (loc, fields, extension_pattern) ->
+      let renamed_fields, scope_transformers, scope_type_transformers =
+        Util.split3_array
+          (Array.map
+             (fun (field_name, pattern) ->
+               let renamed_pattern, scope_transformer, scope_type_transformer =
+                 rename_pattern register or_bound_variables scope pattern
+               in
+               ( (field_name, renamed_pattern),
+                 scope_transformer,
+                 scope_type_transformer ))
+             fields)
+      in
+      let ( extension_field,
+            extension_scope_transformer,
+            extension_scope_type_transformer ) =
+        match extension_pattern with
+        | Some extension_pattern ->
+            let field, transformer, type_transformer =
+              rename_pattern register or_bound_variables scope extension_pattern
+            in
+            (Some field, transformer, type_transformer)
+        | None -> (None, Fun.id, Fun.id)
+      in
+      ( RecordPat (loc, renamed_fields, extension_field),
+        extension_scope_transformer << Util.compose_array scope_transformers,
+        extension_scope_type_transformer
+        << Util.compose_array scope_type_transformers )
   | NumPat (loc, f) -> (NumPat (loc, f), (fun x -> x), fun x -> x)
   | StringPat (loc, literal) -> (StringPat (loc, literal), Fun.id, Fun.id)
   | BoolPat (loc, literal) -> (BoolPat (loc, literal), Fun.id, Fun.id)

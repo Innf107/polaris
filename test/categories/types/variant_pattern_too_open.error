@@ -4,7 +4,7 @@ Missing mutual variant constructors '<  >'
                                 and '< A(Number) >'
                                 respectively.
     While trying to unify '< A(Number) | ?α >'
-                      and '< Just(Number), Nothing() >'
+                      and '< Just(Number), Nothing >'
   ┃ 
 6 ┃ print(f(A(5)))
   ┃         ▔▔▔▔

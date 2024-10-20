@@ -334,22 +334,21 @@ module Template = struct
 
   let rec pretty_type_with options ty =
     let pretty_type = pretty_type_with options in
+    let pretty_arguments pretty = function
+      | [] -> ""
+      | args -> "(" ^ String.concat ", " (List.map pretty args) ^ ")"
+    in
     match Ty.normalize_unif ty with
     | Forall (var, ty) -> "∀" ^ pretty_name var ^ ". " ^ pretty_type ty
     | Fun (args, res) ->
         "("
         ^ String.concat ", " (List.map pretty_type args)
         ^ ") -> " ^ pretty_type res
-    | TyConstructor (name, []) -> pretty_name name
     | TyConstructor (name, args) ->
-        pretty_name name ^ "("
-        ^ String.concat ", " (List.map pretty_type args)
-        ^ ")"
+        pretty_name name ^ pretty_arguments pretty_type args
     | TypeAlias (name, []) -> pretty_name name
     | TypeAlias (name, args) ->
-        pretty_name name ^ "("
-        ^ String.concat ", " (List.map pretty_type args)
-        ^ ")"
+        pretty_name name ^ pretty_arguments pretty_type args
     | ModSubscriptTyCon (_ext, mod_name, name, args) ->
         pretty_name mod_name ^ "." ^ pretty_name name ^ "("
         ^ String.concat ", " (List.map pretty_type args)
@@ -404,10 +403,7 @@ module Template = struct
         ^ String.concat ", "
             (Array.to_list
                (Array.map
-                  (fun (x, tys) ->
-                    x ^ "("
-                    ^ String.concat ", " (List.map pretty_type tys)
-                    ^ ")")
+                  (fun (x, types) -> x ^ pretty_arguments pretty_type types)
                   fields))
         ^ " >"
     | VariantUnif (fields, (typeref, name)) ->
@@ -415,10 +411,7 @@ module Template = struct
         ^ String.concat ", "
             (Array.to_list
                (Array.map
-                  (fun (x, tys) ->
-                    x ^ "("
-                    ^ String.concat ", " (List.map pretty_type tys)
-                    ^ ")")
+                  (fun (x, types) -> x ^ pretty_arguments pretty_type types)
                   fields))
         ^ " | "
         ^ pretty_type (Unif (typeref, name))
@@ -428,10 +421,7 @@ module Template = struct
         ^ String.concat ", "
             (Array.to_list
                (Array.map
-                  (fun (x, tys) ->
-                    x ^ "("
-                    ^ String.concat ", " (List.map pretty_type tys)
-                    ^ ")")
+                  (fun (x, types) -> x ^ pretty_arguments pretty_type types)
                   fields))
         ^ " | "
         ^ pretty_type (Skol (u, level, name))
@@ -441,10 +431,7 @@ module Template = struct
         ^ String.concat ", "
             (Array.to_list
                (Array.map
-                  (fun (x, tys) ->
-                    x ^ "("
-                    ^ String.concat ", " (List.map pretty_type tys)
-                    ^ ")")
+                  (fun (x, types) -> x ^ pretty_arguments pretty_type types)
                   fields))
         ^ " | " ^ pretty_name name ^ " >"
     | Unwrap ty -> pretty_type ty ^ "!"
@@ -1115,8 +1102,7 @@ module Template = struct
                           (Some extension_pattern, state)
                       | None -> (None, state)
                     in
-                    RecordPat (loc, fields, extension_pattern), state
-
+                    (RecordPat (loc, fields, extension_pattern), state)
                 | OrPat (loc, left_pattern, right_pattern) ->
                     let left_pattern, state =
                       self#traverse_pattern state left_pattern

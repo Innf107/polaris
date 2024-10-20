@@ -2168,6 +2168,14 @@ let solve_unify :
                  ( loc,
                    MissingVariantConstructors
                      (remaining1, remaining2, unify_context) )))
+    | ( ( RecordUnif ([||], (typeref, name))
+        | VariantUnif ([||], (typeref, name)) ),
+        (Skol _ as skolem) ) ->
+        go (Unif (typeref, name)) skolem
+    | ( (Skol _ as skolem),
+        ( RecordUnif ([||], (typeref, name))
+        | VariantUnif ([||], (typeref, name)) ) ) ->
+        go skolem (Unif (typeref, name))
     | RecordVar _, _
     | _, RecordVar _
     | VariantVar _, _

@@ -120,10 +120,11 @@ module Value = struct
         constructor_name.name ^ "(" ^ pretty value ^ ")"
     | PartialDataConV constructor_name ->
         "<constructor: " ^ Name.pretty constructor_name ^ ">"
+    | VariantConstructorV (constructor_name, []) -> "`" ^ constructor_name
     | VariantConstructorV (constructor_name, args) ->
-        "<" ^ constructor_name ^ "("
+        "`" ^ constructor_name ^ "("
         ^ String.concat ", " (List.map pretty args)
-        ^ ")>"
+        ^ ")"
     | PartialExceptionV (name, parameter_names, _message_env, _message_expr) ->
         "<exception constructor: " ^ Name.pretty name ^ "("
         ^ String.concat ", " (List.map Name.pretty parameter_names)

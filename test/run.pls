@@ -52,14 +52,14 @@ let errors = ref 0
 let knownErrors = ref 0
 let knownErrorsPassed = ref 0
 
-let passed(file, isKnownFailure) = if not hidePassing then {
+let passed(file, isKnownFailure) = {
     if isKnownFailure then {
         print("\e[33m[${file}](error): PASSED but was marked as known failure\e[0m")
         knownErrorsPassed := knownErrorsPassed! + 1
-    } else {
+    } else if not hidePassing then {
         print("\e[32m[${file}](error): PASSED\e[0m")
-    }
-} else {}
+    } else {}
+}
 
 let failed(file, isKnownFailure, expected, actual) = {
     if isKnownFailure then {

@@ -4,6 +4,7 @@ options {
     "-e" "--exclude" (*) as exclude: "Exclude category from tests"
     "--use-polaris" as usePolaris: "Run tests using 'polaris' instead of 'dune exec -- polaris'"
     "--timeout" (timeout = "10s"): "Timeout to apply to the tests run. Defaults to 10s"
+    "--hide-passing" as hidePassing: "Hide outputs from tests that passed successfully"
 }
 
 module List = import("../lib/list.pls")
@@ -51,14 +52,14 @@ let errors = ref 0
 let knownErrors = ref 0
 let knownErrorsPassed = ref 0
 
-let passed(file, isKnownFailure) = {
+let passed(file, isKnownFailure) = if not hidePassing then {
     if isKnownFailure then {
         print("\e[33m[${file}](error): PASSED but was marked as known failure\e[0m")
         knownErrorsPassed := knownErrorsPassed! + 1
     } else {
         print("\e[32m[${file}](error): PASSED\e[0m")
     }
-}
+} else {}
 
 let failed(file, isKnownFailure, expected, actual) = {
     if isKnownFailure then {

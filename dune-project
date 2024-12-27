@@ -31,7 +31,8 @@
   landmarks
   bestline
   eio
-  eio_main)
+  eio_main
+  ocaml_embed_file)
  (tags
   (topics "to describe" your project)))
 

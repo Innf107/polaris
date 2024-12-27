@@ -19,6 +19,8 @@ let lex_parse_landmark = Landmark.register "lex_parse"
 let rename_landmark = Landmark.register "rename"
 let typecheck_landmark = Landmark.register "typecheck"
 
+let std_files : string StringMap.t = StringMap.of_seq (List.to_seq Std_wrapper.by_filename)
+
 let rec parse_rename_typecheck :
     driver_options ->
     Sedlexing.lexbuf ->
@@ -92,15 +94,29 @@ let rec parse_rename_typecheck :
         let items_for_exports =
           List.map
             (fun (filename, path) ->
+              let lexbuf =
+                match String.starts_with ~prefix:"@std/" filename with
+                | true ->
+                  let module_name = String.sub filename 5 (String.length filename - 5) in
+                  begin match StringMap.find_opt module_name std_files with
+                  | Some contents ->
+                    let lexbuf = Sedlexing.Utf8.from_string contents in
+                    Sedlexing.set_filename lexbuf filename;
+                    lexbuf
+                  | None -> Util.todo __LOC__
+                  end
+                | false -> Sedlexing.Utf8.from_channel (open_in path)
+              in
+              let driver_options =
+                {
+                  options with
+                  filename = path;
+                  scope_registration = ignored_scope_registration;
+                }
+              in
               ( filename,
                 Error.as_exn
-                  (parse_rename_typecheck
-                     {
-                       options with
-                       filename = path;
-                       scope_registration = ignored_scope_registration;
-                     }
-                     (Sedlexing.Utf8.from_channel (open_in path))
+                  (parse_rename_typecheck driver_options lexbuf
                      RenameScope.empty Types.empty_env) ))
             imported_files
         in

@@ -1,0 +1,5 @@
+test/categories/modules/missing.pls:2:18: ERROR:
+Unable to import module 'not_there.pls': test/categories/modules/not_there.pls: No such file or directory
+  ┃ 
+2 ┃ module Missing = import("not_there.pls")
+  ┃                  ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔

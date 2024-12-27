@@ -2,6 +2,17 @@ open Syntax
 open Errormessage
 module Value = Eval.Value
 
+(* This needs to be defined here to avoid cyclical dependencies with Driver :/ *)
+type module_error =
+  | ModuleStdlibFileNotFound of loc * string
+  | UnableToImportModule of {
+      loc : loc;
+      filename : string;
+      reason : string;
+    }
+
+exception ModuleError of module_error
+
 type t =
   | Panic of string
   | TODO of string
@@ -12,10 +23,11 @@ type t =
   | RenameError of Rename.rename_error
   | TypeError of loc * Types.type_error
   | EvalError of Eval.eval_error
+  | ModuleError of module_error
 
 let as_exn = function
   | Ok x -> x
-  | Error err -> (
+  | Error err -> begin
       match err with
       | Panic msg -> raise (Util.Panic msg)
       | TODO msg -> raise (Util.TODO msg)
@@ -25,7 +37,9 @@ let as_exn = function
       | SysError msg -> raise (Sys_error msg)
       | RenameError err -> raise (Rename.RenameError err)
       | TypeError (loc, err) -> raise (Types.TypeError (loc, err))
-      | EvalError err -> raise (Eval.EvalError err))
+      | EvalError err -> raise (Eval.EvalError err)
+      | ModuleError err -> raise (ModuleError err)
+    end
 
 let handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a =
  fun handler thunk ->
@@ -40,6 +54,7 @@ let handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a =
   | Rename.RenameError err -> handler (RenameError err)
   | Types.TypeError (loc, err) -> handler (TypeError (loc, err))
   | Eval.EvalError err -> handler (EvalError err)
+  | ModuleError err -> handler (ModuleError err)
 
 let pretty_call_trace (locs : loc list) =
   match locs with
@@ -513,3 +528,14 @@ let pretty_error : text_style -> (loc option -> string -> 'a) -> t -> 'a =
                           (List.map (fun x -> "    - " ^ x) constructors)
                 end
         end
+  | ModuleError error -> begin
+      match error with
+      | ModuleStdlibFileNotFound (loc, filename) ->
+          print_fun (Some loc)
+            ("There is no @std module named " ^ text_style.identifier filename)
+      | UnableToImportModule { loc; filename; reason } ->
+          print_fun (Some loc)
+            ("Unable to import module "
+            ^ text_style.identifier filename
+            ^ ": " ^ text_style.emphasis reason)
+    end

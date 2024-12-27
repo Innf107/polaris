@@ -77,23 +77,24 @@ let rec parse_rename_typecheck :
         end
         else ();
 
+        let _, imported_paths = Parsed.Traversal.traverse_list
+          Modules.extract_import_paths#traverse_expr [] ast in
+
         let imported_files =
           List.map
-            (fun x -> (x, Util.path_relative_to options.filename x))
-            (snd
-               (Parsed.Traversal.traverse_list
-                  Modules.extract_import_paths#traverse_expr [] ast))
+            (fun (loc, path) -> (loc, path, Util.path_relative_to options.filename path))
+            imported_paths
         in
 
         trace_driver
           (lazy
-            ("Importing modules from ("
-            ^ String.concat ", " (List.map snd imported_files)
-            ^ ")"));
+            ("Importing modules from ["
+            ^ String.concat ", " (List.map (fun (_, _, full_path) -> full_path) imported_files)
+            ^ "]"));
 
         let items_for_exports =
           List.map
-            (fun (filename, path) ->
+            (fun (loc, filename, path) ->
               let lexbuf =
                 match String.starts_with ~prefix:"@std/" filename with
                 | true ->
@@ -103,9 +104,13 @@ let rec parse_rename_typecheck :
                     let lexbuf = Sedlexing.Utf8.from_string contents in
                     Sedlexing.set_filename lexbuf filename;
                     lexbuf
-                  | None -> Util.todo __LOC__
+                  | None -> raise (Error.ModuleError (ModuleStdlibFileNotFound (loc, module_name)))
                   end
-                | false -> Sedlexing.Utf8.from_channel (open_in path)
+                | false -> let in_channel = try open_in path with
+                  (* Why can't i catch a file not found error here? *)
+                  | Sys_error reason -> raise (Error.ModuleError (UnableToImportModule { loc; filename; reason }))
+                  in
+                  Sedlexing.Utf8.from_channel in_channel
               in
               let driver_options =
                 {

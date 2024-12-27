@@ -1,6 +1,6 @@
 open Syntax
 
-val extract_import_paths : string list Parsed.Traversal.traversal
+val extract_import_paths : (loc * string) list Parsed.Traversal.traversal
 
 val build_export_map :
   Typed.header ->

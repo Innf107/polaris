@@ -5,11 +5,11 @@ let _export_category, trace_exports =
 
 let extract_import_paths =
   object
-    inherit [string list] Parsed.Traversal.traversal
+    inherit [(loc * string) list] Parsed.Traversal.traversal
 
     method! module_expr state =
       function
-      | Parsed.Import (_, path) as mod_expr -> (mod_expr, path :: state)
+      | Parsed.Import (loc, path) as mod_expr -> (mod_expr, (loc, path) :: state)
       | mod_expr -> (mod_expr, state)
   end
 

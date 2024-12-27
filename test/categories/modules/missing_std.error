@@ -1,0 +1,5 @@
+test/categories/modules/missing_std.pls:2:18: ERROR:
+There is no @std module named 'not_there.pls'
+  ┃ 
+2 ┃ module Missing = import("@std/not_there.pls")
+  ┃                  ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔

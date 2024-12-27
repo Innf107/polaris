@@ -209,16 +209,20 @@ binop5:
     | "/" { Div }
 
 expr6:
-    | expr7 ":=" expr { Assign(loc $startpos $endpos, $1, $3) }
-    | expr7 { $1 }
+    | expr_unary ":=" expr { Assign(loc $startpos $endpos, $1, $3) }
+    | expr_unary { $1 }
 
-expr7:
-    | expr7 "." ident_with_loc { let (field_loc, field) = $3 in Subscript({main = loc $startpos $endpos; subloc=field_loc}, $1, field) }
+expr_unary:
+    | NOT expr_unary { Not(loc $startpos $endpos, $2) }
+    | expr_app { $1 }
+
+expr_app:
+    | expr_app "." ident_with_loc { let (field_loc, field) = $3 in Subscript({main = loc $startpos $endpos; subloc=field_loc}, $1, field) }
     | CONSTRUCTOR "." IDENT { ModSubscript(loc $startpos $endpos, $1, $3) }
     | CONSTRUCTOR "." CONSTRUCTOR { ModSubscriptDataCon((), loc $startpos $endpos, $1, $3) }
-    | expr7 "[" expr "]" { DynLookup(loc $startpos $endpos, $1, $3) }
-    | expr7 "(" sep_trailing(COMMA, expr) ")" { App(loc $startpos $endpos, $1, $3) }
-    | expr7 "!" { Unwrap(loc $startpos $endpos, $1) }
+    | expr_app "[" expr "]" { DynLookup(loc $startpos $endpos, $1, $3) }
+    | expr_app "(" sep_trailing(COMMA, expr) ")" { App(loc $startpos $endpos, $1, $3) }
+    | expr_app "!" { Unwrap(loc $startpos $endpos, $1) }
     | expr_leaf { $1 }
 
 string_component:
@@ -270,7 +274,6 @@ expr_leaf:
         }
 
     | PROGCALL expr_leaf* { ProgCall(loc $startpos $endpos, $1, $2) }
-    | NOT expr_leaf { Not(loc $startpos $endpos, $2) }
     | "[" expr ".." expr "]" { Range(loc $startpos $endpos, $2, $4) }
     | IF expr SEMI* THEN SEMI* expr SEMI* ELSE SEMI* expr { If(loc $startpos $endpos, $2, $6, $10) }
     | ASYNC expr1 { Async(loc $startpos $endpos, $2) }

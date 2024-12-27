@@ -1,6 +1,6 @@
 # EXPECT: 205
 
-module List = import("../../../lib/list.pls");
+module List = import("@std/list.pls");
 
 let x = ref 5;
 

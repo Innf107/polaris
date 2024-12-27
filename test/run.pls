@@ -7,7 +7,7 @@ options {
     "--hide-passing" as hidePassing: "Hide outputs from tests that passed successfully"
 }
 
-module List = import("../lib/list.pls")
+module List = import("@std/list.pls")
 
 # Silently ignore failures
 let silent(cont) = try cont() with {

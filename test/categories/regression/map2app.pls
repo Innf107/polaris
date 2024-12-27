@@ -1,6 +1,6 @@
 # EXPECT: 
 
-module List = import("../../../lib/list.pls")
+module List = import("@std/list.pls")
 
 let escapeHTML(content) = {
     let toReplace = 

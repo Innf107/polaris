@@ -20,7 +20,7 @@
 
 (rule
  (target std_wrapper.ml)
- (deps (glob_files ../lib/*.pls))
+ (deps (glob_files ../std/*.pls))
  (action
   (progn
     (echo ocaml-embed-file %{deps} -with-alist -output std_wrapper)

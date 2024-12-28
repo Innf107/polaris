@@ -194,11 +194,10 @@ let insert_module_var : name -> runtime_module -> eval_env -> eval_env =
  fun var module_value env ->
   { env with module_vars = VarMap.add var module_value env.module_vars }
 
-let full_env_vars : eval_env -> string array =
+let env_vars_as_array : eval_env -> string array =
  fun env ->
-  Array.append (Unix.environment ())
-    (Array.of_seq
-       (Seq.map (fun (x, y) -> x ^ "=" ^ y) (EnvMap.to_seq env.env_vars)))
+  Array.of_seq
+    (Seq.map (fun (x, y) -> x ^ "=" ^ y) (EnvMap.to_seq env.env_vars))
 
 let rec val_eq (x : value) (y : value) : bool =
   match (x, y) with
@@ -481,7 +480,7 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
           fun () ->
             let progs = progs_of_exprs ~cap env prog_exprs in
             let pid =
-              Pipe.compose ~sw:cap.switch ~mgr:cap.mgr ~env:(full_env_vars env)
+              Pipe.compose ~sw:cap.switch ~mgr:cap.mgr ~env:(env_vars_as_array env)
                 progs
             in
             let status = Pipe.wait_to_status pid in
@@ -513,7 +512,7 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
 
             let process =
               Pipe.compose_stdin ~mgr:cap.mgr ~sw:cap.switch
-                ~env:(full_env_vars env) progs output_flow
+                ~env:(env_vars_as_array env) progs output_flow
             in
             let status = Pipe.wait_to_status process in
             env.last_status := status;
@@ -903,7 +902,7 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
 
             let result, status =
               Pipe.compose_stdout ~sw:cap.switch ~mgr:cap.mgr
-                ~env:(full_env_vars env) progs
+                ~env:(env_vars_as_array env) progs
             in
             let result = trim_output result in
 
@@ -936,7 +935,7 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
 
             let result, status =
               Pipe.compose_in_out ~sw:cap.switch ~mgr:cap.mgr
-                ~env:(full_env_vars env) progs stdin_source
+                ~env:(env_vars_as_array env) progs stdin_source
             in
             let result = trim_output result in
 
@@ -1705,13 +1704,31 @@ and progs_of_exprs ~cap env = function
 and make_eval_env (argv : string list) : eval_env =
   {
     vars = VarMap.empty;
-    env_vars = EnvMap.empty;
+    env_vars = Lazy.force inherited_env_vars;
     argv;
     call_trace = [];
     last_status = ref 0;
     module_vars = VarMap.empty;
     exceptions = VarMap.empty;
   }
+
+and inherited_env_vars =
+  lazy
+    begin
+      let inherited_env_raw = Unix.environment () in
+      let inherited_env_array =
+        inherited_env_raw
+        |> Array.map (fun key_value_entry ->
+               let split_index = String.index key_value_entry '=' in
+               let key = String.sub key_value_entry 0 split_index in
+               let value =
+                 String.sub key_value_entry (split_index + 1)
+                   (String.length key_value_entry - split_index - 1)
+               in
+               (key, value))
+      in
+      EnvMap.of_seq (Array.to_seq inherited_env_array)
+    end
 
 let eval ~cap (argv : string list) (exprs : Typed.expr list) : value =
   eval_seq `Expr ~cap (make_eval_env argv) exprs

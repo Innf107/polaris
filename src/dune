@@ -2,7 +2,6 @@
  (name polaris)
  (libraries
   menhirLib
-  trees_that_grow
   bestline
   re
   eio

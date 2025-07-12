@@ -25,6 +25,8 @@ let usage_message =
   \                          Possible values: "
   ^ String.concat ", " (Trace.get_categories ())
 
+let initial_cwdir = Sys.getcwd ()
+
 let fail_usage : 'a. string -> 'a =
  fun msg ->
   print_endline (msg ^ "\n\n" ^ usage_message);
@@ -45,6 +47,9 @@ let fatal_error maybe_loc (message : string) =
     match maybe_loc with
     | None -> ""
     | Some loc ->
+        (* If the program changed its working directory, we need to undo that operation
+           to be able to open the offending file and use it in error messages *)
+        Sys.chdir initial_cwdir;
         let input_file = In_channel.open_text loc.file in
 
         let previous_line, line, next_line =

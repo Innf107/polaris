@@ -5,10 +5,10 @@ module VarMap = Map.Make (Name)
 module EnvMap = Trie.String
 module RecordVImpl = Multimap.Make (String)
 
-type eval_capabilities = {
+type ('r, 'r2) eval_capabilities = {
   switch : Eio.Switch.t;
-  fs : Eio.Fs.dir Eio.Path.t;
-  mgr : Eio.Process.mgr;
+  fs : 'r2 Eio.Path.t;
+  mgr : 'r Eio.Process.mgr;
 }
 
 type eval_env = {
@@ -508,13 +508,13 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
 
             (* TODO: this duplicates a ton of the logic from eval.
               we should probably try to factor it out as much as possible *)
-            let output_flow =
+            let output_flow : _ Eio.Flow.source =
               Eio.Flow.string_source (String.concat "\n" output_lines ^ "\n")
             in
 
             let process =
               Pipe.compose_stdin ~mgr:cap.mgr ~sw:cap.switch
-                ~env:(env_vars_as_array env) progs output_flow
+                ~env:(env_vars_as_array env) progs (output_flow :> [ `Flow | `R ] Eio.Flow.source)
             in
             let status = Pipe.wait_to_status process in
             env.last_status := status;
@@ -1136,7 +1136,7 @@ and eval_app ~cap env loc fun_v arg_vals =
 and eval_seq_cont :
       'r.
       [ `Expr | `Statement ] ->
-      cap:eval_capabilities ->
+      cap:_ eval_capabilities ->
       eval_env ->
       Typed.expr list ->
       (eval_env -> (Typed.expr, value) either -> 'r) ->

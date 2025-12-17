@@ -13,8 +13,8 @@ val ignored_scope_registration : Rename.scope_registration
 val run :
   driver_options ->
   Sedlexing.lexbuf ->
-  fs:Eio.Fs.dir Eio.Path.t ->
-  mgr:Eio.Process.mgr ->
+  fs:_ Eio.Path.t ->
+  mgr:_ Eio.Process.mgr ->
   (Eval.value, Error.t) result
 
 val run_env :
@@ -24,8 +24,8 @@ val run_env :
   Rename.RenameScope.t ->
   ?check_or_infer_top_level:[ `Check | `Infer ] ->
   Types.global_env ->
-  fs:Eio.Fs.dir Eio.Path.t ->
-  mgr:Eio.Process.mgr ->
+  fs:_ Eio.Path.t ->
+  mgr:_ Eio.Process.mgr ->
   ( Eval.value * Eval.eval_env * Rename.RenameScope.t * Types.global_env,
     Error.t )
   result

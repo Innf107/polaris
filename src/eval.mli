@@ -4,10 +4,10 @@ module VarMap : module type of Map.Make (Name)
 module EnvMap : module type of Trie.String
 module RecordVImpl : module type of Multimap.Make (String)
 
-type eval_capabilities = {
+type ('r, 'r2) eval_capabilities = {
   switch : Eio.Switch.t;
-  fs : Eio.Fs.dir Eio.Path.t;
-  mgr : Eio.Process.mgr;
+  fs : 'r2 Eio.Path.t;
+  mgr : 'r Eio.Process.mgr;
 }
 
 type eval_env = {
@@ -90,10 +90,10 @@ val isUnitV : value -> bool
 val eval_header : eval_env -> header -> eval_env
 
 val eval_seq_state :
-  cap:eval_capabilities ->
+  cap:_ eval_capabilities ->
   [ `Expr | `Statement ] ->
   eval_env ->
   expr list ->
   value * eval_env
 
-val eval : cap:eval_capabilities -> string list -> Typed.expr list -> value
+val eval : cap:_ eval_capabilities -> string list -> Typed.expr list -> value

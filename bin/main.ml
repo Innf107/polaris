@@ -258,7 +258,7 @@ let () =
         let options, args = parse_args () in
 
         let fs = Eio.Stdenv.fs env in
-        let mgr = (Eio.Stdenv.process_mgr env :> Eio.Process.mgr) in
+        let mgr = (Eio.Stdenv.process_mgr env :> _ Eio.Process.mgr) in
 
         match args with
         | [] -> run_repl ~fs ~mgr options

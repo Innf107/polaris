@@ -169,8 +169,8 @@ let run_env :
     RenameScope.t ->
     ?check_or_infer_top_level:[ `Check | `Infer ] ->
     Types.global_env ->
-    fs:Eio.Fs.dir Eio.Path.t ->
-    mgr:Eio.Process.mgr ->
+    fs:_ Eio.Path.t ->
+    mgr:_ Eio.Process.mgr ->
     (value * eval_env * RenameScope.t * Types.global_env, Error.t) result =
  fun options lexbuf env scope ?check_or_infer_top_level type_env ~fs ~mgr ->
   Error.handle_errors

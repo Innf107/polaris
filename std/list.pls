@@ -16,6 +16,7 @@ export {
     
     contains,
     find,
+    findMap,
 
     sum,
     product,
@@ -32,6 +33,8 @@ export {
 
     partition,
     sort,
+
+    deduplicate
 }
 
 # O(n)
@@ -118,7 +121,16 @@ let find(pred, xs) = match xs {
             Just(x)
         else
             find(pred, xs)
-    
+}
+
+# O(n), tail recursive
+let findMap : forall a b. (List(a), a -> < Just(b), Nothing >) -> < Just(b), Nothing >
+let findMap(list, predicate) = match list {
+    [] -> Nothing
+    (x :: xs) -> match predicate(x) {
+        Just(y) -> Just(y)
+        Nothing -> findMap(xs, predicate)
+    }
 }
 
 # O(1)
@@ -185,5 +197,21 @@ let sort(xs) = match xs {
     (x :: xs) -> { 
         let (smaller, larger) = partition(\y -> y < x, xs)
         append(sort(smaller), (x :: sort(larger)))
+    }
+}
+
+
+# O(n^2) (!)
+# Very inefficient but doesn't rely on an ordering operation or anything like that.
+# Only use this if you know that the input lists are going to be small
+let deduplicate : forall a. List(a) -> List(a)
+let deduplicate(list) = match(list) {
+    [] -> []
+    x :: xs -> {
+        let tail = deduplicate(xs)
+        if contains(x, tail) then
+            tail
+        else
+            x :: tail
     }
 }

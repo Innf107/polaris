@@ -22,7 +22,8 @@ depends: [
   "bestline"
   "eio"
   "eio_main"
-  "ocaml_embed_file"
+  "ocaml-embed-file"
+  "sedlex"
   "odoc" {with-doc}
 ]
 build: [

@@ -32,7 +32,8 @@
   bestline
   eio
   eio_main
-  ocaml_embed_file)
+  ocaml-embed-file
+  sedlex)
  (tags
   (topics "to describe" your project)))
 

@@ -506,8 +506,10 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
 
             let progs = progs_of_exprs ~cap env prog_exprs in
 
+            (* TODO: this duplicates a ton of the logic from eval.
+              we should probably try to factor it out as much as possible *)
             let output_flow =
-              Eio.Flow.string_source (String.concat "\n" output_lines)
+              Eio.Flow.string_source (String.concat "\n" output_lines ^ "\n")
             in
 
             let process =
@@ -930,7 +932,9 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
             let progs = progs_of_exprs ~cap env exprs in
 
             let stdin_source =
-              Eio.Flow.string_source (String.concat "\n" output_lines)
+              (* Unix-y programs behave better if we unconditionally add a trailing newline.
+                This also mirrors the behavior of piping the result of 'echo' in bash *)
+              Eio.Flow.string_source (String.concat "\n" output_lines ^ "\n")
             in
 
             let result, status =

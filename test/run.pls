@@ -54,18 +54,24 @@ let knownErrorsPassed = ref 0
 
 let passed(file, isKnownFailure) = {
     if isKnownFailure then {
-        print("\e[33m[${file}](error): PASSED but was marked as known failure\e[0m")
+        if not hidePassing then {
+            print("\e[33m[${file}](error): PASSED but was marked as known failure\e[0m")
+        } else {}
         knownErrorsPassed := knownErrorsPassed! + 1
-    } else if not hidePassing then {
-        print("\e[32m[${file}](error): PASSED\e[0m")
-    } else {}
+    } else {
+        if not hidePassing then {
+            print("\e[32m[${file}](error): PASSED\e[0m")
+        } else {}
+    }
 }
 
 let failed(file, isKnownFailure, expected, actual) = {
     if isKnownFailure then {
-        print("\e[1m\e[35m[${file}](error): FAILED!\n\e[0m"
-                ~ "\e[35m[    EXPECTED: '${expected}'\n"
-                ~        "      ACTUAL: '${actual}'\e[0m")
+        if not hidePassing then {
+            print("\e[1m\e[35m[${file}](error): FAILED!\n\e[0m"
+                    ~ "\e[35m[    EXPECTED: '${expected}'\n"
+                    ~        "      ACTUAL: '${actual}'\e[0m")
+        } else {}
         knownErrors := knownErrors! + 1
     } else {
         print("\e[1m\e[31m[${file}](error): FAILED!\n\e[0m"

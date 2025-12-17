@@ -1129,8 +1129,8 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
             let exprs = check_progcalls exprs in
             Typed.Pipe (loc, exprs)
         | expr :: exprs ->
-            (* TODO: Use a toString typeclass *)
-            let expr = check env String expr in
+            let (type_, expr) = infer env expr in
+            prog_arg_constraint env (Typed.get_loc expr) type_;
             let exprs = check_progcalls exprs in
             Pipe (loc, expr :: exprs)
       in

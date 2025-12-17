@@ -1,0 +1,6 @@
+test/categories/progcalls/invalid_stdin_type.pls:2:1: ERROR:
+Unable to unify types '()'
+                  and 'String'
+  ┃ 
+2 ┃ () | cat
+  ┃ ▔▔

@@ -31,7 +31,10 @@ let rec compose_pipe :
         Eio.Process.spawn ~sw mgr ?stdin ~stdout:pipe_write ~env
           (program_or_local program :: arguments)
       in
-      compose_pipe ~mgr ~sw ~env (Some unclosable_pipe_read) stdout rest
+      let result = compose_pipe ~mgr ~sw ~env (Some unclosable_pipe_read) stdout rest in
+      Eio.Flow.close pipe_read;
+      Eio.Flow.close pipe_write;
+      result
 
 let compose :
     sw:Eio.Switch.t ->
@@ -60,10 +63,9 @@ let compose_stdout :
  fun ~sw ~mgr ~env progs ->
   let pipe_read, pipe_write = Eio.Process.pipe ~sw mgr in
 
-  let pipe_write : _ Eio.Flow.sink = pipe_write in
-
   let process = compose_pipe ~sw ~mgr ~env None (Some pipe_write) progs in
   Eio.Flow.close pipe_write;
+
   let result =
     Eio.Buf_read.parse_exn Eio.Buf_read.take_all ~max_size:max_int pipe_read
   in

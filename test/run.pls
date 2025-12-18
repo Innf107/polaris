@@ -5,9 +5,17 @@ options {
     "--use-polaris" as usePolaris: "Run tests using 'polaris' instead of 'dune exec -- polaris'"
     "--timeout" (timeout = "10s"): "Timeout to apply to the tests run. Defaults to 10s"
     "--hide-passing" as hidePassing: "Hide outputs from tests that passed successfully"
+    "--list-disabled" as listDisabled: "List the disabled tests and exit without running anything"
 }
 
 module List = import("@std/list.pls")
+
+let disabledFiles = lines(!find "test/categories" "-type" "f" "-name" "*.disabled")
+
+if listDisabled then {
+    List.for(disabledFiles, print)
+    exit(0)
+} else {}
 
 # Silently ignore failures
 let silent(cont) = try cont() with {
@@ -117,15 +125,15 @@ for(files, \file -> {
     };
 })
 
-let disabled = {let x = !find "test/categories" "-type" "f" "-name" "*.disabled"; x} | wc "-l"
+let disabled = if List.length(disabledFiles) != 0 then "${List.length(disabledFiles)} disabled, " else ""
 if errors! == 0 then {
-    print("\e[32m\e[1mAll test passed. (${disabled} disabled, ${knownErrors!} known errors))\e[0m")
+    print("\e[32m\e[1mAll test passed. (${disabled}${knownErrors!} known errors))\e[0m")
     if knownErrorsPassed! > 0 then {
         print("\e[1m\e[33m${knownErrorsPassed!} known errors have been fixed\e[0m")
     } else {}
     ()
 } else {
-    print("\e[31m${toString(errors!)} TESTS FAILED! (${disabled} disabled, ${knownErrors!} known errors)\e[0m")
+    print("\e[31m${toString(errors!)} TESTS FAILED! (${disabled}${knownErrors!} known errors)\e[0m")
     if knownErrorsPassed! > 0 then {
         print("\e[1m\e[33m${knownErrorsPassed!} known errors have been fixed\e[0m")
     } else {}

@@ -58,6 +58,7 @@ let primops =
                [ String; String ]
                --> VariantVar
                      ([| ("Less", []); ("Equal", []); ("Greater", []) |], a)) );
+         ("trim", [ String ] --> String);
        ])
 
 let is_primop name = PrimOpMap.mem name primops

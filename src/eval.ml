@@ -300,42 +300,40 @@ let rec match_pat_opt (pat : Typed.pattern) (scrut : value) :
              (fun x -> x))
   | RecordPat (loc, field_patterns, extension_pattern), RecordV recordMap ->
       let exception MatchFailure in
-      begin
-        try
-          let remaining_fields, env_transformers =
-            Array.fold_left_map
-              (fun fields (field_name, pattern) ->
-                let value =
-                  match RecordVImpl.find_first field_name fields with
-                  | None ->
-                      panic __LOC__
-                        (Loc.pretty loc
-                       ^ ": Record field not found at runtime: '" ^ field_name
-                       ^ "'")
-                  | Some value -> value
-                in
+      begin try
+        let remaining_fields, env_transformers =
+          Array.fold_left_map
+            (fun fields (field_name, pattern) ->
+              let value =
+                match RecordVImpl.find_first field_name fields with
+                | None ->
+                    panic __LOC__
+                      (Loc.pretty loc ^ ": Record field not found at runtime: '"
+                     ^ field_name ^ "'")
+                | Some value -> value
+              in
 
-                let env_trans =
-                  match match_pat_opt pattern value with
-                  | Some env_trans -> env_trans
-                  | None -> raise MatchFailure
-                in
+              let env_trans =
+                match match_pat_opt pattern value with
+                | Some env_trans -> env_trans
+                | None -> raise MatchFailure
+              in
 
-                let remaining_fields =
-                  RecordVImpl.delete_first field_name fields
-                in
+              let remaining_fields =
+                RecordVImpl.delete_first field_name fields
+              in
 
-                (remaining_fields, env_trans))
-              recordMap field_patterns
-          in
-          let* extension_trans =
-            match extension_pattern with
-            | None -> Some Fun.id
-            | Some pattern -> match_pat_opt pattern (RecordV remaining_fields)
-          in
-          Some (extension_trans << Util.compose_array env_transformers)
-        with
-        | MatchFailure -> None
+              (remaining_fields, env_trans))
+            recordMap field_patterns
+        in
+        let* extension_trans =
+          match extension_pattern with
+          | None -> Some Fun.id
+          | Some pattern -> match_pat_opt pattern (RecordV remaining_fields)
+        in
+        Some (extension_trans << Util.compose_array env_transformers)
+      with
+      | MatchFailure -> None
       end
   | NumPat (_, f1), NumV f2 when Float.equal f1 f2 -> Some (fun x -> x)
   | StringPat (_, literal), StringV str when String.equal literal str ->
@@ -446,28 +444,25 @@ let rec eval_mod_expr ~cap env = function
     end
   | SubModule (loc, mod_expr, name) ->
       let runtime_module, ambient_env_trans = eval_mod_expr ~cap env mod_expr in
-      begin
-        match VarMap.find_opt name runtime_module.modules with
-        | None ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Submodule not found at runtime: '"
-             ^ Name.pretty name ^ "'. This should have been caught way earlier!"
-              )
-        | Some runtime_module -> (runtime_module, ambient_env_trans)
+      begin match VarMap.find_opt name runtime_module.modules with
+      | None ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Submodule not found at runtime: '"
+           ^ Name.pretty name ^ "'. This should have been caught way earlier!")
+      | Some runtime_module -> (runtime_module, ambient_env_trans)
       end
 
 and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
   match expr with
   | If (loc, condition_expr, then_expr, else_expr) ->
       let condition = eval_expr ~cap env condition_expr in
-      begin
-        match condition with
-        | BoolV true -> eval_statement ~cap env then_expr
-        | BoolV false -> eval_statement ~cap env else_expr
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Non-bool in if condition at runtime: "
-             ^ Value.pretty condition)
+      begin match condition with
+      | BoolV true -> eval_statement ~cap env then_expr
+      | BoolV false -> eval_statement ~cap env else_expr
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Non-bool in if condition at runtime: "
+           ^ Value.pretty condition)
       end
       (* Single program calls are just evaluated like pipes *)
   | ProgCall (loc, _, _) as expr ->
@@ -475,54 +470,49 @@ and eval_statement ~cap (env : eval_env) (expr : Typed.expr) =
   (* Pipes in statements inherit the parents stdout. *)
   (* Pipes without value inputs also inherit the parents stdin *)
   | Pipe (loc, (ProgCall _ :: _ as prog_exprs)) ->
-      handle_process_exceptions loc env
-        begin
-          fun () ->
-            let progs = progs_of_exprs ~cap env prog_exprs in
-            let pid =
-              Pipe.compose ~sw:cap.switch ~mgr:cap.mgr ~env:(env_vars_as_array env)
-                progs
-            in
-            let status = Pipe.wait_to_status pid in
-            env.last_status := status;
-            if status <> 0 then begin
-              let program, arguments = Base.List.last_exn progs in
-              raise_command_failure_exception env loc program arguments status
-                ""
-            end
+      handle_process_exceptions loc env begin fun () ->
+          let progs = progs_of_exprs ~cap env prog_exprs in
+          let pid =
+            Pipe.compose ~sw:cap.switch ~mgr:cap.mgr
+              ~env:(env_vars_as_array env) progs
+          in
+          let status = Pipe.wait_to_status pid in
+          env.last_status := status;
+          if status <> 0 then begin
+            let program, arguments = Base.List.last_exn progs in
+            raise_command_failure_exception env loc program arguments status ""
+          end
         end
   | Pipe (loc, expr :: prog_exprs) ->
-      handle_process_exceptions loc env
-        begin
-          fun () ->
-            let output_lines =
-              Value.as_args
-                (fun value ->
-                  panic __LOC__
-                    (Loc.pretty loc ^ ": Invalid process argument at runtime: "
-                   ^ Value.pretty value))
-                (eval_expr ~cap env expr)
-            in
+      handle_process_exceptions loc env begin fun () ->
+          let output_lines =
+            Value.as_args
+              (fun value ->
+                panic __LOC__
+                  (Loc.pretty loc ^ ": Invalid process argument at runtime: "
+                 ^ Value.pretty value))
+              (eval_expr ~cap env expr)
+          in
 
-            let progs = progs_of_exprs ~cap env prog_exprs in
+          let progs = progs_of_exprs ~cap env prog_exprs in
 
-            (* TODO: this duplicates a ton of the logic from eval.
+          (* TODO: this duplicates a ton of the logic from eval.
               we should probably try to factor it out as much as possible *)
-            let output_flow : _ Eio.Flow.source =
-              Eio.Flow.string_source (String.concat "\n" output_lines ^ "\n")
-            in
+          let output_flow : _ Eio.Flow.source =
+            Eio.Flow.string_source (String.concat "\n" output_lines ^ "\n")
+          in
 
-            let process =
-              Pipe.compose_stdin ~mgr:cap.mgr ~sw:cap.switch
-                ~env:(env_vars_as_array env) progs (output_flow :> [ `Flow | `R ] Eio.Flow.source)
-            in
-            let status = Pipe.wait_to_status process in
-            env.last_status := status;
-            if status <> 0 then begin
-              let program, arguments = Base.List.last_exn progs in
-              raise_command_failure_exception env loc program arguments status
-                ""
-            end
+          let process =
+            Pipe.compose_stdin ~mgr:cap.mgr ~sw:cap.switch
+              ~env:(env_vars_as_array env) progs
+              (output_flow :> [ `Flow | `R ] Eio.Flow.source)
+          in
+          let status = Pipe.wait_to_status process in
+          env.last_status := status;
+          if status <> 0 then begin
+            let program, arguments = Base.List.last_exn progs in
+            raise_command_failure_exception env loc program arguments status ""
+          end
         end
   | Seq (_, exprs) ->
       let _ = eval_seq ~cap `Statement env exprs in
@@ -610,13 +600,12 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
               )
         | Some runtime_module -> runtime_module
       in
-      begin
-        match VarMap.find_opt name runtime_module.mod_vars with
-        | None ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Module member not found at runtime: '"
-             ^ Name.pretty name ^ "'. This should have been caught earlier!")
-        | Some reference -> reference
+      begin match VarMap.find_opt name runtime_module.mod_vars with
+      | None ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Module member not found at runtime: '"
+           ^ Name.pretty name ^ "'. This should have been caught earlier!")
+      | Some reference -> reference
       end
   | RecordUpdate (loc, expr, update_exprs) -> begin
       match eval_expr ~cap env expr with
@@ -657,13 +646,12 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
           match eval_expr ~cap env key_expr with
           | NumV num when Float.is_integer num ->
               let index = Float.to_int num in
-              begin
-                match List.nth_opt list index with
-                | Some x -> x
-                | None ->
-                    raise
-                      (EvalError
-                         (IndexOutOfRange (list, index, loc :: env.call_trace)))
+              begin match List.nth_opt list index with
+              | Some x -> x
+              | None ->
+                  raise
+                    (EvalError
+                       (IndexOutOfRange (list, index, loc :: env.call_trace)))
               end
           | value ->
               panic __LOC__
@@ -679,76 +667,70 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr ~cap env e1 in
       let v2 = eval_expr ~cap env e2 in
-      begin
-        match (v1, v2) with
-        | NumV num1, NumV num2 -> NumV (num1 +. num2)
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Trying to add non-numbers at runtime: "
-             ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
+      begin match (v1, v2) with
+      | NumV num1, NumV num2 -> NumV (num1 +. num2)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to add non-numbers at runtime: "
+           ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
       end
   | BinOp (loc, e1, Sub, e2) ->
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr ~cap env e1 in
       let v2 = eval_expr ~cap env e2 in
-      begin
-        match (v1, v2) with
-        | NumV num1, NumV num2 -> NumV (num1 -. num2)
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Trying to subtract non-numbers at runtime: "
-             ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
+      begin match (v1, v2) with
+      | NumV num1, NumV num2 -> NumV (num1 -. num2)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to subtract non-numbers at runtime: "
+           ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
       end
   | BinOp (loc, e1, Mul, e2) ->
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr ~cap env e1 in
       let v2 = eval_expr ~cap env e2 in
-      begin
-        match (v1, v2) with
-        | NumV num1, NumV num2 -> NumV (num1 *. num2)
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Trying to multiply non-numbers at runtime: "
-             ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
+      begin match (v1, v2) with
+      | NumV num1, NumV num2 -> NumV (num1 *. num2)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to multiply non-numbers at runtime: "
+           ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
       end
   | BinOp (loc, e1, Div, e2) ->
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr ~cap env e1 in
       let v2 = eval_expr ~cap env e2 in
-      begin
-        match (v1, v2) with
-        | NumV num1, NumV num2 -> NumV (num1 /. num2)
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Trying to divide non-numbers at runtime: "
-             ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
+      begin match (v1, v2) with
+      | NumV num1, NumV num2 -> NumV (num1 /. num2)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to divide non-numbers at runtime: "
+           ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
       end
   | BinOp (loc, e1, Cons, e2) ->
       let v1 = eval_expr ~cap env e1 in
       let v2 = eval_expr ~cap env e2 in
-      begin
-        match v2 with
-        | ListV values -> ListV (v1 :: values)
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Trying to cons to non-list at runtime: "
-             ^ Value.pretty v2)
+      begin match v2 with
+      | ListV values -> ListV (v1 :: values)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to cons to non-list at runtime: "
+           ^ Value.pretty v2)
       end
   | BinOp (loc, e1, Concat, e2) ->
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr ~cap env e1 in
       let v2 = eval_expr ~cap env e2 in
-      begin
-        match (v1, v2) with
-        | ListV xs, ListV ys -> ListV (xs @ ys)
-        | RecordV xs, RecordV ys -> RecordV (RecordVImpl.union xs ys)
-        | StringV s1, StringV s2 -> StringV (s1 ^ s2)
-        | StringV s1, NumV _ -> StringV (s1 ^ Value.pretty v2)
-        | NumV _, StringV s2 -> StringV (Value.pretty v1 ^ s2)
-        | _, _ ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Invalid args to concat at runtime: "
-             ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
+      begin match (v1, v2) with
+      | ListV xs, ListV ys -> ListV (xs @ ys)
+      | RecordV xs, RecordV ys -> RecordV (RecordVImpl.union xs ys)
+      | StringV s1, StringV s2 -> StringV (s1 ^ s2)
+      | StringV s1, NumV _ -> StringV (s1 ^ Value.pretty v2)
+      | NumV _, StringV s2 -> StringV (Value.pretty v1 ^ s2)
+      | _, _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Invalid args to concat at runtime: "
+           ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
       end
   | BinOp (_, e1, Equals, e2) ->
       (* See Note [left-to-right evaluation] *)
@@ -765,53 +747,45 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
       let v1 = eval_expr ~cap env e1 in
       let v2 = eval_expr ~cap env e2 in
 
-      begin
-        match (v1, v2) with
-        | NumV num1, NumV num2 -> BoolV (num1 <= num2)
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc
-             ^ ": Trying to apply <= to non-numbers at runtime: "
-             ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
+      begin match (v1, v2) with
+      | NumV num1, NumV num2 -> BoolV (num1 <= num2)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to apply <= to non-numbers at runtime: "
+           ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
       end
   | BinOp (loc, e1, GE, e2) ->
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr ~cap env e1 in
       let v2 = eval_expr ~cap env e2 in
-      begin
-        match (v1, v2) with
-        | NumV num1, NumV num2 -> BoolV (num1 >= num2)
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc
-             ^ ": Trying to apply >= to non-numbers at runtime: "
-             ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
+      begin match (v1, v2) with
+      | NumV num1, NumV num2 -> BoolV (num1 >= num2)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to apply >= to non-numbers at runtime: "
+           ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
       end
   | BinOp (loc, e1, LT, e2) ->
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr ~cap env e1 in
       let v2 = eval_expr ~cap env e2 in
-      begin
-        match (v1, v2) with
-        | NumV num1, NumV num2 -> BoolV (num1 < num2)
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc
-             ^ ": Trying to apply < to non-numbers at runtime: "
-             ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
+      begin match (v1, v2) with
+      | NumV num1, NumV num2 -> BoolV (num1 < num2)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to apply < to non-numbers at runtime: "
+           ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
       end
   | BinOp (loc, e1, GT, e2) ->
       (* See Note [left-to-right evaluation] *)
       let v1 = eval_expr ~cap env e1 in
       let v2 = eval_expr ~cap env e2 in
-      begin
-        match (v1, v2) with
-        | NumV num1, NumV num2 -> BoolV (num1 > num2)
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc
-             ^ ": Trying to apply > to non-numbers at runtime: "
-             ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
+      begin match (v1, v2) with
+      | NumV num1, NumV num2 -> BoolV (num1 > num2)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to apply > to non-numbers at runtime: "
+           ^ Value.pretty v1 ^ ", " ^ Value.pretty v2)
       end
   | BinOp (loc, e1, Or, e2) -> begin
       match eval_expr ~cap env e1 with
@@ -858,31 +832,28 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
   | Range (loc, e1, e2) ->
       let start_val = eval_expr ~cap env e1 in
       let end_val = eval_expr ~cap env e2 in
-      begin
-        match (start_val, end_val) with
-        | NumV start_num, NumV end_num ->
-            let rec build_range acc x =
-              if x < start_num then acc
-              else build_range (NumV x :: acc) (x -. 1.)
-            in
-            ListV (build_range [] end_num)
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Non-number in range bounds at runtime: "
-             ^ Value.pretty start_val ^ ", " ^ Value.pretty end_val)
+      begin match (start_val, end_val) with
+      | NumV start_num, NumV end_num ->
+          let rec build_range acc x =
+            if x < start_num then acc else build_range (NumV x :: acc) (x -. 1.)
+          in
+          ListV (build_range [] end_num)
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Non-number in range bounds at runtime: "
+           ^ Value.pretty start_val ^ ", " ^ Value.pretty end_val)
       end
   | ListComp (loc, result_expr, comp_exprs) ->
       ListV (eval_list_comp ~cap env loc result_expr comp_exprs)
   | If (loc, condition_expr, then_expr, else_expr) ->
       let condition = eval_expr ~cap env condition_expr in
-      begin
-        match condition with
-        | BoolV true -> eval_expr ~cap env then_expr
-        | BoolV false -> eval_expr ~cap env else_expr
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc ^ ": Non-bool in if condition at runtime: "
-             ^ Value.pretty condition)
+      begin match condition with
+      | BoolV true -> eval_expr ~cap env then_expr
+      | BoolV false -> eval_expr ~cap env else_expr
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Non-bool in if condition at runtime: "
+           ^ Value.pretty condition)
       end
   | Seq (_, exprs) -> eval_seq ~cap `Expr env exprs
   | LetSeq _
@@ -897,60 +868,56 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
       eval_expr ~cap env (Pipe (loc, [ expr ]))
   | Pipe (loc, []) -> raise (Panic "empty pipe")
   | Pipe (loc, (ProgCall _ :: _ as exprs)) ->
-      handle_process_exceptions loc env
-        begin
-          fun () ->
-            let progs = progs_of_exprs ~cap env exprs in
+      handle_process_exceptions loc env begin fun () ->
+          let progs = progs_of_exprs ~cap env exprs in
 
-            let result, status =
-              Pipe.compose_stdout ~sw:cap.switch ~mgr:cap.mgr
-                ~env:(env_vars_as_array env) progs
-            in
-            let result = trim_output result in
+          let result, status =
+            Pipe.compose_stdout ~sw:cap.switch ~mgr:cap.mgr
+              ~env:(env_vars_as_array env) progs
+          in
+          let result = trim_output result in
 
-            env.last_status := status;
-            if status <> 0 then begin
-              let program, arguments = Base.List.last_exn progs in
-              raise_command_failure_exception env loc program arguments status
-                result
-            end;
-            StringV result
+          env.last_status := status;
+          if status <> 0 then begin
+            let program, arguments = Base.List.last_exn progs in
+            raise_command_failure_exception env loc program arguments status
+              result
+          end;
+          StringV result
         end
   | Pipe (loc, expr :: exprs) ->
-      handle_process_exceptions loc env
-        begin
-          fun () ->
-            let output_lines =
-              Value.as_args
-                (fun value ->
-                  panic __LOC__
-                    (Loc.pretty loc ^ ": Invalid process argument at runtime: "
-                   ^ Value.pretty value))
-                (eval_expr ~cap env expr)
-            in
+      handle_process_exceptions loc env begin fun () ->
+          let output_lines =
+            Value.as_args
+              (fun value ->
+                panic __LOC__
+                  (Loc.pretty loc ^ ": Invalid process argument at runtime: "
+                 ^ Value.pretty value))
+              (eval_expr ~cap env expr)
+          in
 
-            let progs = progs_of_exprs ~cap env exprs in
+          let progs = progs_of_exprs ~cap env exprs in
 
-            let stdin_source =
-              (* Unix-y programs behave better if we unconditionally add a trailing newline.
+          let stdin_source =
+            (* Unix-y programs behave better if we unconditionally add a trailing newline.
                 This also mirrors the behavior of piping the result of 'echo' in bash *)
-              Eio.Flow.string_source (String.concat "\n" output_lines ^ "\n")
-            in
+            Eio.Flow.string_source (String.concat "\n" output_lines ^ "\n")
+          in
 
-            let result, status =
-              Pipe.compose_in_out ~sw:cap.switch ~mgr:cap.mgr
-                ~env:(env_vars_as_array env) progs stdin_source
-            in
-            let result = trim_output result in
+          let result, status =
+            Pipe.compose_in_out ~sw:cap.switch ~mgr:cap.mgr
+              ~env:(env_vars_as_array env) progs stdin_source
+          in
+          let result = trim_output result in
 
-            env.last_status := status;
-            if status <> 0 then begin
-              let program, arguments = Base.List.last_exn progs in
-              raise_command_failure_exception env loc program arguments status
-                result
-            end;
+          env.last_status := status;
+          if status <> 0 then begin
+            let program, arguments = Base.List.last_exn progs in
+            raise_command_failure_exception env loc program arguments status
+              result
+          end;
 
-            StringV result
+          StringV result
         end
   | EnvVar (loc, var) -> begin
       (* We first check if the env var has been locally overriden by a
@@ -965,9 +932,8 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
     end
   | Async (loc, expr) ->
       let promise =
-        Util.async_promise ~switch:cap.switch
-          begin
-            fun () -> eval_expr ~cap env expr
+        Util.async_promise ~switch:cap.switch begin fun () ->
+            eval_expr ~cap env expr
           end
       in
       PromiseV promise
@@ -998,15 +964,13 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
       eval_expr ~cap env expr
   | Unwrap (loc, expr) ->
       let value = eval_expr ~cap env expr in
-      begin
-        match value with
-        | DataConV (_, underlying) -> underlying
-        | RefV reference -> !reference
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc
-             ^ ": Trying to unwrap non data constructor value: "
-             ^ Value.pretty value)
+      begin match value with
+      | DataConV (_, underlying) -> underlying
+      | RefV reference -> !reference
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to unwrap non data constructor value: "
+           ^ Value.pretty value)
       end
   | MakeRef (loc, expr) ->
       let value = eval_expr ~cap env expr in
@@ -1014,26 +978,22 @@ and eval_expr ~cap (env : eval_env) (expr : Typed.expr) : value =
   | Assign (loc, ref_expr, expr) ->
       let ref_val = eval_expr ~cap env ref_expr in
       let value = eval_expr ~cap env expr in
-      begin
-        match ref_val with
-        | RefV reference ->
-            reference := value;
-            unitV
-        | _ ->
-            panic __LOC__
-              (Loc.pretty loc
-             ^ ": Trying to assign to non-reference at runtime: "
-             ^ Value.pretty value)
+      begin match ref_val with
+      | RefV reference ->
+          reference := value;
+          unitV
+      | _ ->
+          panic __LOC__
+            (Loc.pretty loc ^ ": Trying to assign to non-reference at runtime: "
+           ^ Value.pretty value)
       end
   | Try (loc, try_expr, handlers) -> begin
       try
-        Eio.Switch.run
-          begin
-            fun switch ->
-              (* The try expression runs in a new switch, so that this try block
+        Eio.Switch.run begin fun switch ->
+            (* The try expression runs in a new switch, so that this try block
                  can catch exceptions from all threads.
                  This also keeps the semantics of try blocks waiting for all inner threads to return *)
-              eval_expr ~cap:{ cap with switch } env try_expr
+            eval_expr ~cap:{ cap with switch } env try_expr
           end
       with
       | EvalError
@@ -1104,21 +1064,19 @@ and eval_app ~cap env loc fun_v arg_vals =
       match Base.List.zip parameter_names arg_vals with
       | Ok arguments ->
           let message =
-            lazy
-              begin
-                let updated_env =
-                  List.fold_right
-                    (fun (param, value) env -> insert_var param value env)
-                    arguments message_env
-                in
-                match eval_expr ~cap updated_env message_expr with
-                | StringV exception_message -> exception_message
-                | _ ->
-                    panic __LOC__
-                      (Loc.pretty loc
-                     ^ ": Exception message evaluated to non-string at runtime"
-                      )
-              end
+            lazy begin
+              let updated_env =
+                List.fold_right
+                  (fun (param, value) env -> insert_var param value env)
+                  arguments message_env
+              in
+              match eval_expr ~cap updated_env message_expr with
+              | StringV exception_message -> exception_message
+              | _ ->
+                  panic __LOC__
+                    (Loc.pretty loc
+                   ^ ": Exception message evaluated to non-string at runtime")
+            end
           in
           ExceptionV (exception_name, arguments, NotYetRaised, message)
       | Unequal_lengths -> todo __LOC__
@@ -1134,13 +1092,13 @@ and eval_app ~cap env loc fun_v arg_vals =
 
 (* This takes a continuation argument in order to stay mutually tail recursive with eval_expr *)
 and eval_seq_cont :
-      'r.
-      [ `Expr | `Statement ] ->
-      cap:_ eval_capabilities ->
-      eval_env ->
-      Typed.expr list ->
-      (eval_env -> (Typed.expr, value) either -> 'r) ->
-      'r =
+    'r.
+    [ `Expr | `Statement ] ->
+    cap:_ eval_capabilities ->
+    eval_env ->
+    Typed.expr list ->
+    (eval_env -> (Typed.expr, value) either -> 'r) ->
+    'r =
  fun context ~cap env exprs cont ->
   match exprs with
   | [] -> cont env (Right unitV)
@@ -1359,12 +1317,11 @@ and eval_primop ~cap env op args loc =
       match args with
       | [ StringV pattern; StringV arg ] ->
           let regexp = Re.Pcre.regexp pattern in
-          begin
-            try
-              let results = Re.matches regexp arg in
-              ListV (List.map (fun x -> StringV x) results)
-            with
-            | Not_found -> ListV []
+          begin try
+            let results = Re.matches regexp arg in
+            ListV (List.map (fun x -> StringV x) results)
+          with
+          | Not_found -> ListV []
           end
       | _ ->
           raise
@@ -1379,18 +1336,17 @@ and eval_primop ~cap env op args loc =
       match args with
       | [ StringV pattern; StringV arg ] ->
           let regexp = Re.Pcre.regexp pattern in
-          begin
-            try
-              let results = Re.all regexp arg in
-              ListV
-                (List.map
-                   (fun group ->
-                     ListV
-                       (Array.to_list
-                          (Array.map (fun x -> StringV x) (Re.Group.all group))))
-                   results)
-            with
-            | Not_found -> ListV []
+          begin try
+            let results = Re.all regexp arg in
+            ListV
+              (List.map
+                 (fun group ->
+                   ListV
+                     (Array.to_list
+                        (Array.map (fun x -> StringV x) (Re.Group.all group))))
+                 results)
+          with
+          | Not_found -> ListV []
           end
       | _ ->
           raise
@@ -1533,10 +1489,9 @@ and eval_primop ~cap env op args loc =
                       "Expected no arguments or a single string",
                       loc :: env.call_trace )))
       in
-      begin
-        match Bestline.bestline prompt with
-        | Some input -> VariantConstructorV ("Just", [ StringV input ])
-        | None -> VariantConstructorV ("Nothing", [])
+      begin match Bestline.bestline prompt with
+      | Some input -> VariantConstructorV ("Just", [ StringV input ])
+      | None -> VariantConstructorV ("Nothing", [])
       end
   | "chdir" -> begin
       match args with
@@ -1686,6 +1641,12 @@ and eval_primop ~cap env op args loc =
           panic __LOC__
             (Loc.pretty loc ^ ": compareString: Non-strings passed at runtime")
     end
+  | "trim" -> begin
+      match args with
+      | [ StringV string ] -> StringV (String.trim string)
+      | _ ->
+          panic __LOC__ (Loc.pretty loc ^ ": trim: Non-string passed at runtime")
+    end
   | _ -> raise (Panic ("Invalid or unsupported primop: " ^ op))
 
 and progs_of_exprs ~cap env = function
@@ -1717,22 +1678,21 @@ and make_eval_env (argv : string list) : eval_env =
   }
 
 and inherited_env_vars =
-  lazy
-    begin
-      let inherited_env_raw = Unix.environment () in
-      let inherited_env_array =
-        inherited_env_raw
-        |> Array.map (fun key_value_entry ->
-               let split_index = String.index key_value_entry '=' in
-               let key = String.sub key_value_entry 0 split_index in
-               let value =
-                 String.sub key_value_entry (split_index + 1)
-                   (String.length key_value_entry - split_index - 1)
-               in
-               (key, value))
-      in
-      EnvMap.of_seq (Array.to_seq inherited_env_array)
-    end
+  lazy begin
+    let inherited_env_raw = Unix.environment () in
+    let inherited_env_array =
+      inherited_env_raw
+      |> Array.map (fun key_value_entry ->
+          let split_index = String.index key_value_entry '=' in
+          let key = String.sub key_value_entry 0 split_index in
+          let value =
+            String.sub key_value_entry (split_index + 1)
+              (String.length key_value_entry - split_index - 1)
+          in
+          (key, value))
+    in
+    EnvMap.of_seq (Array.to_seq inherited_env_array)
+  end
 
 let eval ~cap (argv : string list) (exprs : Typed.expr list) : value =
   eval_seq `Expr ~cap (make_eval_env argv) exprs

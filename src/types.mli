@@ -36,8 +36,6 @@ type type_error =
   | IncorrectNumberOfExceptionArgs of name * int * ty list
   | PatternError of Pattern.pattern_error
 
-exception TypeError of loc * type_error
-
 type global_env = {
   var_types : Typed.ty NameMap.t;
   module_var_contents : global_env NameMap.t;
@@ -46,6 +44,8 @@ type global_env = {
   ambient_level : Typeref.level;
   exception_definitions : ty list NameMap.t;
 }
+
+
 
 (* Might throw 'TypeError' *)
 val typecheck :

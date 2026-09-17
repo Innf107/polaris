@@ -47,7 +47,12 @@ type type_error =
   | IncorrectNumberOfExceptionArgs of name * int * ty list
   | PatternError of Pattern.pattern_error
 
-exception TypeError of loc * type_error
+type _ Effect.t += TypeError : loc * type_error -> unit Effect.t
+
+let type_error : loc -> type_error -> unit =
+  fun loc error -> Effect.perform (TypeError (loc, error))
+
+
 
 module TyperefSet = Set.Make (struct
   type t = ty Typeref.t * name
@@ -270,6 +275,27 @@ let replace_tvars : ty NameMap.t -> ty -> ty =
         end
       | ty -> ty
     end
+
+(* Applies a function over the elements of two lists.
+   If they have different lengths, the given type error will be thrown but execution will continue
+   with the length that both have in common *)
+let map2_matching_with_type_error : type a b c. a list -> b list -> error:(unit -> loc * type_error) -> f:(a -> b -> c) -> c list =
+    fun list1 list2 ~error ~f -> if List.compare_lengths list1 list2 == 0 then
+        List.map2 f list1 list2
+    else
+        let (loc, thrown_type_error) = error () in
+        type_error loc thrown_type_error;
+        let common_length = min (List.length list1) (List.length list2) in
+        List.map2 f (List.take common_length list1) (List.take common_length list2)
+
+let iter2_matching_with_type_error : type a b. a list -> b list -> error:(unit -> loc * type_error) -> f:(a -> b -> unit) -> unit =
+    fun list1 list2 ~error ~f -> if List.compare_lengths list1 list2 == 0 then
+        List.iter2 f list1 list2
+    else
+        let (loc, thrown_type_error) = error () in
+        type_error loc thrown_type_error;
+        let common_length = min (List.length list1) (List.length list2) in
+        List.iter2 f (List.take common_length list1) (List.take common_length list2)        
 
 let instantiate_type_alias : local_env -> name -> ty list -> ty =
  fun env name args ->
@@ -656,25 +682,21 @@ let rec infer_pattern :
             (Loc.pretty loc ^ ": Unbound exception in type checker: "
            ^ Name.pretty name)
       | Some param_types -> begin
-          match Base.List.zip patterns param_types with
-          | Unequal_lengths ->
-              raise
-                (TypeError
-                   ( loc,
-                     IncorrectNumberOfExceptionArgs
-                       (name, List.length patterns, param_types) ))
-          | Ok patterns_and_types ->
-              let env_transformers, patterns =
-                List.split
-                  (List.map
-                     (fun (pattern, ty) -> check_pattern env false pattern ty)
-                     patterns_and_types)
-              in
-              ( Exception,
-                Util.compose env_transformers,
-                ExceptionDataPat (loc, name, patterns) )
-        end
+          let patterns_and_types = map2_matching_with_type_error patterns param_types ~f:Pair.make
+            ~error:(fun () -> (loc, IncorrectNumberOfExceptionArgs
+                (name, List.length patterns, param_types) ))
+        in
+          let env_transformers, patterns =
+            List.split
+              (List.map
+                  (fun (pattern, ty) -> check_pattern env false pattern ty)
+                  patterns_and_types)
+          in
+          ( Exception,
+            Util.compose env_transformers,
+            ExceptionDataPat (loc, name, patterns) )
     end
+  end
 
 (* Note [Inferring Variant Patterns]
    Inference for variant patterns is quite complicated.
@@ -733,7 +755,7 @@ and check_pattern :
      ^ pretty_type expected_ty));
 
   if (not allow_polytype) && is_polytype env expected_ty then begin
-    raise (TypeError (get_pattern_loc pattern, ValueRestriction expected_ty))
+    type_error (get_pattern_loc pattern) (ValueRestriction expected_ty)
   end;
 
   let defer_to_inference () =
@@ -794,7 +816,7 @@ and check_pattern :
       (right_trans << left_trans, OrPat (loc, left, right))
   | TypePat (loc, pattern, ty), expected_ty ->
       if (not allow_polytype) && is_polytype env ty then begin
-        raise (TypeError (loc, ValueRestriction ty))
+        type_error loc (ValueRestriction ty)
       end;
 
       subsumes env loc ty expected_ty;
@@ -923,14 +945,10 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
       in
 
       let args =
-        match Base.List.map2 param_tys args ~f:(check env) with
-        | Ok args -> args
-        | Unequal_lengths ->
-            raise
-              (TypeError
-                 ( loc,
-                   PassedIncorrectNumberOfArgsToFun
-                     (List.length args, param_tys, result_ty) ))
+        map2_matching_with_type_error param_tys args ~f:(check env)
+            ~error:(fun () -> (loc,
+            (PassedIncorrectNumberOfArgsToFun
+              (List.length args, param_tys, result_ty))))
       in
       (result_ty, App (loc, fun_expr, args))
   | Lambda (loc, args, body) ->
@@ -1120,7 +1138,12 @@ let rec infer : local_env -> expr -> ty * Typed.expr =
             let _, expr = infer env expr in
             let exprs = check_progcalls exprs in
             expr :: exprs
-        | expr :: _ -> raise (TypeError (loc, NonProgCallInPipe expr))
+        | expr :: _ -> begin 
+            type_error loc (NonProgCallInPipe expr);
+            let _, expr = infer env expr in
+            let exprs = check_progcalls exprs in
+            expr :: exprs
+          end
       in
       let expr =
         match exprs with
@@ -1221,16 +1244,10 @@ and check : local_env -> ty -> expr -> Typed.expr =
       in
 
       let transformers, param_patterns =
-        match
-          Base.List.map2 param_patterns param_tys ~f:(check_pattern env true)
-        with
-        | Ok typed_pats -> List.split typed_pats
-        | Unequal_lengths ->
-            raise
-              (TypeError
-                 ( loc,
-                   IncorrectNumberOfArgsInLambda
-                     (List.length param_patterns, param_tys, result_ty) ))
+        List.split (map2_matching_with_type_error param_patterns param_tys ~f:(check_pattern env true)
+            ~error:(fun () -> (loc,
+                (IncorrectNumberOfArgsInLambda
+              (List.length param_patterns, param_tys, result_ty)))))
       in
       let env_transformer = Util.compose transformers in
       let body = check (env_transformer env) result_ty body in
@@ -1434,18 +1451,10 @@ and check_seq_expr :
             (arg_tys, transformers, patterns, fresh_unif env, Fun.id, Fun.id)
         | Some (Fun (arg_tys, result_ty), ty_skolemizer, env_transformer) ->
             let transformers, patterns =
-              match
-                Base.List.map2 patterns arg_tys
+              List.split (map2_matching_with_type_error patterns arg_tys
                   ~f:(check_pattern (env_transformer env) true)
-              with
-              | Ok transformers_and_patterns ->
-                  List.split transformers_and_patterns
-              | Unequal_lengths ->
-                  raise
-                    (TypeError
-                       ( loc.main,
-                         ArgCountMismatchInDefinition
-                           (fun_name, arg_tys, List.length patterns) ))
+                  ~error:(fun () -> (loc.main, ArgCountMismatchInDefinition
+                  (fun_name, arg_tys, List.length patterns))))
             in
             ( arg_tys,
               transformers,
@@ -1454,7 +1463,12 @@ and check_seq_expr :
               ty_skolemizer,
               env_transformer )
         | Some (ty, _, _) ->
-            raise (TypeError (loc.main, NonFunTypeInLetRec (fun_name, ty)))
+            type_error loc.main (NonFunTypeInLetRec (fun_name, ty));
+            (* If we have an invalid type here, we fall back to inferring the type of the let *)
+            let arg_tys, transformers, patterns =
+            Util.split3 (List.map (infer_pattern env true) patterns)
+            in
+            (arg_tys, transformers, patterns, fresh_unif env, Fun.id, Fun.id)
       in
       let env = env_trans env in
 
@@ -1677,14 +1691,14 @@ let occurs_and_adjust needle name full_ty loc definition_env
                     ~unif_level:needle_level
                 then (ty, state)
                 else
-                  raise
-                    (TypeError
-                       ( loc,
-                         SkolemUnifyEscape
+                    begin type_error loc
+                         (SkolemUnifyEscape
                            ( Unif (needle, name),
                              skol,
                              full_ty,
-                             optional_unify_context ) ))
+                             optional_unify_context ) );
+                     (ty, state)
+                    end
           end
         | TyConstructor (constructor_name, _) -> begin
             match Typeref.get needle with
@@ -1699,15 +1713,15 @@ let occurs_and_adjust needle name full_ty loc definition_env
                     ~type_level:(datacon_level constructor_name definition_env)
                     ~unif_level:needle_level
                 then (ty, state)
-                else
-                  raise
-                    (TypeError
-                       ( loc,
-                         DataConUnifyEscape
+                else begin
+                    type_error loc
+                         (DataConUnifyEscape
                            ( Unif (needle, name),
                              constructor_name,
                              full_ty,
-                             optional_unify_context ) ))
+                             optional_unify_context ) );
+                    (ty, state)
+                end
           end
         | ty -> (ty, state)
     end
@@ -1752,7 +1766,7 @@ let bind_directly :
     unit =
  fun loc typeref name ty definition_env unify_context ->
   if occurs_and_adjust typeref name ty loc definition_env unify_context then
-    raise (TypeError (loc, OccursCheck (typeref, name, ty, unify_context)))
+    type_error loc (OccursCheck (typeref, name, ty, unify_context))
   else bind_unchecked typeref name ty
 
 let solve_unify :
@@ -1820,13 +1834,10 @@ let solve_unify :
       go_rows [] (Array.to_list fields1, Array.to_list fields2)
     in
     let go_variant constructor_name params1 params2 =
-      if List.compare_lengths params1 params2 <> 0 then
-        raise
-          (TypeError
-             ( loc,
-               DifferentVariantConstrArgs
-                 (constructor_name, params1, params2, unify_context) ))
-      else List.iter2 go params1 params2
+        iter2_matching_with_type_error params1 params2 ~f:go
+            ~error:(fun () -> (loc,
+            (DifferentVariantConstrArgs
+              (constructor_name, params1, params2, unify_context) )))
     in
     match (normalize_unif ty1, normalize_unif ty2) with
     | Unif (typeref, name), ty
@@ -1841,9 +1852,7 @@ let solve_unify :
       end
     | TyConstructor (name1, args1), TyConstructor (name2, args2) ->
         if Name.compare name1 name2 <> 0 then
-          raise
-            (TypeError
-               (loc, MismatchedTyCon (name1, name2, optional_unify_context)))
+          type_error loc (MismatchedTyCon (name1, name2, optional_unify_context))
         else begin
           if List.compare_lengths args1 args2 <> 0 then
             panic __LOC__
@@ -1857,14 +1866,10 @@ let solve_unify :
           end
         end
     | Fun (dom1, cod1), Fun (dom2, cod2) ->
-        if List.compare_lengths dom1 dom2 != 0 then
-          raise
-            (TypeError
-               (loc, FunctionsWithDifferentArgCounts (dom1, dom2, unify_context)))
-        else begin
-          List.iter2 go dom1 dom2;
+        iter2_matching_with_type_error dom1 dom2
+            ~f:go
+            ~error:(fun () ->  (loc, FunctionsWithDifferentArgCounts (dom1, dom2, unify_context)));
           go cod1 cod2
-        end
     | Tuple tys1, Tuple tys2 when Array.length tys1 = Array.length tys2 ->
         List.iter2 go (Array.to_list tys1) (Array.to_list tys2)
     | List ty1, List ty2 -> go ty1 ty2
@@ -1877,8 +1882,7 @@ let solve_unify :
         go (replace_tvar var1 skolem body1) (replace_tvar var2 skolem body2)
     | Forall _, _
     | _, Forall _ ->
-        raise
-          (TypeError (loc, Impredicative ((ty1, ty2), optional_unify_context)))
+        type_error loc (Impredicative ((ty1, ty2), optional_unify_context))
     | Number, Number
     | Bool, Bool
     | String, String
@@ -1892,24 +1896,19 @@ let solve_unify :
           (fun _ -> go)
           fields1 fields2
           (fun remaining1 remaining2 ->
-            raise
-              (TypeError
-                 ( loc,
-                   MissingRecordFields
+            type_error loc
+                   (MissingRecordFields
                      {
                        missing_fields1 = remaining1;
                        record_type1 = ty1;
                        missing_fields2 = remaining2;
                        record_type2 = ty2;
                        context = unify_context;
-                     } )))
+                     } ))
     | VariantClosed fields1, VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
-            raise
-              (TypeError
-                 ( loc,
-                   MissingVariantConstructors
-                     (remaining1, remaining2, unify_context) )))
+            type_error loc (MissingVariantConstructors
+                     (remaining1, remaining2, unify_context) ))
     (* unif, closed *)
     | RecordUnif (fields1, (u, name)), RecordClosed fields2 ->
         unify_rows
@@ -1920,17 +1919,15 @@ let solve_unify :
               match remaining1 with
               | [] -> bind u name (RecordClosed (Array.of_list remaining2))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingRecordFields
+                  type_error loc
+                         (MissingRecordFields
                            {
                              missing_fields1 = remaining1;
                              record_type1 = ty1;
                              missing_fields2 = [];
                              record_type2 = ty2;
                              context = unify_context;
-                           } ))
+                           } )
           end
     | VariantUnif (fields1, (typeref, name)), VariantClosed fields2 ->
         unify_rows go_variant fields1 fields2
@@ -1940,11 +1937,9 @@ let solve_unify :
               | [] ->
                   bind typeref name (VariantClosed (Array.of_list remaining2))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingVariantConstructors
-                           (remaining1, [], unify_context) ))
+                  type_error loc
+                         (MissingVariantConstructors
+                           (remaining1, [], unify_context) )
           end
     (* closed, unif *)
     | RecordClosed fields1, RecordUnif (fields2, (u, name)) ->
@@ -1956,17 +1951,15 @@ let solve_unify :
               match remaining2 with
               | [] -> bind u name (RecordClosed (Array.of_list remaining1))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingRecordFields
+                  type_error loc
+                         (MissingRecordFields
                            {
                              missing_fields1 = [];
                              record_type1 = ty1;
                              missing_fields2 = remaining2;
                              record_type2 = ty2;
                              context = unify_context;
-                           } ))
+                           } )
           end
     | VariantClosed fields1, VariantUnif (fields2, (u, name)) ->
         unify_rows go_variant fields1 fields2
@@ -1975,11 +1968,9 @@ let solve_unify :
               match remaining2 with
               | [] -> bind u name (VariantClosed (Array.of_list remaining1))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingVariantConstructors
-                           ([], remaining2, unify_context) ))
+                  type_error loc
+                         (MissingVariantConstructors
+                           ([], remaining2, unify_context) )
           end
     (* unif, unif *)
     | RecordUnif (fields1, (u1, name1)), RecordUnif (fields2, (u2, name2)) ->
@@ -1990,17 +1981,15 @@ let solve_unify :
             fun remaining1 remaining2 ->
               if Typeref.equal u1 u2 then
                 (* TODO: Maybe this should have a more specific error message? *)
-                raise
-                  (TypeError
-                     ( loc,
-                       MissingRecordFields
+                type_error loc
+                       (MissingRecordFields
                          {
                            missing_fields1 = remaining1;
                            record_type1 = ty1;
                            missing_fields2 = remaining2;
                            record_type2 = ty2;
                            context = unify_context;
-                         } ))
+                         } )
               else begin
                 let new_u, new_name = fresh_unif_raw_with definition_env "µ" in
                 bind u1 name1
@@ -2015,11 +2004,9 @@ let solve_unify :
             fun remaining1 remaining2 ->
               if Typeref.equal u1 u2 then
                 (* TODO: Maybe this should have a more specific error message? *)
-                raise
-                  (TypeError
-                     ( loc,
-                       MissingVariantConstructors
-                         (remaining1, remaining2, unify_context) ))
+                type_error loc
+                       (MissingVariantConstructors
+                         (remaining1, remaining2, unify_context) )
               else begin
                 let new_u, new_name = fresh_unif_raw_with definition_env "µ" in
 
@@ -2047,17 +2034,15 @@ let solve_unify :
                        ( Array.of_list remaining2,
                          (skol_unique, skol_level, skol_name) ))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingRecordFields
+                  type_error loc
+                         (MissingRecordFields
                            {
                              missing_fields1 = remaining1;
                              record_type1 = ty1;
                              missing_fields2 = [];
                              record_type2 = ty2;
                              context = unify_context;
-                           } ))
+                           } )
           end
     | ( VariantUnif (fields1, (unif_unique, unif_name)),
         VariantSkol (fields2, (skol_unique, skol_level, skol_name)) ) ->
@@ -2072,11 +2057,9 @@ let solve_unify :
                        ( Array.of_list remaining2,
                          (skol_unique, skol_level, skol_name) ))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingVariantConstructors
-                           (remaining1, [], unify_context) ))
+                  type_error loc
+                         (MissingVariantConstructors
+                           (remaining1, [], unify_context) )
           end
     (* skolem, unif *)
     (* This is almost exactly like the (closed, unif) case, except that we need to carry the
@@ -2096,17 +2079,15 @@ let solve_unify :
                        ( Array.of_list remaining1,
                          (skolem_unique, skol_level, skolem_name) ))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingRecordFields
+                  type_error loc
+                         (MissingRecordFields
                            {
                              missing_fields1 = remaining1;
                              record_type1 = ty1;
                              missing_fields2 = remaining2;
                              record_type2 = ty2;
                              context = unify_context;
-                           } ))
+                           } )
           end
     | ( VariantSkol (fields1, (skolem_unique, skolem_level, skolem_name)),
         VariantUnif (fields2, (unif_unique, unif_name)) ) ->
@@ -2121,11 +2102,9 @@ let solve_unify :
                        ( Array.of_list remaining1,
                          (skolem_unique, skolem_level, skolem_name) ))
               | _ ->
-                  raise
-                    (TypeError
-                       ( loc,
-                         MissingVariantConstructors
-                           ([], remaining2, unify_context) ))
+                  type_error loc
+                         (MissingVariantConstructors
+                           ([], remaining2, unify_context) )
           end
     (* skolem, skolem *)
     (* Skolem rows only unify if the skolem fields match and
@@ -2142,17 +2121,15 @@ let solve_unify :
           (fun _ -> go)
           fields1 fields2
           (fun remaining1 remaining2 ->
-            raise
-              (TypeError
-                 ( loc,
-                   MissingRecordFields
+            type_error loc
+                   (MissingRecordFields
                      {
                        missing_fields1 = remaining1;
                        record_type1 = ty1;
                        missing_fields2 = remaining2;
                        record_type2 = ty2;
                        context = unify_context;
-                     } )))
+                     } ))
     | ( VariantSkol (fields1, (skolem1_unique, skolem1_level, skolem1_name)),
         VariantSkol (fields2, (skolem2_unique, skolem2_level, skolem2_name)) )
       ->
@@ -2163,11 +2140,9 @@ let solve_unify :
           (Skol (skolem1_unique, skolem1_level, skolem1_name))
           (Skol (skolem2_unique, skolem2_level, skolem2_name));
         unify_rows go_variant fields1 fields2 (fun remaining1 remaining2 ->
-            raise
-              (TypeError
-                 ( loc,
-                   MissingVariantConstructors
-                     (remaining1, remaining2, unify_context) )))
+            type_error loc
+                 (MissingVariantConstructors
+                     (remaining1, remaining2, unify_context) ))
     | ( ( RecordUnif ([||], (typeref, name))
         | VariantUnif ([||], (typeref, name)) ),
         (Skol _ as skolem) ) ->
@@ -2195,8 +2170,7 @@ let solve_unify :
         let real_type = instantiate_type_alias env name args in
         go other_type real_type
     | _ ->
-        raise
-          (TypeError (loc, UnableToUnify ((ty1, ty2), optional_unify_context)))
+        type_error loc (UnableToUnify ((ty1, ty2), optional_unify_context))
   in
   go_with_original None original_type1 original_type2
 
@@ -2228,7 +2202,7 @@ let solve_unwrap :
   | ty -> (
       (* Defer this constraint if possible. If not (i.e. we already deferred this one) we throw a type error *)
       match state.deferred_constraints with
-      | None -> raise (TypeError (loc, CannotUnwrapNonData ty))
+      | None -> type_error loc (CannotUnwrapNonData ty)
       | Some deferred_constraint_ref ->
           deferred_constraint_ref :=
             Difflist.snoc !deferred_constraint_ref
@@ -2429,7 +2403,7 @@ let check_exhaustiveness_and_close_variants_in_exprs expr =
       with
       | () -> ()
       | exception Pattern.PatternError err ->
-          raise (TypeError (loc, PatternError err))
+          type_error loc (PatternError err)
     end
   in
 

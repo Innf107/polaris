@@ -6,8 +6,8 @@ type module_error =
       filename : string;
       reason : string;
     }
-exception ModuleError of module_error
 
+exception ModuleError of module_error
 
 type t =
   | Panic of string
@@ -17,15 +17,19 @@ type t =
   | SpecificParseError of Parserprelude.specific_parse_error
   | SysError of string
   | RenameError of Rename.rename_error
-  | TypeError of Loc.t * Types.type_error
   | EvalError of Eval.eval_error
   | ModuleError of module_error
-
-
 
 val handle_errors : (t -> 'a) -> (unit -> 'a) -> 'a
 
 val pretty_error :
   Errormessage.text_style -> (Loc.t option -> string -> 'a) -> t -> 'a
+
+val pretty_type_error :
+  Errormessage.text_style ->
+  (Loc.t option -> string -> 'a) ->
+  Loc.t ->
+  Types.type_error ->
+  'a
 
 val as_exn : ('a, t) result -> 'a
